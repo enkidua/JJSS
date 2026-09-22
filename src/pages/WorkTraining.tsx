@@ -76,10 +76,10 @@ interface PersistedTrainingState {
 }
 
 const tabs: { key: TrainingTab; label: string; icon: typeof ClipboardList }[] = [
-    { key: 'rooms', label: '훈련실관리', icon: Users },
-    { key: 'attendance', label: '출석관리', icon: CalendarCheck2 },
+    { key: 'rooms', label: '훈련실 관리', icon: Users },
+    { key: 'attendance', label: '출석 관리', icon: CalendarCheck2 },
     { key: 'progress', label: '훈련상황/진도', icon: BookOpenCheck },
-    { key: 'case', label: '계획 및 일지 작성 및 공유', icon: ClipboardList },
+    { key: 'case', label: '계획·일지·공유', icon: ClipboardList },
 ];
 
 const programDefinitions: { key: ProgramKey; label: string; description: string }[] = [
@@ -320,15 +320,17 @@ export default function WorkTraining() {
                     </div>
                 </div>
 
-                <div className="flex gap-2 mt-8 border-b border-white/5 pb-0">
+                <div role="group" aria-label="직업훈련 메뉴" className="flex gap-2 mt-8 border-b border-white/5 pb-0 max-w-full overflow-x-auto">
                     {tabs.map(tab => {
                         const Icon = tab.icon;
                         return (
                             <button
                                 key={tab.key}
+                                type="button"
+                                aria-pressed={activeTab === tab.key}
                                 onClick={() => setActiveTab(tab.key)}
-                                className={`px-6 py-3 text-sm font-black transition-all border-b-2 -mb-px relative flex items-center gap-2 ${
-                                    activeTab === tab.key ? 'border-emerald-500 text-white' : 'border-transparent text-white/30 hover:text-white'
+                                className={`shrink-0 whitespace-nowrap px-6 py-3 text-sm font-black transition-all border-b-2 -mb-px relative flex items-center gap-2 ${
+                                    activeTab === tab.key ? 'border-emerald-500 text-white' : 'border-transparent text-white/65 hover:text-white'
                                 }`}
                             >
                                 <Icon className="w-4 h-4" />

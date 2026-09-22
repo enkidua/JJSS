@@ -13,6 +13,7 @@ import {
     normalizeAIFailover,
     type AIFailoverSettings,
 } from '../config/aiFailover';
+import { DEFAULT_AI_REASONING_LEVELS, normalizeAIReasoningLevel, type AIReasoningLevel } from '../config/aiReasoning';
 
 /**
  * 멀티 LLM 설정 스토어
@@ -30,6 +31,7 @@ export interface LLMConfig {
     apiKey: string;         // 메모리(런타임)에서는 평문, 저장 시 암호화
     apiKeyEncrypted: string; // 저장용 암호화된 키
     model: string;
+    reasoningLevel?: AIReasoningLevel;
     availableModels: string[];
 }
 
@@ -49,6 +51,7 @@ const DEFAULT_CONFIGS: LLMConfig[] = [
         apiKey: '',
         apiKeyEncrypted: '',
         model: DEFAULT_AI_MODELS.gemini,
+        reasoningLevel: DEFAULT_AI_REASONING_LEVELS.gemini,
         availableModels: AI_MODEL_OPTIONS.gemini.map(option => option.id),
     },
     {
@@ -57,6 +60,7 @@ const DEFAULT_CONFIGS: LLMConfig[] = [
         apiKey: '',
         apiKeyEncrypted: '',
         model: DEFAULT_AI_MODELS.openai,
+        reasoningLevel: DEFAULT_AI_REASONING_LEVELS.openai,
         availableModels: AI_MODEL_OPTIONS.openai.map(option => option.id),
     },
     {
@@ -65,6 +69,7 @@ const DEFAULT_CONFIGS: LLMConfig[] = [
         apiKey: '',
         apiKeyEncrypted: '',
         model: DEFAULT_AI_MODELS.anthropic,
+        reasoningLevel: DEFAULT_AI_REASONING_LEVELS.anthropic,
         availableModels: AI_MODEL_OPTIONS.anthropic.map(option => option.id),
     },
 ];
@@ -87,6 +92,7 @@ interface SettingsState {
     saveSettings: (settings: AppSettings) => Promise<void>;
     updateApiKey: (provider: LLMProvider, apiKey: string) => Promise<void>;
     updateModel: (provider: LLMProvider, model: string) => Promise<void>;
+    updateReasoningLevel: (provider: LLMProvider, level: AIReasoningLevel) => Promise<void>;
     setSelectedProvider: (provider: LLMProvider) => Promise<void>;
     updateVisionApiKey: (apiKey: string) => Promise<void>;
     updateAIFailover: (updates: Partial<AIFailoverSettings>) => Promise<void>;
@@ -208,7 +214,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
                     if (defaultConfig) {
                         const migratedModel = normalizeAIModel(c.provider, c.model);
                         modelMigrated = modelMigrated || migratedModel !== c.model;
-                        return { ...c, model: migratedModel, availableModels: defaultConfig.availableModels };
+                        return {
+                            ...c,
+                            model: migratedModel,
+                            // Missing in an older saved configuration means the
+                            // provider's previous default behavior, not a new opt-in.
+                            reasoningLevel: normalizeAIReasoningLevel(c.provider, migratedModel, c.reasoningLevel),
+                            availableModels: defaultConfig.availableModels,
+                        };
                     }
                     return c;
                 });
@@ -281,7 +294,25 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         const updated = {
             ...settings,
             llmConfigs: settings.llmConfigs.map(c =>
-                c.provider === provider ? { ...c, model } : c
+                c.provider === provider ? {
+                    ...c,
+                    model,
+                    reasoningLevel: normalizeAIReasoningLevel(provider, model, c.reasoningLevel),
+                } : c
+            ),
+        };
+        await saveSettings(updated);
+    },
+
+    updateReasoningLevel: async (provider, level) => {
+        const { settings, saveSettings } = get();
+        const updated = {
+            ...settings,
+            llmConfigs: settings.llmConfigs.map(c =>
+                c.provider === provider ? {
+                    ...c,
+                    reasoningLevel: normalizeAIReasoningLevel(provider, c.model, level),
+                } : c
             ),
         };
         await saveSettings(updated);

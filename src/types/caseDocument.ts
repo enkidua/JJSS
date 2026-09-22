@@ -1,4 +1,5 @@
 export type CaseDocumentType =
+    | 'workflow'
     | 'meeting'
     | 'plan'
     | 'counseling'

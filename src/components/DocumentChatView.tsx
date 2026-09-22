@@ -170,13 +170,9 @@ export function DocumentChatView({ onBack }: DocumentChatViewProps) {
 
             setMessages(prev => [...prev, aiMessage]);
         } catch (error: any) {
-            const errorMessage: Message = {
-                id: (Date.now() + 1).toString(),
-                role: 'model',
-                content: `답변 생성에 실패했습니다. ${error.message || 'API 키, 모델 권한 또는 네트워크 상태를 확인해 주세요.'}\n\n업로드한 문서와 질문 내용은 유지됩니다.`,
-                timestamp: new Date()
-            };
-            setMessages(prev => [...prev, errorMessage]);
+            setError(`답변 생성에 실패했습니다. ${error?.message || 'API 키, 모델 권한 또는 네트워크 상태를 확인해 주세요.'} 질문은 입력란에 유지됩니다. 확인 후 전송 버튼으로 다시 시도해 주세요.`);
+            setInput(current => current || userMessage.content);
+            setMessages(prev => prev.filter(message => message.id !== userMessage.id));
         } finally {
             setIsLoading(false);
         }
@@ -204,7 +200,10 @@ export function DocumentChatView({ onBack }: DocumentChatViewProps) {
         >
             <div className="flex items-center justify-between mb-4 shrink-0">
                 <button
-                    onClick={onBack}
+                    onClick={() => {
+                        if ((messages.length || files.length || input.trim() || isLoading) && !window.confirm('도구 목록으로 돌아가면 현재 대화와 첨부가 사라집니다. 돌아가시겠습니까?')) return;
+                        onBack();
+                    }}
                     className="btn-ghost flex items-center gap-2 text-sm text-white/50 hover:text-white transition-colors"
                 >
                     <ArrowLeft className="w-4 h-4" /> 도구 목록

@@ -323,8 +323,9 @@ export default function VocationalEvaluation() {
       </div>
 
       {/* Tabs */}
-      <div className="flex space-x-2 bg-white/5 p-1 rounded-2xl glass-strong w-fit border border-white/10">
+      <div role="group" aria-label="직업평가 메뉴" className="flex space-x-2 bg-white/5 p-1 rounded-2xl glass-strong w-fit max-w-full overflow-x-auto border border-white/10 [&>button]:shrink-0 [&>button]:whitespace-nowrap">
         <button
+          aria-pressed={activeTab === 'analyzer'}
           onClick={() => setActiveTab('analyzer')}
           className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold transition-all ${
             activeTab === 'analyzer'
@@ -337,6 +338,7 @@ export default function VocationalEvaluation() {
         </button>
         <button
           onClick={() => setActiveTab('report')}
+          aria-pressed={activeTab === 'report'}
           className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold transition-all ${
             activeTab === 'report'
               ? 'bg-gradient-to-r from-teal-500 to-emerald-600 text-white shadow-lg'
@@ -348,6 +350,7 @@ export default function VocationalEvaluation() {
         </button>
         <button
           onClick={() => setActiveTab('history')}
+          aria-pressed={activeTab === 'history'}
           className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold transition-all ${
             activeTab === 'history'
               ? 'bg-gradient-to-r from-slate-500 to-slate-700 text-white shadow-lg'

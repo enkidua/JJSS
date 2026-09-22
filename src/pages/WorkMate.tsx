@@ -67,6 +67,10 @@ export default function WorkMate() {
     const [casePlanDoc, setCasePlanDoc] = useState<CaseDocument | null>(null);
     const [caseContextSummary, setCaseContextSummary] = useState('');
     const [caseContextLoading, setCaseContextLoading] = useState(false);
+    const [savingCaseDocType, setSavingCaseDocType] = useState<CaseDocumentAction | null>(null);
+    const caseDocSaveInFlightRef = useRef(false);
+    const followUpSavedContentsRef = useRef<Record<string, string>>({});
+    const caseSelectionRequestRef = useRef(0);
 
     // ─── 정기평가 상태 ───
     const [evalText, setEvalText] = useState('');
@@ -108,6 +112,20 @@ export default function WorkMate() {
     const [employmentContextSummary, setEmploymentContextSummary] = useState('');
     const [employmentContextLoading, setEmploymentContextLoading] = useState(false);
 
+    const hasUnsavedCaseChanges = () => {
+        const hasEditedSavedFollowUp = caseFollowUpHistory.some(document =>
+            Boolean(document.id) && followUpSavedContentsRef.current[document.id!] !== document.content
+        );
+        const meetingChanged = meetingText.trim().length > 0 && meetingText !== (caseMeetingDoc?.content || '');
+        const planChanged = planText.trim().length > 0 && planText !== (casePlanDoc?.content || '');
+
+        return meetingChanged || planChanged || hasEditedSavedFollowUp ||
+            Boolean(counselText.trim() || evalText.trim() || meetingInput.trim() || planInput.trim() || counselInput.trim() || evalInput.trim());
+    };
+
+    const confirmDiscardCaseChanges = (message: string) =>
+        !hasUnsavedCaseChanges() || confirm(message);
+
     useEffect(() => {
         jobAnalysisPhotosRef.current = jobAnalysisPhotos;
     }, [jobAnalysisPhotos]);
@@ -139,11 +157,16 @@ export default function WorkMate() {
 
     // ─── 사례관리: 이용자 선택 ───
     const handleSelectCaseSeeker = async (s: Seeker, requestedStep?: CaseStep) => {
+        if (caseDocSaveInFlightRef.current || isGenerating) { showToast('문서 처리가 끝난 뒤 이용자를 변경해 주세요.', 'info'); return; }
+        if (caseSeeker && !confirmDiscardCaseChanges('저장하지 않은 작성 내용이 있습니다. 이용자를 변경하면 해당 내용이 사라집니다. 계속할까요?')) return;
+
+        const requestId = ++caseSelectionRequestRef.current;
         setCaseSeeker(s);
         setCaseStep('meeting');
         setMeetingText(''); setPlanText(''); setCounselText(''); setEvalText('');
         setMeetingInput(''); setPlanInput(''); setCounselInput(''); setEvalInput('');
         setCaseFollowUpHistory([]);
+        followUpSavedContentsRef.current = {};
         setCaseMeetingDoc(null);
         setCasePlanDoc(null);
         setCaseContextSummary('');
@@ -153,15 +176,23 @@ export default function WorkMate() {
             try {
                 docs = await fetchCaseDocuments(s);
             } catch (error: any) {
+                if (requestId !== caseSelectionRequestRef.current) return;
                 showToast(error?.message || '저장된 사례관리 문서를 불러오지 못했습니다.', 'error', 3500);
             }
+            if (requestId !== caseSelectionRequestRef.current) return;
             const tabDocs = docs.filter(d => d.tab === 'case');
             const meetDoc = tabDocs.find(d => d.type === 'meeting');
             const planDoc = tabDocs.find(d => d.type === 'plan');
             if (meetDoc) { setCaseMeetingDoc(meetDoc); setMeetingText(meetDoc.content); }
             if (planDoc) { setCasePlanDoc(planDoc); setPlanText(planDoc.content); }
             // 사후관리 기록 (상담 및 평가)
-            setCaseFollowUpHistory(tabDocs.filter(d => d.type === 'counseling' || d.type === 'evaluation'));
+            const followUpDocs = tabDocs.filter(d => d.type === 'counseling' || d.type === 'evaluation');
+            setCaseFollowUpHistory(followUpDocs);
+            const savedContents: Record<string, string> = {};
+            followUpDocs.forEach(document => {
+                if (document.id) savedContents[document.id] = document.content;
+            });
+            followUpSavedContentsRef.current = savedContents;
 
             // 요청된 특정 단계가 있으면 해당 단계로 직접 이동 (단독 작성 모드)
             if (requestedStep) {
@@ -511,6 +542,7 @@ ${jobAnalysisForm.interviewNotes || '확인 필요'}
     };
 
     const generateCaseDoc = async (step: CaseDocumentAction) => {
+        if (caseDocSaveInFlightRef.current || isGenerating) return;
         if (!caseSeeker) return;
         setIsGenerating(true);
         try {
@@ -629,6 +661,7 @@ ${jobAnalysisForm.interviewNotes || '확인 필요'}
     };
 
     const refineCaseDoc = async (type: 'meeting' | 'plan' | 'counseling' | 'evaluation') => {
+        if (caseDocSaveInFlightRef.current || isGenerating) return;
         if (!caseSeeker) return;
         const currentContent = type === 'meeting' ? meetingText : type === 'plan' ? planText : type === 'counseling' ? counselText : evalText;
         if (!currentContent.trim()) {
@@ -673,10 +706,18 @@ ${jobAnalysisForm.interviewNotes || '확인 필요'}
     };
 
     const resetCase = () => {
+        if (caseDocSaveInFlightRef.current || isGenerating) { showToast('문서 처리가 끝난 뒤 이용자를 변경해 주세요.', 'info'); return; }
+        if (!confirmDiscardCaseChanges('저장하지 않은 작성 내용이 있습니다. 이용자 선택 화면으로 돌아가면 해당 내용이 사라집니다. 계속할까요?')) return;
+
+        caseSelectionRequestRef.current += 1;
         setCaseSeeker(null); setCaseStep('select');
         setMeetingText(''); setPlanText(''); setCounselText(''); setEvalText('');
         setMeetingInput(''); setPlanInput(''); setCounselInput(''); setEvalInput('');
         setCaseFollowUpHistory([]);
+        followUpSavedContentsRef.current = {};
+        setCaseMeetingDoc(null);
+        setCasePlanDoc(null);
+        setCaseContextSummary('');
     };
 
     // ─── 사례관리: 작성 모드 리셋 ───
@@ -694,13 +735,15 @@ ${jobAnalysisForm.interviewNotes || '확인 필요'}
 
     // ─── 사례관리: 문서 삭제 ───
     const handleDeleteCaseDoc = async (docId: string, index?: number, type?: 'meeting' | 'plan' | 'counseling' | 'evaluation') => {
+        if (caseDocSaveInFlightRef.current) return;
         if (!confirm('이 문서를 삭제하시겠습니까?')) return;
 
         // 삭제할 문서의 내용 확인 (상태 동기화를 위해)
         let deletedContent = '';
         if ((type === 'counseling' || type === 'evaluation') && index !== undefined) deletedContent = caseFollowUpHistory[index]?.content;
 
-        await deleteCaseDocument(docId);
+        try { await deleteCaseDocument(docId); }
+        catch (error: any) { showToast(error?.message || '문서를 삭제하지 못했습니다.', 'error'); return; }
 
         if (type === 'meeting') {
             setCaseMeetingDoc(null); setMeetingText('');
@@ -708,28 +751,48 @@ ${jobAnalysisForm.interviewNotes || '확인 필요'}
             setCasePlanDoc(null); setPlanText('');
         } else if ((type === 'counseling' || type === 'evaluation') && index !== undefined) {
             setCaseFollowUpHistory(prev => prev.filter((_, i) => i !== index));
+            delete followUpSavedContentsRef.current[docId];
             if (type === 'counseling' && counselText === deletedContent) setCounselText('');
             if (type === 'evaluation' && evalText === deletedContent) setEvalText('');
         }
     };
 
     const handleSaveDoc = async (docObj: CaseDocument | null, content: string, seekerId: string, seekerName: string, type: 'meeting' | 'plan' | 'counseling' | 'evaluation') => {
+        if (!content.trim()) {
+            showToast('저장할 내용이 없습니다.', 'error', 2200);
+            return false;
+        }
+        if (caseDocSaveInFlightRef.current) return false;
+
+        caseDocSaveInFlightRef.current = true;
+        setSavingCaseDocType(type);
         try {
             if (docObj?.id) {
                 await updateCaseDocument(docObj.id, content);
                 showToast('저장되었습니다.', 'success', 2500);
                 if (type === 'meeting') setCaseMeetingDoc({ ...docObj, content });
                 if (type === 'plan') setCasePlanDoc({ ...docObj, content });
-                if (type === 'counseling' || type === 'evaluation') setCaseFollowUpHistory(prev => prev.map(p => p.id === docObj.id ? { ...p, content } : p));
+                if (type === 'counseling' || type === 'evaluation') {
+                    setCaseFollowUpHistory(prev => prev.map(p => p.id === docObj.id ? { ...p, content } : p));
+                    followUpSavedContentsRef.current[docObj.id] = content;
+                }
             } else {
                 const newDoc = await addCaseDocument({ seekerId, seekerName, type, content, tab: 'case' });
                 showToast('새 문서로 저장되었습니다.', 'success', 2500);
                 if (type === 'meeting') setCaseMeetingDoc(newDoc);
                 if (type === 'plan') setCasePlanDoc(newDoc);
-                if (type === 'counseling' || type === 'evaluation') setCaseFollowUpHistory(prev => [...prev, newDoc]);
+                if (type === 'counseling' || type === 'evaluation') {
+                    setCaseFollowUpHistory(prev => [...prev, newDoc]);
+                    if (newDoc.id) followUpSavedContentsRef.current[newDoc.id] = content;
+                }
             }
+            return true;
         } catch (error: any) {
             showToast(error?.message || '문서를 저장하지 못했습니다. 작성 내용은 유지됩니다.', 'error', 4500);
+            return false;
+        } finally {
+            caseDocSaveInFlightRef.current = false;
+            setSavingCaseDocType(null);
         }
     };
 
@@ -766,7 +829,7 @@ ${jobAnalysisForm.interviewNotes || '확인 필요'}
                                 key={tab.key}
                                 onClick={() => setActiveTab(tab.key)}
                                 className={`px-5 py-3 text-sm font-black transition-all border-b-2 -mb-px relative flex items-center gap-2 whitespace-nowrap ${
-                                    activeTab === tab.key ? 'border-primary-500 text-white' : 'border-transparent text-white/30 hover:text-white'
+                                    activeTab === tab.key ? 'border-primary-500 text-white' : 'border-transparent text-white/65 hover:text-white'
                                 }`}
                             >
                                 <Icon className="w-4 h-4" />
@@ -809,11 +872,21 @@ ${jobAnalysisForm.interviewNotes || '확인 필요'}
                                 {dbLoading ? (
                                     <div className="flex justify-center p-12"><Loader2 className="w-6 h-6 animate-spin text-white/20" /></div>
                                 ) : displayCaseSeekers.length === 0 ? (
-                                    <p className="text-center py-12 text-white/20 text-sm italic">이용자가 없습니다.</p>
+                                    <div className="text-center py-12 text-white/65 text-sm">
+                                        <p>{seekerSearch.trim() ? '검색 조건에 맞는 이용자가 없습니다.' : '등록된 이용자가 없습니다.'}</p>
+                                        {seekerSearch.trim() && <button type="button" onClick={() => setSeekerSearch('')} className="btn-secondary mt-3 !px-3 !py-2">검색 초기화</button>}
+                                    </div>
                                 ) : (
                                     displayCaseSeekers.map(s => (
                                         <motion.div
                                             key={s.id}
+                                            role="button"
+                                            tabIndex={0}
+                                            aria-label={`${s.name} 선택`}
+                                            aria-pressed={caseSeeker?.id === s.id}
+                                            onKeyDown={event => {
+                                                if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); void handleSelectCaseSeeker(s); }
+                                            }}
                                             whileHover={{ x: 4 }}
                                             onClick={() => handleSelectCaseSeeker(s)}
                                             className={`p-4 rounded-2xl border cursor-pointer transition-all ${caseSeeker?.id === s.id
@@ -902,25 +975,31 @@ ${jobAnalysisForm.interviewNotes || '확인 필요'}
                                             { key: 'followup' as CaseStep, label: '사후관리 (상담 및 평가)', num: 3 },
                                         ] as const).map(({ key, label, num }, idx) => {
                                             const isStepActive = caseStep === key || (key === 'followup' && caseStep === 'done');
-                                            const hasDone = (key === 'meeting' && meetingText.length > 0) ||
-                                                (key === 'plan' && planText.length > 0) ||
+                                            const hasDone = (key === 'meeting' && Boolean(caseMeetingDoc) && caseMeetingDoc?.content === meetingText) ||
+                                                (key === 'plan' && Boolean(casePlanDoc) && casePlanDoc?.content === planText) ||
                                                 (key === 'followup' && caseFollowUpHistory.length > 0);
+                                            const hasDraft = (key === 'meeting' && meetingText.trim().length > 0 && !hasDone) ||
+                                                (key === 'plan' && planText.trim().length > 0 && !hasDone) ||
+                                                (key === 'followup' && Boolean(counselText.trim() || evalText.trim()));
                                             return (
                                                 <div key={key} className="flex items-center gap-2">
                                                     <button
                                                         onClick={() => setCaseStep(key)}
                                                         className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${isStepActive
                                                                 ? 'bg-accent-500/20 text-accent-300 border border-accent-500/30'
+                                                                : hasDraft
+                                                                    ? 'bg-amber-500/10 text-amber-300 border border-amber-500/20 hover:bg-amber-500/20'
                                                                 : hasDone
                                                                     ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 hover:bg-emerald-500/20'
                                                                     : 'bg-white/5 text-white/40 border border-white/10 hover:bg-white/10 hover:text-white/60'
                                                             }`}
                                                     >
-                                                        <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black ${isStepActive ? 'bg-accent-500 text-white' : hasDone ? 'bg-emerald-500 text-white' : 'bg-white/10 text-white/30'
+                                                        <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black ${isStepActive ? 'bg-accent-500 text-white' : hasDraft ? 'bg-amber-500 text-white' : hasDone ? 'bg-emerald-500 text-white' : 'bg-white/10 text-white/30'
                                                             }`}>
                                                             {hasDone && !isStepActive ? '✓' : num}
                                                         </div>
                                                         {label}
+                                                        {hasDraft ? <span className="text-[9px] font-black">저장 전</span> : hasDone ? <span className="text-[9px] font-black">저장됨</span> : null}
                                                     </button>
                                                     {idx < 2 && <ArrowRightIcon />}
                                                 </div>
@@ -934,6 +1013,7 @@ ${jobAnalysisForm.interviewNotes || '확인 필요'}
                                         description="사례회의 내용을 바탕으로 공식 회의록을 자동 생성합니다."
                                         isActive={caseStep === 'meeting'}
                                         isDone={meetingText.length > 0}
+                                        isSaved={Boolean(caseMeetingDoc) && caseMeetingDoc?.content === meetingText}
                                         input={meetingInput}
                                         setInput={setMeetingInput}
                                         result={meetingText}
@@ -941,9 +1021,13 @@ ${jobAnalysisForm.interviewNotes || '확인 필요'}
                                         onGenerate={() => generateCaseDoc('meeting')}
                                         onRefine={() => refineCaseDoc('meeting')}
                                         isGenerating={isGenerating && caseStep === 'meeting'}
+                                        isSaving={savingCaseDocType === 'meeting'}
                                         onSave={() => handleSaveDoc(caseMeetingDoc, meetingText, caseSeeker.id || caseSeeker.seekerId || caseSeeker.name, caseSeeker.name, 'meeting')}
                                         onCopy={() => handleCopy(meetingText)}
-                                        onReset={() => { setMeetingText(''); setCaseStep('meeting'); }}
+                                        onReset={() => {
+                                            if (!confirm('사례회의록 작성 내용을 화면에서 비울까요? 이미 저장된 문서는 삭제되지 않습니다.')) return;
+                                            setMeetingText(''); setCaseStep('meeting');
+                                        }}
                                         placeholder="당사자/보호자 욕구, 현재 상황, 논의 내용을 입력하세요."
                                         onActivate={() => setCaseStep('meeting')}
                                     />
@@ -954,6 +1038,7 @@ ${jobAnalysisForm.interviewNotes || '확인 필요'}
                                         description="사례회의 내용을 연동하여 구체적인 목표와 수행방법을 수립합니다."
                                         isActive={caseStep === 'plan'}
                                         isDone={planText.length > 0}
+                                        isSaved={Boolean(casePlanDoc) && casePlanDoc?.content === planText}
                                         input={planInput}
                                         setInput={setPlanInput}
                                         result={planText}
@@ -961,9 +1046,13 @@ ${jobAnalysisForm.interviewNotes || '확인 필요'}
                                         onGenerate={() => generateCaseDoc('plan')}
                                         onRefine={() => refineCaseDoc('plan')}
                                         isGenerating={isGenerating && caseStep === 'plan'}
+                                        isSaving={savingCaseDocType === 'plan'}
                                         onSave={() => handleSaveDoc(casePlanDoc, planText, caseSeeker.id || caseSeeker.seekerId || caseSeeker.name, caseSeeker.name, 'plan')}
                                         onCopy={() => handleCopy(planText)}
-                                        onReset={() => { setPlanText(''); setCaseStep('plan'); }}
+                                        onReset={() => {
+                                            if (!confirm('직업재활계획서 작성 내용을 화면에서 비울까요? 이미 저장된 문서는 삭제되지 않습니다.')) return;
+                                            setPlanText(''); setCaseStep('plan');
+                                        }}
                                         isLocked={false}
                                         placeholder="강점, 제한점, 장/단기 목표에 대한 아이디어를 입력하세요."
                                         onActivate={() => setCaseStep('plan')}
@@ -1011,6 +1100,7 @@ ${jobAnalysisForm.interviewNotes || '확인 필요'}
                                         onRefineEval={() => refineCaseDoc('evaluation')}
                                         isGeneratingEval={isGenerating && caseStep === 'followup'}
                                         onSaveEval={() => handleSaveDoc(null, evalText, caseSeeker.id || caseSeeker.seekerId || caseSeeker.name, caseSeeker.name, 'evaluation')}
+                                        savingDocumentType={savingCaseDocType}
 
                                         planText={planText}
                                     />
@@ -1586,6 +1676,7 @@ interface CaseStageProps {
     description: string;
     isActive: boolean;
     isDone: boolean;
+    isSaved: boolean;
     input: string;
     setInput: (v: string) => void;
     result: string;
@@ -1593,6 +1684,7 @@ interface CaseStageProps {
     onGenerate: () => void;
     onRefine?: () => void;
     isGenerating: boolean;
+    isSaving: boolean;
     onSave: () => void;
     onCopy: () => void;
     onReset: () => void;
@@ -1602,8 +1694,8 @@ interface CaseStageProps {
 }
 
 function CaseStage({
-    title, description, isActive, isDone, input, setInput, result, setResult,
-    onGenerate, onRefine, isGenerating, onSave, onCopy, onReset, isLocked, placeholder, onActivate,
+    title, description, isActive, isDone, isSaved, input, setInput, result, setResult,
+    onGenerate, onRefine, isGenerating, isSaving, onSave, onCopy, onReset, isLocked, placeholder, onActivate,
 }: CaseStageProps) {
     if (isLocked) return (
         <div className="glass-strong rounded-3xl p-8 border border-white/5 opacity-30 flex items-center justify-between">
@@ -1622,18 +1714,25 @@ function CaseStage({
         <motion.div
             layout
             onClick={() => !isActive && onActivate()}
-            className={`glass-strong rounded-[2rem] border transition-all overflow-hidden ${isDone ? 'border-emerald-500/30 bg-emerald-500/5' : isActive ? 'border-accent-500/50 ring-1 ring-accent-500/20' : 'border-white/5'
+            className={`glass-strong rounded-[2rem] border transition-all overflow-hidden ${isSaved ? 'border-emerald-500/30 bg-emerald-500/5' : isActive ? 'border-accent-500/50 ring-1 ring-accent-500/20' : isDone ? 'border-amber-500/30 bg-amber-500/5' : 'border-white/5'
                 }`}
         >
             <div className="p-8">
                 <div className="flex items-center justify-between mb-6">
                     <div className="flex items-center gap-4">
-                        <div className={`w-10 h-10 rounded-2xl flex items-center justify-center text-sm font-black shadow-lg ${isDone ? 'bg-emerald-500 text-white' : 'bg-accent-500 text-white'
+                        <div className={`w-10 h-10 rounded-2xl flex items-center justify-center text-sm font-black shadow-lg ${isSaved ? 'bg-emerald-500 text-white' : isDone ? 'bg-amber-500 text-white' : 'bg-accent-500 text-white'
                             }`}>
-                            {isDone ? '✓' : title.charAt(5)}
+                            {isSaved ? '✓' : title.charAt(5)}
                         </div>
                         <div>
-                            <h4 className="text-xl font-bold text-white">{title}</h4>
+                            <div className="flex items-center gap-2">
+                                <h4 className="text-xl font-bold text-white">{title}</h4>
+                                {isDone && (
+                                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${isSaved ? 'bg-emerald-500/15 text-emerald-300' : 'bg-amber-500/15 text-amber-300'}`}>
+                                        {isSaved ? '저장됨' : '저장 전 초안'}
+                                    </span>
+                                )}
+                            </div>
                             <p className="text-xs text-white/40 font-medium">{description}</p>
                         </div>
                     </div>
@@ -1641,13 +1740,15 @@ function CaseStage({
                         {isDone && (
                             <div className="flex bg-white/5 p-1 rounded-xl border border-white/10">
                                 {onRefine && (
-                                    <button onClick={onRefine} disabled={isGenerating} className="p-2 text-amber-300 hover:bg-amber-400/10 rounded-lg transition-colors disabled:opacity-40" title="현재 내용 기반 보완">
+                                    <button onClick={onRefine} disabled={isGenerating || isSaving} className="p-2 text-amber-300 hover:bg-amber-400/10 rounded-lg transition-colors disabled:opacity-40" title="현재 내용 기반 보완">
                                         {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
                                     </button>
                                 )}
-                                <button onClick={onSave} className="p-2 text-emerald-400 hover:bg-emerald-400/10 rounded-lg transition-colors" title="저장"><Save className="w-4 h-4" /></button>
+                                <button onClick={onSave} disabled={isSaving} className="p-2 text-emerald-400 hover:bg-emerald-400/10 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed" title={isSaving ? '저장 중' : '저장'}>
+                                    {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                                </button>
                                 <button onClick={onCopy} className="p-2 text-blue-400 hover:bg-blue-400/10 rounded-lg transition-colors" title="복사"><Copy className="w-4 h-4" /></button>
-                                <button onClick={onReset} className="p-2 text-red-400/60 hover:text-red-400 rounded-lg transition-colors" title="초기화"><RotateCcw className="w-4 h-4" /></button>
+                                <button onClick={onReset} disabled={isSaving || isGenerating} className="p-2 text-red-400/60 hover:text-red-400 rounded-lg transition-colors disabled:opacity-40" title="초기화"><RotateCcw className="w-4 h-4" /></button>
                             </div>
                         )}
                         {isActive && !isDone && (
@@ -1720,7 +1821,7 @@ interface FollowUpStageProps {
     onGenerateCounsel: () => void;
     onRefineCounsel?: () => void;
     isGeneratingCounsel: boolean;
-    onSaveCounsel: () => void;
+    onSaveCounsel: () => Promise<boolean>;
 
     evalInput: string;
     setEvalInput: (v: string) => void;
@@ -1729,7 +1830,8 @@ interface FollowUpStageProps {
     onGenerateEval: () => void;
     onRefineEval?: () => void;
     isGeneratingEval: boolean;
-    onSaveEval: () => void;
+    onSaveEval: () => Promise<boolean>;
+    savingDocumentType: CaseDocumentAction | null;
 
     planText: string;
 }
@@ -1740,10 +1842,24 @@ function FollowUpStage({
     onRefineCounsel,
     evalInput, setEvalInput, evalText, setEvalText, onGenerateEval, isGeneratingEval, onSaveEval,
     onRefineEval,
-    planText
+    planText, savingDocumentType
 }: FollowUpStageProps) {
     const hasHistory = history.length > 0;
     const [writeMode, setWriteMode] = useState<'counseling'|'evaluation'>('counseling');
+    const savingRef = useRef(false);
+    const isSaving = savingDocumentType !== null;
+    const saveDraft = async () => {
+        if (savingRef.current || isSaving) return;
+        savingRef.current = true;
+        try {
+            const counseling = Boolean(counselText);
+            const saved = await (counseling ? onSaveCounsel() : onSaveEval());
+            if (saved) {
+                if (counseling) { setCounselText(''); setCounselInput(''); }
+                else { setEvalText(''); setEvalInput(''); }
+            }
+        } finally { savingRef.current = false; }
+    };
 
     return (
         <motion.div
@@ -1795,13 +1911,14 @@ function FollowUpStage({
                                                     {h.createdAt && <span className="text-white/35 font-normal ml-1 text-xs">{new Date(typeof h.createdAt === 'object' && 'seconds' in h.createdAt ? h.createdAt.seconds * 1000 : h.createdAt).toLocaleDateString('ko-KR')}</span>}
                                                 </span>
                                                 <div className="flex gap-1.5">
-                                                    <button onClick={() => onSaveHistory(h, h.content, h.type as any)} className="p-2 rounded-lg text-emerald-300/70 hover:text-emerald-200 hover:bg-emerald-400/10 focus:outline-none focus:ring-2 focus:ring-emerald-300/40 transition-colors" title="저장"><Save className="w-4 h-4" /></button>
+                                                    <button disabled={isSaving} onClick={() => onSaveHistory(h, h.content, h.type as any)} className="p-2 rounded-lg text-emerald-300/70 hover:text-emerald-200 hover:bg-emerald-400/10 focus:outline-none focus:ring-2 focus:ring-emerald-300/40 transition-colors disabled:opacity-40" title="저장"><Save className="w-4 h-4" /></button>
                                                     <button onClick={() => onCopyHistory(h.content)} className="p-2 rounded-lg text-blue-300/70 hover:text-blue-200 hover:bg-blue-400/10 focus:outline-none focus:ring-2 focus:ring-blue-300/40 transition-colors" title="복사"><Copy className="w-4 h-4" /></button>
                                                     {h.id && <button onClick={() => onDeleteHistory(h.id!, i, h.type as any)} className="p-2 rounded-lg text-red-300/70 hover:text-red-200 hover:bg-red-400/10 focus:outline-none focus:ring-2 focus:ring-red-300/40 transition-colors" title="삭제"><Trash2 className="w-4 h-4" /></button>}
                                                 </div>
                                             </div>
                                             <textarea
                                                 value={h.content}
+                                                readOnly={isSaving}
                                                 onChange={e => {
                                                     const newContent = e.target.value;
                                                     setHistory(prev => prev.map(p => (p.id === h.id || (!p.id && p === h)) ? { ...p, content: newContent } : p));
@@ -1825,21 +1942,24 @@ function FollowUpStage({
                             </span>
                             <div className="flex gap-1">
                                 {counselText && onRefineCounsel && (
-                                    <button onClick={onRefineCounsel} disabled={isGeneratingCounsel} className="px-3 py-1 bg-white/10 text-white font-bold text-xs rounded-lg hover:bg-white/20 transition-colors flex items-center gap-1 disabled:opacity-50" title="현재 상담일지 내용을 기준으로 보완합니다.">
+                                    <button onClick={onRefineCounsel} disabled={isGeneratingCounsel || isSaving} className="px-3 py-1 bg-white/10 text-white font-bold text-xs rounded-lg hover:bg-white/20 transition-colors flex items-center gap-1 disabled:opacity-50" title="현재 상담일지 내용을 기준으로 보완합니다.">
                                         {isGeneratingCounsel ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} 현재 내용 기반 보완
                                     </button>
                                 )}
                                 {evalText && onRefineEval && (
-                                    <button onClick={onRefineEval} disabled={isGeneratingEval} className="px-3 py-1 bg-white/10 text-white font-bold text-xs rounded-lg hover:bg-white/20 transition-colors flex items-center gap-1 disabled:opacity-50" title="현재 정기평가 내용을 기준으로 보완합니다.">
+                                    <button onClick={onRefineEval} disabled={isGeneratingEval || isSaving} className="px-3 py-1 bg-white/10 text-white font-bold text-xs rounded-lg hover:bg-white/20 transition-colors flex items-center gap-1 disabled:opacity-50" title="현재 정기평가 내용을 기준으로 보완합니다.">
                                         {isGeneratingEval ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} 현재 내용 기반 보완
                                     </button>
                                 )}
-                                <button onClick={() => { counselText ? onSaveCounsel() : onSaveEval(); counselText ? setCounselText('') : setEvalText(''); }} className="px-3 py-1 bg-accent-500 text-white font-bold text-xs rounded-lg hover:bg-accent-600 transition-colors shadow-md">작성 완료(저장)</button>
-                                <button onClick={() => counselText ? setCounselText('') : setEvalText('')} className="p-1.5 text-white/30 hover:text-red-400 transition-colors" title="닫기"><X className="w-3.5 h-3.5" /></button>
+                                <button onClick={() => void saveDraft()} disabled={isSaving || isGeneratingCounsel || isGeneratingEval} className="px-3 py-1 bg-accent-500 text-white font-bold text-xs rounded-lg hover:bg-accent-600 transition-colors shadow-md disabled:opacity-50">{isSaving ? '저장 중…' : '작성 완료(저장)'}</button>
+                                <button disabled={isSaving} onClick={() => {
+                                    if (window.confirm('저장하지 않은 초안을 닫으시겠습니까?')) counselText ? setCounselText('') : setEvalText('');
+                                }} className="p-1.5 text-white/60 hover:text-red-400 transition-colors disabled:opacity-50" aria-label="초안 닫기" title="닫기"><X className="w-3.5 h-3.5" /></button>
                             </div>
                         </div>
                         <textarea
                             value={counselText || evalText}
+                            readOnly={isSaving}
                             onChange={e => counselText ? setCounselText(e.target.value) : setEvalText(e.target.value)}
                             className="textarea-field !bg-black/30 border-accent-500/20 !min-h-[160px] !max-h-[400px] text-sm leading-relaxed font-sans resize-y"
                         />

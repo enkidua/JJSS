@@ -7,6 +7,7 @@
 
 import { useSettingsStore } from '../store/settingsStore';
 import { GEMINI_MAX_OUTPUT_TOKENS, normalizeGeminiTextModel } from './gemini';
+import { geminiThinkingLevel } from '../config/aiReasoning';
 import { getAiDocumentValidationError } from '../utils/fileValidation';
 import { safeErrorMetadata } from '../utils/safeError';
 import { apiKeyRequiredMessage, notifyApiKeyRequired } from '../utils/apiKeyPrompt';
@@ -82,6 +83,9 @@ async function extractTextWithGemini(file: File, geminiApiKey: string, base64Dat
         ],
         generationConfig: {
             maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS,
+            ...(geminiThinkingLevel(model, geminiConfig?.reasoningLevel)
+                ? { thinkingConfig: { thinkingLevel: geminiThinkingLevel(model, geminiConfig?.reasoningLevel) } }
+                : {}),
         },
     };
 
@@ -672,6 +676,9 @@ ${ocrText}`
             ],
             generationConfig: {
                 maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS,
+                ...(geminiThinkingLevel(model, geminiConfig?.reasoningLevel)
+                    ? { thinkingConfig: { thinkingLevel: geminiThinkingLevel(model, geminiConfig?.reasoningLevel) } }
+                    : {}),
             },
         };
         

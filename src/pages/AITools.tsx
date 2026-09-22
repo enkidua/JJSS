@@ -377,7 +377,11 @@ export default function AITools() {
     const [fileName, setFileName] = useState('');
 
     useEffect(() => {
-        setToolForm({});
+        const defaults: Record<string, string> = {};
+        activeTool?.fields.forEach(field => {
+            if (field.type === 'select' && field.options?.length) defaults[field.key] = field.options[0].value;
+        });
+        setToolForm(defaults);
         setToolResult('');
         setToolImage(null);
         setToolError('');
@@ -499,7 +503,7 @@ export default function AITools() {
                                         }`}
                                 >
                                     <Wrench className="w-4 h-4" />
-                                    업무지원도구
+                                    업무 지원 도구
                                 </button>
                                 <button
                                     onClick={() => setActiveTab('external')}
@@ -509,7 +513,7 @@ export default function AITools() {
                                         }`}
                                 >
                                     <ExternalLink className="w-4 h-4" />
-                                    업무지원도구(외부링크)
+                                    외부 업무 도구
                                 </button>
                             </div>
                         </div>
@@ -542,7 +546,8 @@ export default function AITools() {
                                                     {tools.map((tool, i) => {
                                                         const Icon = tool.icon;
                                                         return (
-                                                            <motion.div
+                                                            <motion.button
+                                                                type="button"
                                                                 key={tool.id}
                                                                 initial={{ opacity: 0, y: 20 }}
                                                                 animate={{ opacity: 1, y: 0 }}
@@ -557,7 +562,7 @@ export default function AITools() {
                                                                     setActiveTool(tool);
                                                                     setToolForm(initialForm);
                                                                 }}
-                                                                className="glass-strong rounded-2xl p-6 border border-white/10 hover:border-white/20 cursor-pointer transition-all duration-300 hover:scale-[1.02] hover:shadow-lg group min-h-[260px] flex flex-col"
+                                                                className="text-left glass-strong rounded-2xl p-6 border border-white/10 hover:border-white/20 cursor-pointer transition-all duration-300 hover:scale-[1.02] hover:shadow-lg group min-h-[260px] flex flex-col"
                                                             >
                                                                 <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${tool.gradient} flex items-center justify-center mb-4 shadow-lg group-hover:scale-110 transition-transform`}>
                                                                     <Icon className="w-6 h-6 text-white" />
@@ -572,7 +577,7 @@ export default function AITools() {
                                                                 <div className="mt-5 space-y-2 border-t border-white/10 pt-4">
                                                                     <p className="text-[11px] text-white/45"><span className="font-black text-white/65">필요 API:</span> {tool.apiNote}</p>
                                                                 </div>
-                                                            </motion.div>
+                                                            </motion.button>
                                                         );
                                                     })}
                                                 </div>
@@ -612,7 +617,12 @@ export default function AITools() {
                     ) : (
                         <AnimatePresence mode="wait">
                             {(() => {
-                                const onBack = () => setActiveTool(null);
+                                const onBack = () => {
+                                    const hasInput = activeTool.fields.some(field => (toolForm[field.key] || '') !== (field.type === 'select' ? field.options?.[0]?.value || '' : ''));
+                                    if ((hasInput || toolResult || toolImage || fileData || toolLoading) &&
+                                        !window.confirm('도구 목록으로 돌아가면 현재 입력과 결과가 사라집니다. 돌아가시겠습니까?')) return;
+                                    setActiveTool(null);
+                                };
                                 switch (activeTool.id) {
                                     case 'image_gen': return <PromoDesignView key="promo-design" onBack={onBack} />;
                                     case 'minutes': return <MinutesView key="minutes" onBack={onBack} />;
@@ -648,9 +658,10 @@ export default function AITools() {
                                                 <div className="space-y-4">
                                                     {activeTool.fields.map(field => (
                                                         <div key={field.key}>
-                                                            <label className="block text-sm font-medium text-white/70 mb-1.5">{field.label}</label>
+                                                            <label htmlFor={`tool-field-${field.key}`} className="block text-sm font-medium text-white/70 mb-1.5">{field.label}</label>
                                                             {field.type === 'select' ? (
                                                                 <select
+                                                                    id={`tool-field-${field.key}`}
                                                                     value={toolForm[field.key] || field.options?.[0]?.value}
                                                                     onChange={e => setToolForm(prev => ({ ...prev, [field.key]: e.target.value }))}
                                                                     className="input-field"
@@ -659,6 +670,7 @@ export default function AITools() {
                                                                 </select>
                                                             ) : field.type === 'textarea' ? (
                                                                 <textarea
+                                                                    id={`tool-field-${field.key}`}
                                                                     placeholder={field.placeholder}
                                                                     value={toolForm[field.key] || ''}
                                                                     onChange={e => setToolForm(prev => ({ ...prev, [field.key]: e.target.value }))}
@@ -667,6 +679,7 @@ export default function AITools() {
                                                                 />
                                                             ) : (
                                                                 <input
+                                                                    id={`tool-field-${field.key}`}
                                                                     type="text"
                                                                     placeholder={field.placeholder}
                                                                     value={toolForm[field.key] || ''}

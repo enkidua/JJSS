@@ -53,22 +53,28 @@ function createTestJob(feature = 'settings') {
 }
 
 assert.deepEqual(AI_MODEL_OPTIONS.gemini.map(model => model.id), [
-    'gemini-3.6-flash',
     'gemini-3.5-flash-lite',
+    'gemini-3.8-flash',
+    'gemini-3.6-flash',
 ]);
 assert.deepEqual(AI_MODEL_OPTIONS.openai.map(model => model.id), [
+    'gpt-5.6-luna',
+    'gpt-6-astra',
+    'gpt-6-sol',
+    'gpt-6-luna',
     'gpt-5.6',
     'gpt-5.6-terra',
-    'gpt-5.6-luna',
 ]);
 assert.deepEqual(AI_MODEL_OPTIONS.anthropic.map(model => model.id), [
+    'claude-fable-5-1',
+    'claude-opus-5',
     'claude-opus-4-8',
     'claude-sonnet-5',
     'claude-haiku-4-5',
 ]);
 
-assert.equal(DEFAULT_AI_MODELS.gemini, 'gemini-3.6-flash');
-assert.equal(DEFAULT_AI_MODELS.openai, 'gpt-5.6-terra');
+assert.equal(DEFAULT_AI_MODELS.gemini, 'gemini-3.5-flash-lite');
+assert.equal(DEFAULT_AI_MODELS.openai, 'gpt-5.6-luna');
 assert.equal(DEFAULT_AI_MODELS.anthropic, 'claude-sonnet-5');
 assert.equal(getAIModelTier('gemini', 'gemini-3.5-flash-lite'), 'economy');
 assert.equal(getAIModelTier('gemini', 'gemini-3.6-flash'), 'balanced');
@@ -81,8 +87,8 @@ const migrations = [
     ['gemini', 'gemini-3.1-flash-lite-preview', 'gemini-3.5-flash-lite'],
     ['gemini', 'gemini-3-flash-preview', 'gemini-3.6-flash'],
     ['gemini', 'gemini-3.5-flash', 'gemini-3.6-flash'],
-    ['gemini', 'gemini-3.1-pro-preview', 'gemini-3.6-flash'],
-    ['gemini', 'gemini-2.5-pro', 'gemini-3.6-flash'],
+    ['gemini', 'gemini-3.1-pro-preview', 'gemini-3.5-flash-lite'],
+    ['gemini', 'gemini-2.5-pro', 'gemini-3.5-flash-lite'],
     ['openai', 'gpt-4.1', 'gpt-5.6-terra'],
     ['openai', 'gpt-4o', 'gpt-5.6-terra'],
     ['openai', 'o3', 'gpt-5.6-terra'],
@@ -97,14 +103,15 @@ const migrations = [
     ['anthropic', 'claude-3-5-sonnet-20241022', 'claude-sonnet-5'],
     ['anthropic', 'claude-3-5-haiku-20241022', 'claude-haiku-4-5'],
     ['anthropic', 'claude-3-haiku-20240307', 'claude-haiku-4-5'],
+    ['anthropic', 'claude-haiku-4-5-20251001', 'claude-haiku-4-5'],
 ];
 
 for (const [provider, oldModel, expected] of migrations) {
     assert.equal(normalizeAIModel(provider, oldModel), expected, `${provider}: ${oldModel}`);
 }
 
-assert.equal(normalizeAIModel('gemini', 'unknown-model'), 'gemini-3.6-flash');
-assert.equal(normalizeAIModel('openai', 'unknown-model'), 'gpt-5.6-terra');
+assert.equal(normalizeAIModel('gemini', 'unknown-model'), 'gemini-3.5-flash-lite');
+assert.equal(normalizeAIModel('openai', 'unknown-model'), 'gpt-5.6-luna');
 assert.equal(normalizeAIModel('anthropic', 'unknown-model'), 'claude-sonnet-5');
 
 assert.equal(shouldShowApiKeyOnboarding(['', '', ''], null), true);
@@ -155,8 +162,8 @@ const balancedPlan = buildAIRequestPlan({
 });
 assert.equal(balancedPlan.every(candidate => candidate.tier !== 'premium'), true);
 assert.deepEqual(balancedPlan.map(candidate => candidate.model), [
-    'gemini-3.6-flash',
-    'gpt-5.6-terra',
+    'gemini-3.8-flash',
+    'gpt-6-sol',
     'claude-sonnet-5',
 ]);
 
@@ -182,6 +189,31 @@ const premiumAutoOnPlan = buildAIRequestPlan({
 });
 assert.equal(premiumAutoOnPlan.some(candidate => candidate.automatic && candidate.tier === 'premium'), true);
 assert.ok(premiumAutoOnPlan.length <= 3);
+
+// Every visible model is routable; existing saved choices must not be upgraded.
+for (const [provider, options] of Object.entries(AI_MODEL_OPTIONS)) {
+    for (const option of options) {
+        assert.equal(normalizeAIModel(provider, option.id), option.id);
+        const directPlan = buildAIRequestPlan({
+            selectedProvider: provider,
+            selectedModels: { [provider]: option.id },
+            providersWithKeys: [provider],
+            failover: { enabled: false },
+        });
+        assert.equal(directPlan.length, 1);
+        assert.equal(directPlan[0].model, option.id);
+        assert.equal(directPlan[0].tier, option.tier);
+    }
+}
+assert.equal(premiumAutoOnPlan.some(candidate => ['gpt-6-astra', 'claude-fable-5-1', 'claude-opus-5'].includes(candidate.model)), false);
+const explicitlySelectedAstra = buildAIRequestPlan({
+    selectedProvider: 'openai',
+    selectedModels: { openai: 'gpt-6-astra' },
+    providersWithKeys: ['openai'],
+    failover: { ...premiumBase, allowPremiumAutoUpgrade: true },
+});
+assert.equal(explicitlySelectedAstra[0].model, 'gpt-6-astra');
+assert.equal(explicitlySelectedAstra[0].automatic, false);
 
 const premiumCalls = [];
 let premiumConfirmations = 0;

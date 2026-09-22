@@ -137,7 +137,7 @@ function buildSynthesis(seeker: Seeker, caseDocs: CaseDocument[], trainingText: 
 
 export async function buildClientContextSummary(seeker: Seeker, allSeekers: Seeker[] = []) {
   const caseDocs = (await localDB.getAll<CaseDocument>('caseDocuments'))
-    .filter(doc => sameSeeker(doc, seeker, allSeekers))
+    .filter(doc => doc.type !== 'workflow' && sameSeeker(doc, seeker, allSeekers))
     .sort((a, b) => dateValue(b) - dateValue(a));
 
   const trainingState = await localDB.getById<TrainingState>('trainingState', 'work-training').catch(() => undefined);

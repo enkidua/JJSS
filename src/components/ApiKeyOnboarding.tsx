@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ExternalLink, Eye, EyeOff, Key, Sparkles } from 'lucide-react';
 import {
     API_KEY_ONBOARDING_STORAGE_KEY,
+    DEFAULT_AI_MODEL_LABELS,
     shouldShowApiKeyOnboarding,
     type AIProvider,
 } from '../config/aiModels';
@@ -10,7 +11,6 @@ import { useSettingsStore } from '../store/settingsStore';
 interface ProviderCard {
     provider: AIProvider;
     label: string;
-    defaultModel: string;
     guidance: string;
     keyUrl: string;
     gradient: string;
@@ -20,7 +20,6 @@ const PROVIDER_CARDS: ProviderCard[] = [
     {
         provider: 'gemini',
         label: 'Google Gemini',
-        defaultModel: 'Gemini 3.6 Flash',
         guidance: 'Google AI Studio에서 새로 발급한 API 키 사용을 권장합니다.',
         keyUrl: 'https://aistudio.google.com/app/apikey',
         gradient: 'from-blue-500 to-cyan-600',
@@ -28,7 +27,6 @@ const PROVIDER_CARDS: ProviderCard[] = [
     {
         provider: 'openai',
         label: 'OpenAI',
-        defaultModel: 'GPT-5.6 Terra',
         guidance: 'OpenAI Platform에서 API 키를 발급한 뒤 입력하세요.',
         keyUrl: 'https://platform.openai.com/api-keys',
         gradient: 'from-emerald-500 to-teal-600',
@@ -36,7 +34,6 @@ const PROVIDER_CARDS: ProviderCard[] = [
     {
         provider: 'anthropic',
         label: 'Anthropic Claude',
-        defaultModel: 'Claude Sonnet 5',
         guidance: 'Anthropic Console에서 API 키를 발급한 뒤 입력하세요.',
         keyUrl: 'https://console.anthropic.com/settings/keys',
         gradient: 'from-orange-500 to-red-600',
@@ -144,7 +141,7 @@ export default function ApiKeyOnboarding() {
                                 </div>
                                 <div>
                                     <h3 className="font-bold text-white">{card.label}</h3>
-                                    <p className="text-xs text-white/45">기본 추천 모델 · {card.defaultModel}</p>
+                                    <p className="text-xs text-white/45">기본 추천 모델 · {DEFAULT_AI_MODEL_LABELS[card.provider]}</p>
                                 </div>
                             </div>
                             <p className="mb-4 min-h-10 text-xs leading-relaxed text-white/55">{card.guidance}</p>

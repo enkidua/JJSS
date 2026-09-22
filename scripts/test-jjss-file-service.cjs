@@ -2,6 +2,14 @@ const assert = require('assert/strict');
 const fs = require('fs/promises');
 const os = require('os');
 const path = require('path');
+const { createRequire } = require('module');
+// Keep the integration fixtures inside the temporary Documents directory on every
+// host. Preferred-drive behavior is tested below with an explicit synthetic drive.
+const servicePath = require.resolve('../electron/fileService.cjs');
+const testModule = { exports: {} };
+new Function('require', 'module', 'exports', 'process', require('fs').readFileSync(servicePath, 'utf8'))(
+    createRequire(servicePath), testModule, testModule.exports, { ...process, platform: 'linux' },
+);
 const {
     classifyLegacyFileName,
     chooseSavePath,
@@ -14,7 +22,7 @@ const {
     saveBuffer,
     savePdf,
     validateFileName,
-} = require('../electron/fileService.cjs');
+} = testModule.exports;
 
 async function main() {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'jjss-file-service-'));

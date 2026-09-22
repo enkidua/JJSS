@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Receipt, Plus, Trash2, Edit3, FileText, Loader2, X,
@@ -11,6 +11,7 @@ import { performOCR, parseReceiptFromOCR, smartParseItemizedReceiptWithAI, Itemi
 import { findExpensesLinkedToRemovedBudgetItems, getBudgetItemUnassignment, getExpenseBudgetItemDisplayName } from '../utils/budgetItemLinks';
 import { safeErrorMetadata } from '../utils/safeError';
 import { saveJjssBlob, savedLocationMessage } from '../utils/jjssFileService';
+import { useDialogFocus } from '../hooks/useDialogFocus';
 
 const CATEGORIES = ['사업비', '프로그램사업비', '운영비', '인건비', '대체인력임금', '교통비', '식비', '소모품비', '기타'];
 const PAYMENT_METHODS = ['카드', '현금', '계좌이체', '기타'];
@@ -40,6 +41,31 @@ function formatCurrencyInput(value: unknown) {
 
 function normalizeBudgetItems(project?: Partial<BudgetProject> | null): BudgetProjectItem[] {
     return Array.isArray(project?.budgetItems) ? project.budgetItems : [];
+}
+
+function getExpenseFormSignature(value: Partial<Expense>) {
+    return JSON.stringify({
+        date: value.date || '',
+        category: value.category || '',
+        budgetItem: value.budgetItem || '',
+        budgetItemId: value.budgetItemId || '',
+        budgetItemName: value.budgetItemName || '',
+        projectId: value.projectId || '',
+        projectName: value.projectName || '',
+        description: value.description || '',
+        quantity: Number(value.quantity || 0),
+        unitPrice: Number(value.unitPrice || 0),
+        supplyAmount: Number(value.supplyAmount || 0),
+        vat: Number(value.vat || 0),
+        amount: Number(value.amount || 0),
+        vendor: value.vendor || '',
+        vendorBizNo: value.vendorBizNo || '',
+        paymentMethod: value.paymentMethod || '',
+        cardType: value.cardType || '',
+        cardLastFour: value.cardLastFour || '',
+        approvalNo: value.approvalNo || '',
+        notes: value.notes || '',
+    });
 }
 
 export default function BudgetManagement() {
@@ -97,6 +123,9 @@ export default function BudgetManagement() {
         approvalNo: '',
         notes: '',
     });
+    const expenseFormBaselineRef = useRef<string | null>(null);
+    const expenseSaveInFlightRef = useRef(false);
+    const [expenseSaving, setExpenseSaving] = useState(false);
 
     // 지출품의서 폼
     const [docForm, setDocForm] = useState({
@@ -129,7 +158,7 @@ export default function BudgetManagement() {
     };
 
     const resetForm = () => {
-        setForm({
+        const nextForm: Partial<Expense> = {
             date: getLocalDate(),
             category: '사업비',
             budgetItem: '',
@@ -150,7 +179,9 @@ export default function BudgetManagement() {
             cardLastFour: '',
             approvalNo: '',
             notes: '',
-        });
+        };
+        setForm(nextForm);
+        expenseFormBaselineRef.current = getExpenseFormSignature(nextForm);
         setEditingExpense(null);
         setOcrFile(null);
         setOcrRawText('');
@@ -159,6 +190,22 @@ export default function BudgetManagement() {
         setShowOcrRaw(false);
         setOcrParsed(null);
     };
+
+    const requestCloseExpenseModal = () => {
+        if (expenseSaveInFlightRef.current || ocrLoading) return;
+        const hasFormChanges = expenseFormBaselineRef.current !== null
+            && getExpenseFormSignature(form) !== expenseFormBaselineRef.current;
+        const hasOcrInput = Boolean(ocrFile || ocrRawText || ocrParsed);
+
+        if ((hasFormChanges || hasOcrInput)
+            && !window.confirm('작성 중인 지출 내용이 있습니다. 저장하지 않고 닫으시겠습니까?')) {
+            return;
+        }
+
+        setShowAddModal(false);
+        resetForm();
+    };
+    const expenseDialogRef = useDialogFocus(showAddModal, requestCloseExpenseModal);
 
     const resetProjectForm = () => {
         setProjectForm({
@@ -345,6 +392,7 @@ export default function BudgetManagement() {
     const getSelectedProjectItems = () => normalizeBudgetItems(budgetProjects.find(project => project.id === selectedProjectId));
 
     const handleSubmit = async () => {
+        if (expenseSaveInFlightRef.current || ocrLoading) return;
         if (!form.date) {
             alert('지출일자를 입력해 주세요.');
             return;
@@ -357,6 +405,8 @@ export default function BudgetManagement() {
             alert('올바른 금액을 입력해 주세요.');
             return;
         }
+        expenseSaveInFlightRef.current = true;
+        setExpenseSaving(true);
         try {
             const selectedFormProject = budgetProjects.find(project => project.id === form.projectId);
             const selectedBudgetItem = selectedFormProject
@@ -387,6 +437,9 @@ export default function BudgetManagement() {
         } catch (error) {
             console.error('Submit Error:', safeErrorMetadata(error, 'expense-save'));
             alert('저장 중 오류가 발생했습니다.');
+        } finally {
+            expenseSaveInFlightRef.current = false;
+            setExpenseSaving(false);
         }
     };
 
@@ -394,6 +447,7 @@ export default function BudgetManagement() {
         if (!window.confirm('이 지출 내역을 삭제하시겠습니까?')) return;
         try {
             await deleteExpense(id);
+            setSelectedExpenses(previous => previous.filter(selectedId => selectedId !== id));
         } catch (error: any) {
             console.error('Delete Error:', safeErrorMetadata(error, 'expense-delete'));
             alert('삭제 중 오류가 발생했습니다.');
@@ -402,7 +456,7 @@ export default function BudgetManagement() {
 
     const handleEdit = (expense: Expense) => {
         setEditingExpense(expense);
-        setForm({
+        const nextForm: Partial<Expense> = {
             date: expense.date,
             category: expense.category,
             budgetItem: expense.budgetItem || '',
@@ -423,7 +477,9 @@ export default function BudgetManagement() {
             cardLastFour: expense.cardLastFour || '',
             approvalNo: expense.approvalNo || '',
             notes: expense.notes,
-        });
+        };
+        setForm(nextForm);
+        expenseFormBaselineRef.current = getExpenseFormSignature(nextForm);
         setShowAddModal(true);
     };
 
@@ -559,7 +615,7 @@ export default function BudgetManagement() {
 
     // 지출품의서 생성
     const handleCreateDoc = () => {
-        if (selectedExpenses.length === 0) {
+        if (!expenses.some(expense => expense.id && selectedExpenses.includes(expense.id))) {
             alert('지출품의서에 포함할 항목을 선택해주세요.');
             return;
         }
@@ -583,6 +639,24 @@ export default function BudgetManagement() {
             || (selectedProjectId === 'unassigned' ? !e.projectId : e.projectId === selectedProjectId);
         return matchSearch && matchCategory && matchProject;
     });
+
+    const selectedExpenseIdSet = new Set(selectedExpenses);
+    const filteredExpenseIds = filtered.flatMap(expense => expense.id ? [expense.id] : []);
+    const visibleSelectedExpenseCount = filteredExpenseIds.filter(id => selectedExpenseIdSet.has(id)).length;
+    const selectedExpenseCount = expenses.reduce(
+        (count, expense) => expense.id && selectedExpenseIdSet.has(expense.id) ? count + 1 : count,
+        0,
+    );
+    const hiddenSelectedExpenseCount = Math.max(0, selectedExpenseCount - visibleSelectedExpenseCount);
+    const allVisibleExpensesSelected = filteredExpenseIds.length > 0
+        && filteredExpenseIds.every(id => selectedExpenseIdSet.has(id));
+
+    const handleVisibleExpenseSelection = (checked: boolean) => {
+        const visibleIdSet = new Set(filteredExpenseIds);
+        setSelectedExpenses(previous => checked
+            ? Array.from(new Set([...previous, ...filteredExpenseIds]))
+            : previous.filter(id => !visibleIdSet.has(id)));
+    };
 
     const totalAmount = filtered.reduce((sum, e) => sum + (e.amount || 0), 0);
     const linkedTotalAmount = filtered.filter(e => e.projectId).reduce((sum, e) => sum + (e.amount || 0), 0);
@@ -699,7 +773,7 @@ export default function BudgetManagement() {
                             </div>
                             <div>
                                 <p className="text-white/40 text-sm">선택된 항목</p>
-                                <p className="text-2xl font-bold text-white">{selectedExpenses.length}건</p>
+                                <p className="text-2xl font-bold text-white">{selectedExpenseCount}건</p>
                             </div>
                         </div>
                     </motion.div>
@@ -1012,6 +1086,36 @@ export default function BudgetManagement() {
                     CSV 내보내기는 현재 필터링된 지출 목록을 보고용 파일로 저장합니다. 전체 앱 데이터 백업은 설정 화면의 데이터 백업 기능을 사용해 주세요. 외부 공유 전 개인정보를 확인해 주세요.
                 </p>
 
+                {selectedExpenseCount > 0 && (
+                    <div
+                        className="mb-4 flex flex-col gap-2 rounded-xl border border-primary-400/20 bg-primary-500/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+                        role="status"
+                        aria-live="polite"
+                    >
+                        <div>
+                            <p className="text-sm text-white/75">
+                                현재 화면 선택 <span className="font-bold text-primary-200">{visibleSelectedExpenseCount}건</span>
+                                <span className="mx-2 text-white/25">·</span>
+                                다른 필터 선택 <span className="font-bold text-amber-200">{hiddenSelectedExpenseCount}건</span>
+                                <span className="mx-2 text-white/25">·</span>
+                                전체 <span className="font-bold text-white">{selectedExpenseCount}건</span>
+                            </p>
+                            {hiddenSelectedExpenseCount > 0 && (
+                                <p className="mt-1 text-xs text-amber-200/80">
+                                    다른 필터에서 선택한 항목도 지출품의서에 함께 포함됩니다.
+                                </p>
+                            )}
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setSelectedExpenses([])}
+                            className="self-start whitespace-nowrap text-xs font-medium text-white/60 underline decoration-white/25 underline-offset-4 hover:text-white sm:self-auto"
+                        >
+                            전체 선택 해제
+                        </button>
+                    </div>
+                )}
+
                 {/* 지출 목록 테이블 */}
                 <motion.div
                     initial={{ opacity: 0, y: 20 }}
@@ -1027,8 +1131,10 @@ export default function BudgetManagement() {
                     ) : filtered.length === 0 ? (
                         <div className="text-center py-20">
                             <Receipt className="w-16 h-16 mx-auto text-white/10 mb-4" />
-                            <p className="text-white/40 text-lg mb-2">등록된 지출 내역이 없습니다</p>
-                            <p className="text-white/20 text-sm">위의 '지출 등록' 버튼을 눌러 시작하세요</p>
+                            <p className="text-white/70 text-lg mb-2">{searchTerm || filterCategory !== '전체' || selectedProjectId !== '전체' ? '조건에 맞는 지출 내역이 없습니다' : '등록된 지출 내역이 없습니다'}</p>
+                            {searchTerm || filterCategory !== '전체' || selectedProjectId !== '전체' ? (
+                                <button type="button" className="btn-secondary mt-2" onClick={() => { setSearchTerm(''); setFilterCategory('전체'); setSelectedProjectId('전체'); }}>검색·필터 초기화</button>
+                            ) : <p className="text-white/60 text-sm">위의 '지출 등록' 버튼을 눌러 시작하세요</p>}
                         </div>
                     ) : (
                         <div className="overflow-x-auto">
@@ -1038,14 +1144,9 @@ export default function BudgetManagement() {
                                         <th className="px-4 py-3 text-left text-white/40 font-medium w-10">
                                             <input
                                                 type="checkbox"
-                                                checked={filtered.length > 0 && selectedExpenses.length === filtered.filter(e => e.id).length}
-                                                onChange={e => {
-                                                    if (e.target.checked) {
-                                                        setSelectedExpenses(filtered.map(ex => ex.id!).filter(Boolean));
-                                                    } else {
-                                                        setSelectedExpenses([]);
-                                                    }
-                                                }}
+                                                checked={allVisibleExpensesSelected}
+                                                onChange={e => handleVisibleExpenseSelection(e.target.checked)}
+                                                aria-label="현재 화면의 지출 항목 전체 선택"
                                                 className="rounded"
                                             />
                                         </th>
@@ -1067,6 +1168,7 @@ export default function BudgetManagement() {
                                                 <input
                                                     type="checkbox"
                                                     checked={selectedExpenses.includes(e.id!)}
+                                                    aria-label={`${e.date} ${e.description} 지출 선택`}
                                                     onChange={() => toggleExpenseSelection(e.id!)}
                                                     className="rounded"
                                                 />
@@ -1083,10 +1185,10 @@ export default function BudgetManagement() {
                                             <td className="px-4 py-3 text-center text-white/50 text-xs">{e.paymentMethod}</td>
                                             <td className="px-4 py-3 text-center">
                                                 <div className="flex items-center justify-center gap-1">
-                                                    <button onClick={() => handleEdit(e)} className="p-1.5 rounded-lg hover:bg-white/10 text-white/40 hover:text-blue-400 transition">
+                                                    <button aria-label={`${e.description} 지출 수정`} onClick={() => handleEdit(e)} className="p-1.5 rounded-lg hover:bg-white/10 text-white/60 hover:text-blue-400 transition">
                                                         <Edit3 className="w-3.5 h-3.5" />
                                                     </button>
-                                                    <button onClick={() => handleDelete(e.id!)} className="p-1.5 rounded-lg hover:bg-white/10 text-white/40 hover:text-red-400 transition">
+                                                    <button aria-label={`${e.description} 지출 삭제`} onClick={() => handleDelete(e.id!)} className="p-1.5 rounded-lg hover:bg-white/10 text-white/60 hover:text-red-400 transition">
                                                         <Trash2 className="w-3.5 h-3.5" />
                                                     </button>
                                                 </div>
@@ -1115,9 +1217,15 @@ export default function BudgetManagement() {
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
                         className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
-                        onClick={() => { setShowAddModal(false); resetForm(); }}
+                        onClick={requestCloseExpenseModal}
                     >
                         <motion.div
+                            ref={expenseDialogRef}
+                            role="dialog"
+                            aria-modal="true"
+                            aria-labelledby="expense-dialog-title"
+                            aria-busy={expenseSaving}
+                            tabIndex={-1}
                             initial={{ scale: 0.9, opacity: 0 }}
                             animate={{ scale: 1, opacity: 1 }}
                             exit={{ scale: 0.9, opacity: 0 }}
@@ -1125,10 +1233,10 @@ export default function BudgetManagement() {
                             onClick={e => e.stopPropagation()}
                         >
                             <div className="flex items-center justify-between mb-6">
-                                <h3 className="text-xl font-bold text-white">
+                                <h3 id="expense-dialog-title" className="text-xl font-bold text-white">
                                     {editingExpense ? '지출 내역 수정' : '새 지출 등록'}
                                 </h3>
-                                <button onClick={() => { setShowAddModal(false); resetForm(); }} className="p-2 rounded-xl hover:bg-white/10 text-white/60">
+                                <button onClick={requestCloseExpenseModal} className="p-2 rounded-xl hover:bg-white/10 text-white/60" aria-label="지출 입력 닫기">
                                     <X className="w-5 h-5" />
                                 </button>
                             </div>
@@ -1428,10 +1536,10 @@ export default function BudgetManagement() {
                             </div>
 
                             <div className="flex gap-3 mt-6">
-                                <button onClick={handleSubmit} className="btn-primary flex-1 flex items-center justify-center gap-2">
-                                    {editingExpense ? '수정 완료' : '지출 등록'}
+                                <button onClick={handleSubmit} disabled={expenseSaving || ocrLoading} className="btn-primary flex-1 flex items-center justify-center gap-2 disabled:opacity-50">
+                                    {expenseSaving ? '저장 중…' : editingExpense ? '수정 완료' : '지출 등록'}
                                 </button>
-                                <button onClick={() => { setShowAddModal(false); resetForm(); }} className="btn-secondary">
+                                <button onClick={requestCloseExpenseModal} className="btn-secondary">
                                     취소
                                 </button>
                             </div>
@@ -1500,13 +1608,13 @@ export default function BudgetManagement() {
                                 </div>
                                 <div className="space-y-3">
                                     <div className="flex items-center justify-between mb-1">
-                                        <label className="block text-sm font-medium text-white/70">결제선 (최대 5명)</label>
+                                        <label className="block text-sm font-medium text-white/70">결재선 (최대 5명)</label>
                                         {docForm.approvers.length < 5 && (
                                             <button 
                                                 onClick={() => setDocForm(prev => ({ ...prev, approvers: [...prev.approvers, { title: '직위', name: '' }] }))}
                                                 className="text-xs text-primary-400 hover:text-primary-300 flex items-center gap-1"
                                             >
-                                                <Plus className="w-3 h-3" /> 결제자 추가
+                                                <Plus className="w-3 h-3" /> 결재자 추가
                                             </button>
                                         )}
                                     </div>
@@ -1551,15 +1659,36 @@ export default function BudgetManagement() {
                                 </div>
 
                                 <div className="p-3 rounded-xl bg-white/5 border border-white/10">
-                                    <p className="text-white/50 text-sm">
-                                        선택된 지출 항목: <span className="text-primary-300 font-bold">{selectedExpenses.length}건</span>
-                                        {selectedExpenses.length > 0 && (
-                                            <span className="ml-2">
-                                                (합계: {expenses.filter(e => selectedExpenses.includes(e.id!)).reduce((s, e) => s + (e.amount || 0), 0).toLocaleString()}원)
-                                            </span>
+                                    <div className="flex items-start justify-between gap-3">
+                                        <p className="text-white/50 text-sm">
+                                            선택된 지출 항목: <span className="text-primary-300 font-bold">{selectedExpenseCount}건</span>
+                                            {selectedExpenseCount > 0 && (
+                                                <span className="ml-2">
+                                                    (합계: {expenses.filter(e => e.id && selectedExpenseIdSet.has(e.id)).reduce((s, e) => s + (e.amount || 0), 0).toLocaleString()}원)
+                                                </span>
+                                            )}
+                                        </p>
+                                        {selectedExpenseCount > 0 && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setSelectedExpenses([])}
+                                                className="shrink-0 text-xs text-white/50 underline decoration-white/25 underline-offset-4 hover:text-white"
+                                            >
+                                                전체 선택 해제
+                                            </button>
                                         )}
-                                    </p>
-                                    {selectedExpenses.length === 0 && (
+                                    </div>
+                                    {selectedExpenseCount > 0 && (
+                                        <p className="mt-1 text-xs text-white/45">
+                                            현재 화면 {visibleSelectedExpenseCount}건 · 다른 필터 {hiddenSelectedExpenseCount}건 · 전체 {selectedExpenseCount}건
+                                        </p>
+                                    )}
+                                    {hiddenSelectedExpenseCount > 0 && (
+                                        <p className="mt-1 text-xs text-amber-200/80">
+                                            다른 필터에서 선택한 {hiddenSelectedExpenseCount}건도 이 지출품의서에 포함됩니다.
+                                        </p>
+                                    )}
+                                    {selectedExpenseCount === 0 && (
                                         <p className="text-yellow-400/60 text-xs mt-1">목록에서 체크박스로 항목을 선택한 후 생성해주세요.</p>
                                     )}
                                 </div>
@@ -1568,7 +1697,7 @@ export default function BudgetManagement() {
                             <div className="flex gap-3 mt-6">
                                 <button
                                     onClick={handleCreateDoc}
-                                    disabled={selectedExpenses.length === 0 || !docForm.centerName || !docForm.title}
+                                    disabled={selectedExpenseCount === 0 || !docForm.centerName || !docForm.title}
                                     className="btn-primary flex-1 flex items-center justify-center gap-2"
                                 >
                                     <Download className="w-4 h-4" />

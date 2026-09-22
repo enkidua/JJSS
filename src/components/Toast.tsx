@@ -55,20 +55,24 @@ export function ToastContainer({ toasts, removeToast }: { toasts: Toast[]; remov
     };
 
     return (
-        <div className="fixed top-6 right-6 z-[9999] flex flex-col gap-3 max-w-sm">
+        <div className="fixed top-20 right-4 z-[9999] flex flex-col gap-3 w-[calc(100vw-2rem)] max-w-sm pointer-events-none">
             <AnimatePresence>
                 {toasts.map(toast => (
                     <motion.div
                         key={toast.id}
+                        role={toast.type === 'error' ? 'alert' : 'status'}
+                        aria-atomic="true"
                         initial={{ opacity: 0, x: 100, scale: 0.9 }}
                         animate={{ opacity: 1, x: 0, scale: 1 }}
                         exit={{ opacity: 0, x: 100, scale: 0.9 }}
                         transition={{ duration: 0.3, ease: 'easeOut' }}
-                        className={`flex items-center gap-3 px-5 py-4 rounded-xl bg-[#1a1d3a]/95 backdrop-blur-xl border ${borderColors[toast.type]} shadow-2xl`}
+                        className={`pointer-events-auto flex items-center gap-3 px-5 py-4 rounded-xl bg-[#1a1d3a]/95 backdrop-blur-xl border ${borderColors[toast.type]} shadow-2xl`}
                     >
                         {icons[toast.type]}
                         <p className="text-white text-sm font-medium flex-1">{toast.message}</p>
                         <button
+                            type="button"
+                            aria-label="알림 닫기"
                             onClick={() => removeToast(toast.id)}
                             className="p-1 rounded-lg hover:bg-white/10 text-white/40 hover:text-white/70 transition"
                         >

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Users, Briefcase, Plus, Search, Trash2, ChevronDown, ChevronUp,
-    User, MapPin, Clock, DollarSign, Sparkles, FileText, Wand2, ClipboardCheck, Pencil
+    User, MapPin, Clock, DollarSign, Sparkles, FileText, Wand2, ClipboardCheck, Pencil, LayoutDashboard
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useDataStore } from '../store/dataStore';
@@ -100,8 +100,10 @@ export default function UserManagement() {
 
                 {/* 탭 전환 + 액션 버튼 */}
                 <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mb-6">
-                    <div className="flex gap-2 p-1 rounded-xl bg-white/5 border border-white/10">
+                    <div role="group" aria-label="관리 대상 선택" className="flex gap-2 p-1 rounded-xl bg-white/5 border border-white/10">
                         <button
+                            type="button"
+                            aria-pressed={viewMode === 'seekers'}
                             onClick={() => { setViewMode('seekers'); setSearchTerm(''); setExpandedId(null); }}
                             className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition-all ${viewMode === 'seekers' ? 'bg-accent-500 text-white shadow-lg' : 'text-white/50 hover:text-white'
                                 }`}
@@ -109,6 +111,8 @@ export default function UserManagement() {
                             <User className="w-4 h-4" /> 이용자 <span className="bg-white/20 text-xs px-2 py-0.5 rounded-full">{seekers.length}</span>
                         </button>
                         <button
+                            type="button"
+                            aria-pressed={viewMode === 'jobs'}
                             onClick={() => { setViewMode('jobs'); setSearchTerm(''); setExpandedId(null); }}
                             className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition-all ${viewMode === 'jobs' ? 'bg-primary-500 text-white shadow-lg' : 'text-white/50 hover:text-white'
                                 }`}
@@ -118,6 +122,13 @@ export default function UserManagement() {
                     </div>
 
                     <div className="flex gap-2">
+                        <button
+                            type="button"
+                            onClick={() => navigate('/overview')}
+                            className="btn-secondary !py-2.5 !px-4 text-sm font-bold flex items-center gap-2"
+                        >
+                            <LayoutDashboard className="w-4 h-4" /> 현황판
+                        </button>
                         <button
                             onClick={() => openCreateModal('seeker')}
                             className="bg-accent-500 hover:bg-accent-400 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2 shadow-lg shadow-accent-500/20"
@@ -137,6 +148,7 @@ export default function UserManagement() {
                 <div className="relative mb-6">
                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/30" />
                     <input
+                        aria-label={viewMode === 'seekers' ? '이용자 검색' : '사업체 검색'}
                         className="input-field !pl-12 !py-3 text-base"
                         placeholder={viewMode === 'seekers' ? '이름, 장애유형, 희망직종, 지역으로 검색...' : '기업명, 직무, 지역, 장애유형으로 검색...'}
                         value={searchTerm}
@@ -152,7 +164,12 @@ export default function UserManagement() {
                         <AnimatePresence>
                             {viewMode === 'seekers' ? (
                                 filteredSeekers.length === 0 ? (
-                                    <div className="text-center py-12 text-white/30">등록된 이용자가 없습니다.</div>
+                                    <div className="text-center py-12 text-white/60">
+                                        <p>{searchTerm.trim() ? `“${searchTerm.trim()}”에 맞는 이용자가 없습니다.` : '등록된 이용자가 없습니다.'}</p>
+                                        {searchTerm.trim() && (
+                                            <button type="button" onClick={() => setSearchTerm('')} className="btn-secondary mt-4 !px-4 !py-2 text-sm">검색 초기화</button>
+                                        )}
+                                    </div>
                                 ) : (
                                     filteredSeekers.map((s, i) => (
                                         <motion.div
@@ -164,7 +181,10 @@ export default function UserManagement() {
                                             className="glass-strong rounded-2xl border border-white/10 overflow-hidden hover:border-white/20 transition-all"
                                         >
                                             {/* 요약 행 */}
-                                            <div className="p-4 flex items-center gap-4 cursor-pointer" onClick={() => s.id && toggleExpand(s.id)}>
+                                            <div
+                                                className="p-4 flex items-center gap-4 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/80 focus-visible:ring-inset"
+                                                onClick={() => s.id && toggleExpand(s.id)}
+                                            >
                                                 {/* 상태 뱃지 */}
                                                 <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${s.status === '구직중' ? 'bg-green-500/20' :
                                                     s.status === '취업' ? 'bg-blue-500/20' :
@@ -178,7 +198,7 @@ export default function UserManagement() {
 
                                                 <div className="flex-1 min-w-0">
                                                     <div className="flex items-center gap-2 flex-wrap">
-                                                        <span className="text-white font-bold text-base">{String(s.name || '이름 없음')}</span>
+                                                        <button type="button" aria-expanded={Boolean(s.id && expandedId === s.id)} aria-label={`${s.name || '이용자'} 상세 정보`} onClick={event => { event.stopPropagation(); if (s.id) toggleExpand(s.id); }} className="text-white font-bold text-base text-left">{String(s.name || '이름 없음')}</button>
                                                         <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${s.status === '구직중' ? 'bg-green-500/20 text-green-300' :
                                                             s.status === '취업' ? 'bg-blue-500/20 text-blue-300' :
                                                                 'bg-white/10 text-white/50'
@@ -195,6 +215,8 @@ export default function UserManagement() {
 
                                                 <div className="flex items-center gap-2 shrink-0">
                                                     <button
+                                                        type="button"
+                                                        aria-label={`${s.name || '이용자'} 정보 수정`}
                                                         onClick={(e) => { e.stopPropagation(); openEditModal('seeker', s); }}
                                                         className="p-2 rounded-lg text-white/40 hover:bg-accent-500/20 hover:text-accent-300 transition-all"
                                                         title="이용자 정보 수정"
@@ -202,6 +224,8 @@ export default function UserManagement() {
                                                         <Pencil className="w-4 h-4" />
                                                     </button>
                                                     <button
+                                                        type="button"
+                                                        aria-label={`${s.name || '이용자'} 정보 삭제`}
                                                         onClick={(e) => { e.stopPropagation(); handleDelete('seeker', s.id!, s.name); }}
                                                         className="p-2 rounded-lg text-white/30 hover:bg-red-500/20 hover:text-red-400 transition-all"
                                                     >
@@ -236,6 +260,13 @@ export default function UserManagement() {
                                                         </div>
                                                         {/* 문서 작성 바로가기 */}
                                                         <div className="px-5 pb-4 pt-2 border-t border-white/5">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => navigate(`/overview?seekerId=${encodeURIComponent(s.id || '')}`)}
+                                                                className="text-xs px-3 py-1.5 rounded-lg bg-teal-500/20 text-teal-200 hover:bg-teal-500/30 transition-all inline-flex items-center gap-1 font-medium mb-3"
+                                                            >
+                                                                <LayoutDashboard className="w-3 h-3" /> 후속 일정·목표 현황
+                                                            </button>
                                                             <p className="text-xs text-white/40 mb-2 font-medium">이 이용자 대상 AI 문서 작성</p>
                                                             <div className="flex flex-wrap gap-2">
                                                                 <button
@@ -272,7 +303,12 @@ export default function UserManagement() {
                                 )
                             ) : (
                                 filteredJobs.length === 0 ? (
-                                    <div className="text-center py-12 text-white/30">등록된 사업체가 없습니다.</div>
+                                    <div className="text-center py-12 text-white/60">
+                                        <p>{searchTerm.trim() ? `“${searchTerm.trim()}”에 맞는 사업체가 없습니다.` : '등록된 사업체가 없습니다.'}</p>
+                                        {searchTerm.trim() && (
+                                            <button type="button" onClick={() => setSearchTerm('')} className="btn-secondary mt-4 !px-4 !py-2 text-sm">검색 초기화</button>
+                                        )}
+                                    </div>
                                 ) : (
                                     filteredJobs.map((j, i) => (
                                         <motion.div
@@ -284,14 +320,17 @@ export default function UserManagement() {
                                             className="glass-strong rounded-2xl border border-white/10 overflow-hidden hover:border-white/20 transition-all"
                                         >
                                             {/* 요약 행 */}
-                                            <div className="p-4 flex items-center gap-4 cursor-pointer" onClick={() => j.id && toggleExpand(j.id)}>
+                                            <div
+                                                className="p-4 flex items-center gap-4 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/80 focus-visible:ring-inset"
+                                                onClick={() => j.id && toggleExpand(j.id)}
+                                            >
                                                 <div className="w-10 h-10 rounded-xl bg-primary-500/20 flex items-center justify-center shrink-0">
                                                     <Briefcase className="w-5 h-5 text-primary-400" />
                                                 </div>
 
                                                 <div className="flex-1 min-w-0">
                                                     <div className="flex items-center gap-2 flex-wrap">
-                                                        <span className="text-white font-bold text-base">{String(j.companyName || '사업체명 없음')}</span>
+                                                        <button type="button" aria-expanded={Boolean(j.id && expandedId === j.id)} aria-label={`${j.companyName || '사업체'} 상세 정보`} onClick={event => { event.stopPropagation(); if (j.id) toggleExpand(j.id); }} className="text-white font-bold text-base text-left">{String(j.companyName || '사업체명 없음')}</button>
                                                         <span className="text-xs px-2 py-0.5 rounded-full bg-primary-500/20 text-primary-300 font-medium">{String(j.jobRole || '-')}</span>
                                                         {j.hiringStatus && <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 font-medium">{String(j.hiringStatus)}</span>}
                                                     </div>
@@ -306,6 +345,8 @@ export default function UserManagement() {
 
                                                 <div className="flex items-center gap-2 shrink-0">
                                                     <button
+                                                        type="button"
+                                                        aria-label={`${j.companyName || '사업체'} 정보 수정`}
                                                         onClick={(e) => { e.stopPropagation(); openEditModal('job', j); }}
                                                         className="p-2 rounded-lg text-white/40 hover:bg-primary-500/20 hover:text-primary-300 transition-all"
                                                         title="사업체/구인 정보 수정"
@@ -313,6 +354,8 @@ export default function UserManagement() {
                                                         <Pencil className="w-4 h-4" />
                                                     </button>
                                                     <button
+                                                        type="button"
+                                                        aria-label={`${j.companyName || '사업체'} 정보 삭제`}
                                                         onClick={(e) => { e.stopPropagation(); handleDelete('job', j.id!, j.companyName); }}
                                                         className="p-2 rounded-lg text-white/30 hover:bg-red-500/20 hover:text-red-400 transition-all"
                                                     >

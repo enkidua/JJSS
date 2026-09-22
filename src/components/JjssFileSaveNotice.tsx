@@ -30,7 +30,7 @@ export default function JjssFileSaveNotice() {
 
     if (!saved) return null;
     return (
-        <div className="fixed bottom-6 right-6 z-[9998] w-[min(92vw,32rem)] rounded-2xl border border-emerald-400/30 bg-[#11162b]/95 p-4 shadow-2xl backdrop-blur-xl">
+        <div role="status" aria-atomic="true" className="fixed bottom-6 right-4 z-[9998] w-[min(92vw,32rem)] rounded-2xl border border-emerald-400/30 bg-[#11162b]/95 p-4 shadow-2xl backdrop-blur-xl">
             <div className="flex items-start gap-3">
                 <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-400" />
                 <div className="min-w-0 flex-1">
@@ -48,7 +48,7 @@ export default function JjssFileSaveNotice() {
                         </button>
                     )}
                 </div>
-                <button type="button" onClick={() => setSaved(null)} className="rounded-lg p-1 text-white/40 hover:bg-white/10 hover:text-white">
+                <button type="button" aria-label="저장 알림 닫기" onClick={() => setSaved(null)} className="rounded-lg p-1 text-white/60 hover:bg-white/10 hover:text-white">
                     <X className="h-4 w-4" />
                 </button>
             </div>

@@ -39,7 +39,8 @@ export default function CaseHistoryPanel({ seeker, onClose, onContinueWrite }: C
         setErrorMessage('');
         try {
             const fetched = await fetchCaseDocuments(seeker);
-            setDocs(fetched);
+            // 현황판의 구조화된 상태 문서는 문서 이력이 아니므로 원문 JSON을 노출하지 않습니다.
+            setDocs(fetched.filter(doc => doc.type !== 'workflow'));
         } catch (error) {
             console.error('Error loading documents:', safeErrorMetadata(error, 'case-document-load'));
             setErrorMessage('기록을 불러오는 중 오류가 발생했습니다.');

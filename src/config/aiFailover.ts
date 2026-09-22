@@ -141,7 +141,9 @@ export function buildAIRequestPlan(input: BuildAIRequestPlanInput): AIRequestCan
             ? selectedModel
             : normalizeAIModel(provider, input.selectedModels[provider]);
         const premiumModel = PROVIDER_MODEL_TIERS[provider].premium;
-        const model = policy.allowPremiumAutoUpgrade && premiumModel ? premiumModel : configuredModel;
+        const model = policy.allowPremiumAutoUpgrade && premiumModel && getAIModelTier(provider, configuredModel) !== 'premium'
+            ? premiumModel
+            : configuredModel;
         addCandidate(provider, model || PROVIDER_MODEL_TIERS[provider].balanced, model !== configuredModel);
     }
     return candidates;

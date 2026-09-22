@@ -1,4 +1,4 @@
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { useSettingsStore, LLMProvider } from '../store/settingsStore';
 import { anonymizeText, deanonymizeText } from '../utils/anonymizer';
 import { safeErrorMetadata } from '../utils/safeError';
@@ -18,6 +18,8 @@ import {
 } from './aiRequestSafety';
 import { classifyAIFailoverReason } from './aiErrorClassification';
 import { lockAttachmentRequestPlan, supportsAttachments } from './aiProviderCapabilities';
+import { aiResponseError, requireAIText, readOpenAIText, readAnthropicText } from './aiTextResponse';
+import { claudeReasoningEffort, geminiThinkingLevel, openAIReasoningEffort, type AIReasoningLevel } from '../config/aiReasoning';
 
 // ──────────────────────────────────────────────
 // 공통 시스템 프롬프트
@@ -720,7 +722,7 @@ function safeApiErrorMetadata(error: any) {
 }
 
 export type GeminiImageModel = 'gemini-3.1-flash-image' | 'gemini-3-pro-image';
-type GeminiTextModel = 'gemini-3.6-flash' | 'gemini-3.5-flash-lite';
+type GeminiTextModel = 'gemini-3.8-flash' | 'gemini-3.6-flash' | 'gemini-3.5-flash-lite';
 
 export const GEMINI_MAX_OUTPUT_TOKENS = 65536;
 
@@ -937,7 +939,7 @@ export async function checkGeminiConnection(apiKey: string, model?: string): Pro
   }
 }
 
-async function callGemini(apiKey: string, model: string, systemPrompt: string, userInput: string, fileDataList?: { mimeType: string; data: string }[], history?: ChatMessage[], signal?: AbortSignal): Promise<string> {
+async function callGemini(apiKey: string, model: string, systemPrompt: string, userInput: string, fileDataList?: { mimeType: string; data: string }[], history?: ChatMessage[], signal?: AbortSignal, reasoningLevel?: AIReasoningLevel): Promise<string> {
   const ai = createGoogleAIClient(apiKey);
   const actualModel = getGeminiModelConfig(model).textModel;
   const startedAt = performance.now();
@@ -977,12 +979,16 @@ async function callGemini(apiKey: string, model: string, systemPrompt: string, u
       config: {
         systemInstruction: systemPrompt,
         maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS,
+        ...(geminiThinkingLevel(actualModel, reasoningLevel) ? {
+          thinkingConfig: { thinkingLevel: geminiThinkingLevel(actualModel, reasoningLevel) as ThinkingLevel },
+        } : {}),
         abortSignal: signal,
         httpOptions: { retryOptions: { attempts: 1 } },
       }
     });
 
-    return stripMarkdown(response.text || '결과를 생성할 수 없습니다.');
+    if (response.candidates?.[0]?.finishReason === 'MAX_TOKENS') throw aiResponseError('AI_TRUNCATED_RESPONSE');
+    return stripMarkdown(requireAIText(response.text));
   } catch (error: any) {
     if (import.meta.env.DEV) console.error('[JJSS AI]', {
       feature: 'text-generation', stage: 'generateContent', provider: 'gemini', model: actualModel,
@@ -995,7 +1001,7 @@ async function callGemini(apiKey: string, model: string, systemPrompt: string, u
 // ──────────────────────────────────────────────
 // OpenAI API 호출
 // ──────────────────────────────────────────────
-async function callOpenAI(apiKey: string, model: string, systemPrompt: string, userInput: string, history?: ChatMessage[], signal?: AbortSignal): Promise<string> {
+async function callOpenAI(apiKey: string, model: string, systemPrompt: string, userInput: string, history?: ChatMessage[], signal?: AbortSignal, reasoningLevel?: AIReasoningLevel): Promise<string> {
   const messages: any[] = [{ role: 'system', content: systemPrompt }];
   
   if (history) {
@@ -1016,6 +1022,9 @@ async function callOpenAI(apiKey: string, model: string, systemPrompt: string, u
       model,
       messages: messages,
       max_completion_tokens: 4096,
+      ...(openAIReasoningEffort(model, reasoningLevel)
+        ? { reasoning_effort: openAIReasoningEffort(model, reasoningLevel) }
+        : {}),
     }),
     signal,
   });
@@ -1030,14 +1039,13 @@ async function callOpenAI(apiKey: string, model: string, systemPrompt: string, u
   }
 
   const data = await response.json();
-  const content = data.choices?.[0]?.message?.content || '결과를 생성할 수 없습니다.';
-  return stripMarkdown(content);
+  return stripMarkdown(readOpenAIText(data));
 }
 
 // ──────────────────────────────────────────────
 // Anthropic API 호출
 // ──────────────────────────────────────────────
-async function callAnthropic(apiKey: string, model: string, systemPrompt: string, userInput: string, history?: ChatMessage[], signal?: AbortSignal): Promise<string> {
+async function callAnthropic(apiKey: string, model: string, systemPrompt: string, userInput: string, history?: ChatMessage[], signal?: AbortSignal, reasoningLevel?: AIReasoningLevel): Promise<string> {
   const messages: any[] = [];
   
   if (history) {
@@ -1059,6 +1067,9 @@ async function callAnthropic(apiKey: string, model: string, systemPrompt: string
     body: JSON.stringify({
       model,
       max_tokens: 4096,
+      ...(claudeReasoningEffort(model, reasoningLevel)
+        ? { output_config: { effort: claudeReasoningEffort(model, reasoningLevel) } }
+        : {}),
       system: systemPrompt,
       messages: messages,
     }),
@@ -1075,7 +1086,7 @@ async function callAnthropic(apiKey: string, model: string, systemPrompt: string
   }
 
   const data = await response.json();
-  return data.content?.[0]?.text || '결과를 생성할 수 없습니다.';
+  return readAnthropicText(data);
 }
 
 // ──────────────────────────────────────────────
@@ -1103,6 +1114,7 @@ const PROVIDER_DISPLAY_NAMES: Record<AIProvider, string> = {
 };
 
 function providerUserFacingError(provider: AIProvider, error: any): Error {
+  if (['AI_EMPTY_RESPONSE', 'AI_TRUNCATED_RESPONSE', 'AI_REFUSED_RESPONSE'].includes(error?.code)) return error;
   if (provider === 'gemini') return normalizeGeminiError(error);
   const status = Number(error?.status || error?.response?.status || 0);
   const reason = classifyAIFailoverReason(error);
@@ -1194,11 +1206,11 @@ export async function generateText(
         if (!candidateConfig?.apiKey) throw new Error(`${PROVIDER_DISPLAY_NAMES[candidate.provider]} API 키가 없습니다.`);
         switch (candidate.provider) {
           case 'gemini':
-            return callGemini(candidateConfig.apiKey, candidate.model, finalSystemPrompt, maskedInput, fileList, options?.history, context.signal);
+            return callGemini(candidateConfig.apiKey, candidate.model, finalSystemPrompt, maskedInput, fileList, options?.history, context.signal, candidateConfig.reasoningLevel);
           case 'openai':
-            return callOpenAI(candidateConfig.apiKey, candidate.model, finalSystemPrompt, maskedInput, options?.history, context.signal);
+            return callOpenAI(candidateConfig.apiKey, candidate.model, finalSystemPrompt, maskedInput, options?.history, context.signal, candidateConfig.reasoningLevel);
           case 'anthropic':
-            return callAnthropic(candidateConfig.apiKey, candidate.model, finalSystemPrompt, maskedInput, options?.history, context.signal);
+            return callAnthropic(candidateConfig.apiKey, candidate.model, finalSystemPrompt, maskedInput, options?.history, context.signal, candidateConfig.reasoningLevel);
         }
       },
       onAttemptError: (candidate, error) => {
@@ -1244,6 +1256,7 @@ export async function generateText(
   } catch (error: any) {
     if (error?.code === 'AI_PREMIUM_CANCELED' || isAIRequestAbort(error) || error?.code === 'AI_DUPLICATE_REQUEST') throw error;
     recordFeatureFailure(featureKey, error);
+    if (['AI_EMPTY_RESPONSE', 'AI_TRUNCATED_RESPONSE', 'AI_REFUSED_RESPONSE'].includes(error?.code)) throw error;
     if (fileList.length) {
       throw new Error('첨부파일이 포함된 작업은 선택한 Gemini에서만 처리합니다. 다른 AI 제공업체로 자동 전환하지 않았습니다. 잠시 후 다시 시도하거나 Gemini 설정을 확인해 주세요.');
     }
@@ -1433,7 +1446,7 @@ async function buildFilePart(ai: GoogleGenAI, file: File): Promise<any> {
   return mimeType === 'application/pdf' ? analyzeDocumentFile(ai, file) : analyzeImageFile(file);
 }
 
-async function generateDocumentText(ai: GoogleGenAI, model: string, prompt: string, contentParts: any[], signal?: AbortSignal): Promise<string> {
+async function generateDocumentText(ai: GoogleGenAI, model: string, prompt: string, contentParts: any[], signal?: AbortSignal, reasoningLevel?: AIReasoningLevel): Promise<string> {
   try {
     const response = await ai.models.generateContent({
       model: getGeminiModelConfig(model).textModel,
@@ -1448,6 +1461,9 @@ async function generateDocumentText(ai: GoogleGenAI, model: string, prompt: stri
       ],
       config: {
         maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS,
+        ...(geminiThinkingLevel(model, reasoningLevel) ? {
+          thinkingConfig: { thinkingLevel: geminiThinkingLevel(model, reasoningLevel) as ThinkingLevel },
+        } : {}),
         abortSignal: signal,
         httpOptions: { retryOptions: { attempts: 1 } },
       },
@@ -1569,7 +1585,7 @@ ${sourceInstruction}하여 아래 지침에 따라 답변해 주세요.${inputBl
 마크다운 서식(## 샵기호, ** 별표 등)을 일절 사용하지 말고, 오직 일반 텍스트 문장과 번호(1. 2.)만을 사용하여 답변해 주세요.`;
 
     job.beginAttempt('gemini', targetModel);
-    const result = await generateDocumentText(ai, targetModel, prompt, contentParts, job.signal);
+    const result = await generateDocumentText(ai, targetModel, prompt, contentParts, job.signal, geminiConfig.reasoningLevel);
     job.assertActive();
     job.finish('completed');
     recordFeatureSuccess(featureKey);
@@ -1682,7 +1698,7 @@ ${maskedReference}
 - 마크다운 서식(## 샵기호, ** 별표 등)을 절대 사용하지 말고 무조건 일반 텍스트로만 작성합니다.`;
 
     job.beginAttempt('gemini', targetModel);
-    const generatedText = await generateDocumentText(ai, targetModel, prompt, contentParts, job.signal);
+    const generatedText = await generateDocumentText(ai, targetModel, prompt, contentParts, job.signal, geminiConfig.reasoningLevel);
     job.assertActive();
     job.finish('completed');
     recordFeatureSuccess(featureKey);

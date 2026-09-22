@@ -1,10 +1,11 @@
-import { forwardRef, useState, useRef, useEffect } from 'react';
+import { forwardRef, useState, useRef, useEffect, useId } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Save, Building2, User, Camera, Loader2, Upload, FileCheck } from 'lucide-react';
 import { useDataStore } from '../store/dataStore';
 import { performOCR, parseSeekerFromOCR } from '../services/ocr';
 import { JobOpening, Seeker } from '../types/matching';
 import { safeErrorMetadata } from '../utils/safeError';
+import { useDialogFocus } from '../hooks/useDialogFocus';
 
 interface JobSeekerModalProps {
     isOpen: boolean;
@@ -48,6 +49,17 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
     const [jobData, setJobData] = useState(emptyJobData);
 
     const [seekerData, setSeekerData] = useState(emptySeekerData);
+    const requestClose = () => {
+        if (loading || bulkLoading || ocrLoading) return;
+        const current = type === 'job' ? jobData : seekerData;
+        const defaults = type === 'job' ? emptyJobData : emptySeekerData;
+        const original = editItem as unknown as Record<string, unknown> | null;
+        const dirty = Object.entries(current).some(([key, value]) =>
+            value !== String(original?.[key] || (defaults as Record<string, string>)[key] || ''));
+        if ((dirty || bulkData.trim() || ocrFile) && !window.confirm('작성 중인 내용이 있습니다. 저장하지 않고 닫으시겠습니까?')) return;
+        onClose();
+    };
+    const dialogRef = useDialogFocus(isOpen, requestClose);
 
     const trimStrings = <T extends Record<string, any>>(data: T): T => {
         return Object.fromEntries(
@@ -247,8 +259,13 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
 
     return (
         <AnimatePresence>
-            <div className="modal-overlay" onClick={onClose}>
+            <div className="modal-overlay" onClick={requestClose}>
                 <motion.div
+                    ref={dialogRef}
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="job-seeker-modal-title"
+                    tabIndex={-1}
                     initial={{ opacity: 0, scale: 0.95, y: 20 }}
                     animate={{ opacity: 1, scale: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -261,16 +278,16 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
                             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary-500 to-accent-500 flex items-center justify-center">
                                 {type === 'job' ? <Building2 className="w-5 h-5 text-white" /> : <User className="w-5 h-5 text-white" />}
                             </div>
-                            <h2 className="text-xl font-bold text-white">
+                            <h2 id="job-seeker-modal-title" className="text-xl font-bold text-white">
                                 {type === 'job'
                                     ? (isEditMode ? '사업체/구인 정보 수정' : '새 구인공고(사업체) 등록')
-                                    : (isEditMode ? '이용자 정보 수정' : '새 구직자 등록')}
+                                    : (isEditMode ? '이용자 정보 수정' : '새 이용자 등록')}
                             </h2>
                         </div>
-                        <button type="button" onClick={onClose} className="btn-ghost !p-2"><X className="w-5 h-5" /></button>
+                        <button type="button" aria-label="등록 창 닫기" onClick={requestClose} className="btn-ghost !p-2"><X className="w-5 h-5" /></button>
                     </div>
 
-                    {!isEditMode && <div className="flex border-b border-white/10 px-6">
+                    {!isEditMode && <div className="flex overflow-x-auto [&>button]:shrink-0 [&>button]:whitespace-nowrap border-b border-white/10 px-6">
                         <button
                             type="button"
                             className={`py-3 px-4 font-medium text-sm border-b-2 transition-all ${inputMode === 'single' ? 'border-primary-500 text-primary-400' : 'border-transparent text-white/50 hover:text-white'}`}
@@ -301,7 +318,7 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
                         {inputMode === 'single' ? (
                             <form onSubmit={handleSubmit} onClick={(e) => e.stopPropagation()} className="space-y-4">
                                 {type === 'job' ? (
-                                    <div className="grid grid-cols-2 gap-4">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                         <Input label="상담일자" value={jobData.counselDate} onChange={(v: string) => setJobData(prev => ({ ...prev, counselDate: v }))} placeholder="2026-02-20" />
                                         <Input ref={companyNameInputRef} label="회사명" value={jobData.companyName} onChange={(v: string) => setJobData(prev => ({ ...prev, companyName: v }))} placeholder="ㅇㅇ복지센타" required />
                                         <Input label="근무지역" value={jobData.location} onChange={(v: string) => setJobData(prev => ({ ...prev, location: v }))} placeholder="서울시 강남구" />
@@ -314,7 +331,7 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
                                         <Select label="채용상태" value={jobData.hiringStatus} onChange={(v: string) => setJobData(prev => ({ ...prev, hiringStatus: v }))} options={['모집중', '면접예정', '채용완료', '보류', '마감']} />
                                         <Input label="담당자" value={jobData.contactPerson} onChange={(v: string) => setJobData(prev => ({ ...prev, contactPerson: v }))} placeholder="담당자명 또는 직책" />
                                         <Input label="연락처" value={jobData.contactPhone} onChange={(v: string) => setJobData(prev => ({ ...prev, contactPhone: v }))} placeholder="연락 가능한 번호" />
-                                        <div className="col-span-2 mt-2 pt-4 border-t border-white/10">
+                                        <div className="sm:col-span-2 mt-2 pt-4 border-t border-white/10">
                                             <p className="text-sm font-bold text-white/80 mb-3">상세 직무정보</p>
                                             <div className="space-y-4">
                                                 <TextArea label="직무내용" value={jobData.jobDescription} onChange={(v: string) => setJobData(prev => ({ ...prev, jobDescription: v }))} placeholder="주요 업무, 작업 순서, 사용하는 도구, 작업환경 등을 적어주세요." />
@@ -324,7 +341,7 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
                                         </div>
                                     </div>
                                 ) : (
-                                    <div className="grid grid-cols-2 gap-4">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                         <Input label="구직자 이름" value={seekerData.name} onChange={(v: string) => setSeekerData(prev => ({ ...prev, name: v }))} placeholder="홍길동" required />
                                         <Input label="구직자 ID" value={seekerData.seekerId} onChange={(v: string) => setSeekerData(prev => ({ ...prev, seekerId: v }))} placeholder="S-001" />
                                         <Input label="현재 상황" value={seekerData.status} onChange={(v: string) => setSeekerData(prev => ({ ...prev, status: v }))} placeholder="구직중/취업/대기중" />
@@ -337,7 +354,7 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
                                         <Input label="희망임금" value={seekerData.desiredSalary} onChange={(v: string) => setSeekerData(prev => ({ ...prev, desiredSalary: v }))} placeholder="200만원" />
                                         <Input label="추천기관" value={seekerData.recommendingAgency} onChange={(v: string) => setSeekerData(prev => ({ ...prev, recommendingAgency: v }))} placeholder="뫄뫄센터" />
                                         <Input label="희망 근무시간" value={seekerData.desiredWorkHours} onChange={(v: string) => setSeekerData(prev => ({ ...prev, desiredWorkHours: v }))} placeholder="30시간" />
-                                        <div className="col-span-2">
+                                        <div className="sm:col-span-2">
                                             <TextArea label="비고 (강점, 제한점 등)" value={seekerData.notes} onChange={(v: string) => setSeekerData(prev => ({ ...prev, notes: v }))} placeholder="엑셀 활용 가능, 대인관계 우수 등" />
                                         </div>
                                     </div>
@@ -348,7 +365,7 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
                                     {loading ? '저장 중...' : (isEditMode ? '변경사항 저장' : '저장하기')}
                                 </button>
                                 {isEditMode && (
-                                    <button type="button" onClick={onClose} className="btn-ghost w-full flex items-center justify-center gap-2">
+                                    <button type="button" onClick={requestClose} className="btn-ghost w-full flex items-center justify-center gap-2">
                                         수정 취소
                                     </button>
                                 )}
@@ -401,6 +418,13 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
 
                                 {/* 파일 업로드 영역 */}
                                 <div
+                                    role="button"
+                                    tabIndex={0}
+                                    aria-label="상담기록지 이미지 선택"
+                                    onKeyDown={event => {
+                                        if (event.target !== event.currentTarget) return;
+                                        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); ocrFileRef.current?.click(); }
+                                    }}
                                     className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all ${ocrDone ? 'border-green-500/50 bg-green-500/5' : 'border-white/20 hover:border-primary-500/50 hover:bg-white/5'}`}
                                     onClick={() => ocrFileRef.current?.click()}
                                 >
@@ -459,7 +483,7 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
                                 {ocrDone && (
                                     <form onSubmit={handleSubmit} onClick={(e) => e.stopPropagation()} className="space-y-4 border-t border-white/10 pt-4">
                                         <p className="text-white/60 text-sm">자동 인식 결과를 확인하고 필요한 부분을 수정하세요</p>
-                                        <div className="grid grid-cols-2 gap-4">
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                             <Input label="구직자 이름" value={seekerData.name} onChange={(v: string) => setSeekerData(prev => ({ ...prev, name: v }))} placeholder="홍길동" required />
                                             <Input label="구직자 ID" value={seekerData.seekerId} onChange={(v: string) => setSeekerData(prev => ({ ...prev, seekerId: v }))} placeholder="S-001" />
                                             <Input label="현재 상황" value={seekerData.status} onChange={(v: string) => setSeekerData(prev => ({ ...prev, status: v }))} placeholder="구직중" />
@@ -472,7 +496,7 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
                                             <Input label="희망임금" value={seekerData.desiredSalary} onChange={(v: string) => setSeekerData(prev => ({ ...prev, desiredSalary: v }))} placeholder="200만원" />
                                             <Input label="추천기관" value={seekerData.recommendingAgency} onChange={(v: string) => setSeekerData(prev => ({ ...prev, recommendingAgency: v }))} />
                                             <Input label="희망 근무시간" value={seekerData.desiredWorkHours} onChange={(v: string) => setSeekerData(prev => ({ ...prev, desiredWorkHours: v }))} placeholder="30시간" />
-                                            <div className="col-span-2">
+                                            <div className="sm:col-span-2">
                                                 <TextArea label="비고" value={seekerData.notes} onChange={(v: string) => setSeekerData(prev => ({ ...prev, notes: v }))} placeholder="추가 참고사항" />
                                             </div>
                                         </div>
@@ -495,6 +519,7 @@ const Input = forwardRef<HTMLInputElement, any>(function Input(
     { label, value, onChange, placeholder, type = 'text', required = false },
     ref
 ) {
+    const inputId = useId();
     const [draftValue, setDraftValue] = useState(String(value ?? ''));
     const [isComposing, setIsComposing] = useState(false);
 
@@ -506,8 +531,9 @@ const Input = forwardRef<HTMLInputElement, any>(function Input(
 
     return (
         <div>
-            <label className="block text-sm font-medium text-white/70 mb-1.5">{label} {required && <span className="text-red-400">*</span>}</label>
+            <label htmlFor={inputId} className="block text-sm font-medium text-white/70 mb-1.5">{label} {required && <span className="text-red-400">*</span>}</label>
             <input
+                id={inputId}
                 ref={ref}
                 type={type}
                 placeholder={placeholder}
@@ -534,10 +560,11 @@ const Input = forwardRef<HTMLInputElement, any>(function Input(
 });
 
 function Select({ label, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: string[] }) {
+    const inputId = useId();
     return (
         <div>
-            <label className="block text-sm font-medium text-white/70 mb-1.5">{label}</label>
-            <select value={value} onChange={(e) => onChange(e.target.value)} className="input-field">
+            <label htmlFor={inputId} className="block text-sm font-medium text-white/70 mb-1.5">{label}</label>
+            <select id={inputId} value={value} onChange={(e) => onChange(e.target.value)} className="input-field">
                 {options.map(option => <option key={option} value={option}>{option}</option>)}
             </select>
         </div>

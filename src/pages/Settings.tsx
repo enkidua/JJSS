@@ -11,7 +11,8 @@ import {
     saveJjssText, savedLocationMessage,
 } from '../utils/jjssFileService';
 import type { JjssFileCategory, JjssPaths, LegacyImportPreview } from '../types/jjssFiles';
-import { AI_MODEL_LABELS, AI_MODEL_OPTIONS } from '../config/aiModels';
+import { AI_MODEL_LABELS, AI_MODEL_OPTIONS, AI_MODEL_CATALOG_UPDATED_AT, DEFAULT_AI_MODEL_LABELS } from '../config/aiModels';
+import { getAIReasoningLevels, type AIReasoningLevel } from '../config/aiReasoning';
 import {
     normalizeAIFailover,
     type AIFailoverSettings,
@@ -60,7 +61,7 @@ const providerInfo: Record<LLMProvider, { label: string; color: string; gradient
 };
 
 export default function Settings() {
-    const { settings, loadSettings, updateApiKey, updateModel, setSelectedProvider, updateVisionApiKey, updateAIFailover, loaded, error, recoveryNotice } = useSettingsStore();
+    const { settings, loadSettings, updateApiKey, updateModel, updateReasoningLevel, setSelectedProvider, updateVisionApiKey, updateAIFailover, loaded, error, recoveryNotice } = useSettingsStore();
     const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
     const [showVisionKey, setShowVisionKey] = useState(false);
     const [saved, setSaved] = useState(false);
@@ -70,6 +71,7 @@ export default function Settings() {
     const [fileOperationMessage, setFileOperationMessage] = useState('');
     const [fileOperationBusy, setFileOperationBusy] = useState(false);
     const [geminiCheck, setGeminiCheck] = useState<{ busy: boolean; message: string; error: boolean }>({ busy: false, message: '', error: false });
+    const [modelSettingsBusy, setModelSettingsBusy] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const aiFailover = normalizeAIFailover(settings.aiFailover);
     const todayAIUsage = getTodayAIRequestUsage();
@@ -96,11 +98,28 @@ export default function Settings() {
     };
 
     const handleModelChange = async (provider: LLMProvider, model: string) => {
+        if (modelSettingsBusy) return;
+        setModelSettingsBusy(true);
         try {
             await updateModel(provider, model);
             flashSaved();
         } catch (err: any) {
             alert(err?.message || '모델 설정 저장 중 오류가 발생했습니다.');
+        } finally {
+            setModelSettingsBusy(false);
+        }
+    };
+
+    const handleReasoningChange = async (provider: LLMProvider, level: AIReasoningLevel) => {
+        if (modelSettingsBusy) return;
+        setModelSettingsBusy(true);
+        try {
+            await updateReasoningLevel(provider, level);
+            flashSaved();
+        } catch (err: any) {
+            alert(err?.message || '추론 수준 저장 중 오류가 발생했습니다.');
+        } finally {
+            setModelSettingsBusy(false);
         }
     };
 
@@ -266,9 +285,24 @@ export default function Settings() {
                         <SettingsIcon className="w-4 h-4 text-primary-400" />
                         <span className="text-sm text-primary-300 font-medium">시스템 설정</span>
                     </div>
-                    <h1 className="section-title mb-3">API 설정</h1>
-                    <p className="text-white/50 text-lg">AI 모델 API 키를 설정하고 기본 모델을 선택하세요</p>
+                    <h1 className="section-title mb-3">시스템 설정</h1>
+                    <p className="text-white/50 text-lg">AI, 비용 보호, 파일 저장 위치와 백업을 한곳에서 관리하세요</p>
                 </motion.div>
+
+                <nav aria-label="설정 항목 바로가기" className="sticky top-20 z-20 mb-8 overflow-x-auto rounded-2xl border border-white/10 bg-slate-950/85 p-2 shadow-xl backdrop-blur-xl">
+                    <div className="flex min-w-max gap-2">
+                        {[
+                            ['ai-model', 'AI 모델'], ['ai-failover', '비용·자동 전환'],
+                            ['api-keys', 'API 키'], ['files-backup', '파일·백업'],
+                        ].map(([id, label]) => (
+                            <button key={id} type="button" onClick={() => {
+                                const section = document.getElementById(id);
+                                section?.focus({ preventScroll: true });
+                                section?.scrollIntoView({ block: 'start', behavior: 'auto' });
+                            }} className="rounded-xl px-4 py-2 text-sm font-semibold text-white/70 transition hover:bg-white/10 hover:text-white">{label}</button>
+                        ))}
+                    </div>
+                </nav>
 
                 {/* 보안 안내 */}
                 <motion.div
@@ -297,13 +331,17 @@ export default function Settings() {
                     <div className="text-xs leading-relaxed text-white/55">
                         <p className="text-white/80 text-sm font-medium mb-2">비용·quota 안내</p>
                         <p>일반 문서 생성은 비용 부담이 낮은 편입니다. 이미지 생성, PDF/이미지 분석, OCR 반복 실행은 더 많은 quota를 사용할 수 있습니다.</p>
-                        <p className="mt-1">기본 모델은 Gemini 3.6 Flash, GPT-5.6 Terra, Claude Sonnet 5입니다. 자동 전환은 기본적으로 꺼져 있으며, 사용자가 허용한 비용 정책과 제공업체 범위 안에서만 최대 3회 시도합니다.</p>
+                        <p className="mt-1">신규 설정의 기본 모델: {Object.values(DEFAULT_AI_MODEL_LABELS).join(' / ')}. 기존에 저장한 모델 선택은 유지됩니다.</p>
+                        <p className="mt-1">모델 목록 확인일: {AI_MODEL_CATALOG_UPDATED_AT}. 자동 전환은 기본적으로 꺼져 있으며, 사용자가 허용한 비용 정책과 제공업체 범위 안에서만 최대 3회 시도합니다. 고비용 최신 모델은 직접 선택한 경우에만 사용합니다. 계정별 모델 접근 권한과 요금은 제공업체에서 확인하세요.</p>
+                        <p className="mt-1">추론 수준을 높이면 응답이 느려지고 사고 토큰 사용량이 늘 수 있습니다. 실제 비용은 제공업체의 사용량과 요금 정책을 확인하세요.</p>
                     </div>
                 </motion.div>
 
                 {/* 저장 완료 알림 */}
                 {(error || recoveryNotice) && (
                     <motion.div
+                        role={error ? 'alert' : 'status'}
+                        aria-live={error ? 'assertive' : 'polite'}
                         initial={{ opacity: 0, y: -10 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0 }}
@@ -317,6 +355,8 @@ export default function Settings() {
                 {/* 저장 완료 알림 */}
                 {saved && (
                     <motion.div
+                        role="status"
+                        aria-live="polite"
                         initial={{ opacity: 0, y: -10 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0 }}
@@ -329,10 +369,12 @@ export default function Settings() {
 
                 {/* 기본 모델 선택 */}
                 <motion.div
+                    id="ai-model"
+                    tabIndex={-1}
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.15 }}
-                    className="glass-card mb-6"
+                    className="glass-card mb-6 scroll-mt-40"
                 >
                     <div className="flex items-center gap-2 mb-4">
                         <Server className="w-5 h-5 text-primary-400" />
@@ -346,6 +388,7 @@ export default function Settings() {
                             const hasKey = config.apiKey.length > 0;
                             return (
                                 <button
+                                    type="button"
                                     key={config.provider}
                                     onClick={() => handleProviderSelect(config.provider)}
                                     className={`p-4 rounded-xl border text-left transition-all duration-200 ${
@@ -381,10 +424,12 @@ export default function Settings() {
 
                 {/* AI 자동 전환 및 비용 정책 */}
                 <motion.div
+                    id="ai-failover"
+                    tabIndex={-1}
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.18 }}
-                    className="glass-card mb-6"
+                    className="glass-card mb-6 scroll-mt-40"
                 >
                     <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                         <div>
@@ -520,7 +565,7 @@ export default function Settings() {
                 </motion.div>
 
                 {/* 각 모델별 설정 */}
-                <div className="space-y-4">
+                <div id="api-keys" tabIndex={-1} className="space-y-4 scroll-mt-40">
                     {settings.llmConfigs.map((config, idx) => {
                         const info = providerInfo[config.provider];
                         const isShowing = showKeys[config.provider];
@@ -544,11 +589,12 @@ export default function Settings() {
 
                                 {/* API Key */}
                                 <div className="mb-4">
-                                    <label className="block text-sm font-medium text-white/70 mb-1.5 flex items-center gap-1.5">
+                                    <label htmlFor={`api-key-${config.provider}`} className="block text-sm font-medium text-white/70 mb-1.5 flex items-center gap-1.5">
                                         <Key className="w-3.5 h-3.5" /> API 키
                                     </label>
                                     <div className="relative">
                                         <input
+                                            id={`api-key-${config.provider}`}
                                             type={isShowing ? 'text' : 'password'}
                                             placeholder="API 키를 입력하세요"
                                             value={config.apiKey}
@@ -556,6 +602,8 @@ export default function Settings() {
                                             className="input-field !pr-12 font-mono text-sm"
                                         />
                                         <button
+                                            type="button"
+                                            aria-label={`${info.label} API 키 ${isShowing ? '숨기기' : '보기'}`}
                                             onClick={() => toggleShowKey(config.provider)}
                                             className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white/60 transition-colors"
                                         >
@@ -566,13 +614,15 @@ export default function Settings() {
 
                                 {/* Model Select */}
                                 <div>
-                                    <label className="block text-sm font-medium text-white/70 mb-1.5 flex items-center gap-1.5">
+                                    <label htmlFor={`model-${config.provider}`} className="block text-sm font-medium text-white/70 mb-1.5 flex items-center gap-1.5">
                                         <Server className="w-3.5 h-3.5" /> 모델
                                     </label>
                                     <div className="relative">
                                         <select
+                                            id={`model-${config.provider}`}
                                             value={config.model}
                                             onChange={(e) => handleModelChange(config.provider, e.target.value)}
+                                            disabled={modelSettingsBusy}
                                             className="input-field appearance-none cursor-pointer text-sm"
                                         >
                                             {config.availableModels.map((m) => (
@@ -586,12 +636,35 @@ export default function Settings() {
                                     <p className="mt-2 text-xs text-white/40">
                                         {AI_MODEL_OPTIONS[config.provider].find(option => option.id === config.model)?.description}
                                     </p>
+                                    <div className="mt-4">
+                                        <label htmlFor={`reasoning-${config.provider}`} className="block text-sm font-medium text-white/70 mb-1.5">
+                                            {config.label} 추론 수준
+                                        </label>
+                                        <select
+                                            id={`reasoning-${config.provider}`}
+                                            value={config.reasoningLevel || 'auto'}
+                                            onChange={event => void handleReasoningChange(config.provider, event.target.value as AIReasoningLevel)}
+                                            disabled={modelSettingsBusy || getAIReasoningLevels(config.provider, config.model).length === 1}
+                                            className="input-field cursor-pointer text-sm disabled:opacity-60"
+                                        >
+                                            {getAIReasoningLevels(config.provider, config.model).map(level => (
+                                                <option key={level} value={level}>
+                                                    {level === 'auto' ? '모델 기본값' : level === 'low' ? '낮음 · 빠른 응답' : level === 'medium' ? '보통 · 균형' : '높음 · 심층 분석'}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <p className="mt-2 text-xs text-white/45">
+                                            {config.provider === 'anthropic' && config.model === 'claude-haiku-4-5'
+                                                ? 'Haiku 4.5는 별도의 사고 토큰 예산 방식이므로 모델 기본값을 사용합니다.'
+                                                : '모델을 바꾸면 지원하지 않는 추론 수준은 모델 기본값으로 돌아갑니다. 자동 전환 시에도 해당 제공업체의 수준을 사용합니다.'}
+                                        </p>
+                                    </div>
                                     {config.provider === 'gemini' && (
                                         <div className="mt-3 flex flex-wrap items-center gap-3">
                                             <button type="button" disabled={geminiCheck.busy} onClick={() => void handleGeminiCheck(config.apiKey, config.model)} className="btn-secondary !px-3 !py-2 text-xs disabled:opacity-50">
                                                 {geminiCheck.busy ? '연결 확인 중…' : 'Gemini 연결 확인'}
                                             </button>
-                                            {geminiCheck.message && <span className={`text-xs ${geminiCheck.error ? 'text-red-300' : 'text-emerald-300'}`}>{geminiCheck.message}</span>}
+                                            {geminiCheck.message && <span role={geminiCheck.error ? 'alert' : 'status'} aria-live={geminiCheck.error ? 'assertive' : 'polite'} className={`text-xs ${geminiCheck.error ? 'text-red-300' : 'text-emerald-300'}`}>{geminiCheck.message}</span>}
                                         </div>
                                     )}
                                 </div>
@@ -618,11 +691,12 @@ export default function Settings() {
                     </div>
 
                     <div className="mb-4">
-                        <label className="block text-sm font-medium text-white/70 mb-1.5 flex items-center gap-1.5">
+                        <label htmlFor="vision-api-key" className="block text-sm font-medium text-white/70 mb-1.5 flex items-center gap-1.5">
                             <Key className="w-3.5 h-3.5" /> Vision API 키
                         </label>
                         <div className="relative">
                             <input
+                                id="vision-api-key"
                                 type={showVisionKey ? 'text' : 'password'}
                                 placeholder="Vision API 키를 입력하세요"
                                 value={settings.visionApiKey}
@@ -630,6 +704,8 @@ export default function Settings() {
                                 className="input-field !pr-12 font-mono text-sm"
                             />
                             <button
+                                type="button"
+                                aria-label={`Vision API 키 ${showVisionKey ? '숨기기' : '보기'}`}
                                 onClick={() => setShowVisionKey(!showVisionKey)}
                                 className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white/60 transition-colors"
                             >
@@ -652,10 +728,12 @@ export default function Settings() {
 
                 {/* 데이터 백업 및 복원 (마이그레이션) */}
                 <motion.div
+                    id="files-backup"
+                    tabIndex={-1}
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.5 }}
-                    className="glass-card !p-6 mt-8 mb-20"
+                    className="glass-card !p-6 mt-8 mb-20 scroll-mt-40"
                 >
                     <div className="flex items-center gap-3 mb-6">
                         <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-blue-600 flex items-center justify-center">
@@ -680,7 +758,7 @@ export default function Settings() {
                         <p>JJSS 데이터는 기본적으로 현재 PC의 앱 저장소(IndexedDB/localStorage)에 저장됩니다. 개발/브라우저 모드에서는 브라우저 IndexedDB/localStorage에 저장됩니다.</p>
                         <p className="mt-2">Windows: 기존 버전을 삭제하거나 새 버전으로 교체하기 전에는 반드시 데이터 백업을 먼저 실행해 주세요. 현재 Windows 설치 파일의 언인스톨 동작이 환경에 따라 완전하지 않을 수 있으므로, 백업 파일을 별도 폴더에 보관해 주세요.</p>
                         <p className="mt-2">macOS: 앱 파일을 삭제하거나 새 dmg로 교체하기 전에도 데이터 백업을 권장합니다. 로컬 저장소가 유지될 수 있으나 사용 환경에 따라 데이터가 사라질 수 있으므로, Apple Silicon용 dmg 설치 전 데이터 내보내기를 실행해 주세요.</p>
-                        <p className="mt-2">설치 파일 또는 dmg를 다시 실행해도 업데이트 전 백업을 권장합니다. Windows 설치형 JJSS에서 생성한 백업과 문서는 아래 표시된 사용자 Documents의 JJSS 폴더를 기본 위치로 사용합니다.</p>
+                        <p className="mt-2">설치 파일 또는 dmg를 다시 실행해도 업데이트 전 백업을 권장합니다. Windows에서는 쓰기 가능한 D: 드라이브가 있으면 D:\JJSS를 우선 제안하고, 사용할 수 없으면 Windows가 반환한 Documents 경로의 JJSS 폴더를 사용합니다. 실제 적용 경로는 아래에 표시됩니다.</p>
                     </div>
 
                     <div className="mb-4 rounded-xl border border-emerald-400/20 bg-emerald-500/10 p-4 text-xs leading-relaxed text-emerald-100/80">
@@ -715,7 +793,7 @@ export default function Settings() {
                             />
                             <span>선택한 폴더의 하위 폴더도 확인 (기본 켜짐, 최대 5단계·5,000개)</span>
                         </label>
-                        {fileOperationMessage && <p className="mt-3 rounded-lg bg-black/15 px-3 py-2 text-white/75 whitespace-pre-wrap">{fileOperationMessage}</p>}
+                        {fileOperationMessage && <p role="status" aria-live="polite" className="mt-3 rounded-lg bg-black/15 px-3 py-2 text-white/75 whitespace-pre-wrap">{fileOperationMessage}</p>}
                         {legacyPreview && !legacyPreview.canceled && (
                             <div className="mt-4 rounded-xl border border-white/10 bg-black/15 p-4">
                                 <p className="font-bold text-white">발견한 JJSS 파일: {legacyPreview.total || 0}개</p>

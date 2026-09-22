@@ -21,6 +21,13 @@ const features = [
         path: '/manage',
     },
     {
+        icon: LayoutDashboard,
+        title: '직업재활 현황판',
+        desc: '이용자별 후속 일정, 목표 변화와 작성된 사례문서를 한곳에서 확인합니다.',
+        color: 'from-teal-500 to-cyan-600',
+        path: '/overview',
+    },
+    {
         icon: FileSearch,
         title: '직업평가',
         desc: 'PDF·이미지·텍스트 검사 결과를 분석하고, 직업평가 종합소견서를 작성·보완합니다.',
