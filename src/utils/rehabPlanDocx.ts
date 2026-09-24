@@ -4,8 +4,12 @@ import { saveJjssBlob } from './jjssFileService';
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
+// XML 1.0에서 허용하지 않는 제어문자·짝 없는 서로게이트 (탭·줄바꿈은 허용)
+const XML_INVALID_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
 function escapeXml(value: string) {
     return value
+        .replace(XML_INVALID_CHARS, '')
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
@@ -31,7 +35,25 @@ function formatAchievement(goals: RehabPlanGoal[], expected: boolean) {
         .join('\n');
 }
 
-function buildTemplateValues(data: RehabPlanFormData): Record<string, string> {
+function normalizeForCompare(value: string) {
+    return value.replace(/[\s*_#]+/g, '');
+}
+
+/**
+ * Word 양식에는 사례회의 "결론" 칸이 따로 없으므로 내용 칸 끝에 "결론: …"으로 붙인다.
+ * 내용에 이미 결론 문장이 들어 있으면 중복해서 붙이지 않는다.
+ */
+export function buildCaseMeetingContentForDocx(caseMeeting: RehabPlanFormData['caseMeeting']): string {
+    const content = (caseMeeting.content || '').trim();
+    const conclusion = (caseMeeting.conclusion || '').trim();
+    if (!conclusion) return content;
+    const normalizedConclusion = normalizeForCompare(conclusion);
+    if (normalizedConclusion && normalizeForCompare(content).includes(normalizedConclusion)) return content;
+    const conclusionLine = `결론: ${conclusion}`;
+    return content ? `${content}\n\n${conclusionLine}` : conclusionLine;
+}
+
+export function buildRehabPlanTemplateValues(data: RehabPlanFormData): Record<string, string> {
     return {
         approval_team_lead: data.approval.teamLead,
         approval_department_head: data.approval.departmentHead,
@@ -53,7 +75,7 @@ function buildTemplateValues(data: RehabPlanFormData): Record<string, string> {
         case_meeting_date_time: data.caseMeeting.dateTime,
         case_meeting_place: data.caseMeeting.place,
         case_meeting_purpose: data.caseMeeting.purpose,
-        case_meeting_content: data.caseMeeting.content,
+        case_meeting_content: buildCaseMeetingContentForDocx(data.caseMeeting),
         strengths: data.strengths,
         considerations: data.considerations,
         support_direction: data.supportDirection,
@@ -108,12 +130,14 @@ export async function createRehabPlanDocxBlob(data: RehabPlanFormData, templateI
     if (!documentFile) throw new Error('Word 양식의 본문을 찾지 못했습니다.');
 
     let documentXml = await documentFile.async('string');
-    const values = buildTemplateValues(data);
+    const values = buildRehabPlanTemplateValues(data);
     for (const [key, value] of Object.entries(values)) {
         const token = `{{${key}}}`;
         const occurrences = documentXml.split(token).length - 1;
         if (occurrences !== 1) throw new Error('Word 양식의 필드 구성이 예상과 다릅니다.');
-        documentXml = documentXml.replace(token, encodeWordText(value || ''));
+        const encoded = encodeWordText(value || '');
+        // 함수 치환: 사용자 입력의 "$&", "$1" 같은 문자열이 치환 패턴으로 해석되지 않게 한다.
+        documentXml = documentXml.replace(token, () => encoded);
     }
     if (/\{\{[a-z0-9_]+\}\}/i.test(documentXml)) {
         throw new Error('Word 양식에 치환되지 않은 필드가 남아 있습니다.');

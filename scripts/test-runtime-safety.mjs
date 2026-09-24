@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 
-const budgetSource = await readFile(new URL('../src/pages/BudgetManagement.tsx', import.meta.url), 'utf8');
+// 예산 화면은 src/pages/budget/* 로 나뉘었으므로 페이지와 하위 파일을 함께 검사합니다.
+const budgetDir = new URL('../src/pages/budget/', import.meta.url);
+const budgetFiles = (await readdir(budgetDir)).filter(name => /\.(ts|tsx)$/.test(name));
+const budgetSource = [
+    await readFile(new URL('../src/pages/BudgetManagement.tsx', import.meta.url), 'utf8'),
+    ...(await Promise.all(budgetFiles.map(name => readFile(new URL(name, budgetDir), 'utf8')))),
+].join(String.fromCharCode(10));
 const toolsSource = await readFile(new URL('../src/pages/AITools.tsx', import.meta.url), 'utf8');
 const exportSource = await readFile(new URL('../src/utils/localDocumentExport.ts', import.meta.url), 'utf8');
 const previewSource = await readFile(new URL('../src/components/RehabPlanTemplatePreview.tsx', import.meta.url), 'utf8');
@@ -15,6 +21,9 @@ const saveNoticeSource = await readFile(new URL('../src/components/JjssFileSaveN
 assert.doesNotMatch(budgetSource, /setForm\(\{\s*\.\.\.form,/);
 assert.doesNotMatch(budgetSource, /setProjectForm\(\{\s*\.\.\.projectForm,/);
 assert.doesNotMatch(budgetSource, /setDocForm\(\{\s*\.\.\.docForm,/);
+// 검사 대상이 실제로 존재하는지 확인해 빈 검사가 되지 않게 합니다.
+assert.match(budgetSource, /setForm\(prev\s*=>/);
+assert.match(budgetSource, /setProjectForm\(prev\s*=>/);
 
 let state = { name: '', memo: '' };
 const updates = [

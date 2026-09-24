@@ -1,5 +1,9 @@
 import { useEffect, useRef } from 'react';
 
+// 열린 대화상자 순서. 확인창처럼 나중에 열린(가장 위) 창만 Esc·Tab을 처리해야
+// 아래 창이 같은 키에 반응해 확인창이 겹쳐 쌓이지 않습니다.
+const openDialogStack: symbol[] = [];
+
 /** Keep keyboard focus within an open dialog and restore its trigger on close. */
 export function useDialogFocus(open: boolean, onClose: () => void) {
     const dialogRef = useRef<HTMLDivElement>(null);
@@ -8,6 +12,8 @@ export function useDialogFocus(open: boolean, onClose: () => void) {
 
     useEffect(() => {
         if (!open) return;
+        const dialogId = Symbol('dialog');
+        openDialogStack.push(dialogId);
         const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
         const focusable = () => Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(
             'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]',
@@ -17,6 +23,7 @@ export function useDialogFocus(open: boolean, onClose: () => void) {
             (initial || focusable()[0] || dialogRef.current)?.focus();
         });
         const onKeyDown = (event: KeyboardEvent) => {
+            if (openDialogStack[openDialogStack.length - 1] !== dialogId) return;
             if (event.key === 'Escape' && !event.isComposing) {
                 event.preventDefault();
                 closeRef.current();
@@ -35,6 +42,8 @@ export function useDialogFocus(open: boolean, onClose: () => void) {
         };
         document.addEventListener('keydown', onKeyDown);
         return () => {
+            const index = openDialogStack.lastIndexOf(dialogId);
+            if (index >= 0) openDialogStack.splice(index, 1);
             cancelAnimationFrame(frame);
             document.removeEventListener('keydown', onKeyDown);
             if (previous?.isConnected) previous.focus();

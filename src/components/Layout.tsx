@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import Navbar from './Navbar';
 import { useDataStore } from '../store/dataStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { safeErrorMetadata } from '../utils/safeError';
+import { DATA_RECOVERY_EVENT, getDataRecoveryStatus, type DataRecoveryStatus } from '../config/localDB';
 import JjssFileSaveNotice from './JjssFileSaveNotice';
 import ApiKeyOnboarding from './ApiKeyOnboarding';
 import ApiKeyRequiredNotice from './ApiKeyRequiredNotice';
@@ -14,6 +15,7 @@ import { cancelActiveAIRequestJobs } from '../services/aiRequestSafety';
 const PAGE_TITLES: Record<string, string> = {
     '/': '서비스 소개',
     '/manage': '이용자 및 사업체 관리',
+    '/overview': '직업재활 현황판',
     '/evaluation': '직업평가',
     '/training': '직업훈련',
     '/workmate': '고용지원',
@@ -22,6 +24,12 @@ const PAGE_TITLES: Record<string, string> = {
     '/infomate': '자료수집',
     '/settings': '설정',
 };
+
+function dataRecoveryMessage(status: DataRecoveryStatus): string {
+    return status.dataKeyUnavailable
+        ? '이 PC의 보안 키를 불러오지 못해 암호화된 이용자 정보 일부를 표시할 수 없습니다. 다른 PC나 다른 Windows 사용자 계정으로 데이터를 옮긴 경우 생길 수 있습니다. 저장된 원본은 지우지 않았습니다. 설정 > 파일·백업에서 백업 파일로 복원해 주세요.'
+        : '암호화된 이용자 정보 일부를 읽지 못해 빈 칸으로 표시했습니다. 저장된 원본은 지우지 않았습니다. 내용이 비어 있다면 설정 > 파일·백업에서 최근 백업 파일로 복원해 주세요.';
+}
 
 function getInitialLoadIssues() {
     const dataState = useDataStore.getState();
@@ -36,7 +44,22 @@ export default function Layout() {
     const fetchData = useDataStore(state => state.fetchData);
     const loadSettings = useSettingsStore(state => state.loadSettings);
     const location = useLocation();
+    const navigate = useNavigate();
     const [loadIssues, setLoadIssues] = useState<string[]>([]);
+    const [dataRecovery, setDataRecovery] = useState<DataRecoveryStatus | null>(null);
+    const [dataRecoveryDismissed, setDataRecoveryDismissed] = useState(false);
+
+    useEffect(() => {
+        // 암호화된 개인정보를 읽지 못했을 때(보안 키 없음 등) 복구 안내를 띄운다.
+        const showRecovery = (event: Event) => {
+            setDataRecovery((event as CustomEvent<DataRecoveryStatus>).detail || getDataRecoveryStatus());
+            setDataRecoveryDismissed(false);
+        };
+        window.addEventListener(DATA_RECOVERY_EVENT, showRecovery);
+        const current = getDataRecoveryStatus();
+        if (current.unreadableCount > 0) setDataRecovery(current);
+        return () => window.removeEventListener(DATA_RECOVERY_EVENT, showRecovery);
+    }, []);
     const [retrying, setRetrying] = useState(false);
     const [initialLoading, setInitialLoading] = useState(true);
 
@@ -112,11 +135,14 @@ export default function Layout() {
                 본문으로 건너뛰기
             </a>
             <Navbar />
-            <JjssFileSaveNotice />
             <ApiKeyOnboarding />
             <ApiKeyRequiredNotice />
             <PremiumUseConfirmDialog />
-            <AIUsageNotice />
+            {/* 오른쪽 아래 알림은 한 곳에 위아래로 쌓아 서로 겹치지 않게 한다. */}
+            <div className="pointer-events-none fixed bottom-4 right-4 z-[9998] flex w-[min(92vw,32rem)] flex-col items-end gap-3">
+                <AIUsageNotice />
+                <JjssFileSaveNotice />
+            </div>
             <main id="main-content" tabIndex={-1} className="pt-16 flex-1 relative focus:outline-none">
                 {initialLoading && <p role="status" className="mx-auto max-w-7xl px-6 py-3 text-sm text-white/70">저장된 데이터와 설정을 불러오는 중입니다…</p>}
                 {loadIssues.length > 0 && (
@@ -139,6 +165,33 @@ export default function Layout() {
                         >
                             {retrying ? '다시 불러오는 중…' : '다시 시도'}
                         </button>
+                    </section>
+                )}
+                {dataRecovery && !dataRecoveryDismissed && (
+                    <section
+                        role="alert"
+                        className="mx-auto mt-4 flex w-[min(92%,80rem)] flex-col gap-3 rounded-xl border border-amber-400/40 bg-amber-950/80 px-4 py-3 text-sm text-amber-50 shadow-lg sm:flex-row sm:items-center sm:justify-between"
+                    >
+                        <div>
+                            <p className="font-bold">저장된 개인정보 일부를 읽지 못했습니다.</p>
+                            <p className="mt-1 text-xs leading-relaxed text-amber-100/90">{dataRecoveryMessage(dataRecovery)}</p>
+                        </div>
+                        <div className="flex shrink-0 gap-2">
+                            <button
+                                type="button"
+                                onClick={() => navigate('/settings#files-backup')}
+                                className="rounded-lg border border-amber-200/40 bg-amber-300/15 px-4 py-2 font-bold text-amber-50 hover:bg-amber-300/25"
+                            >
+                                백업·복원 설정으로
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setDataRecoveryDismissed(true)}
+                                className="rounded-lg px-3 py-2 text-amber-100/80 hover:bg-white/10"
+                            >
+                                닫기
+                            </button>
+                        </div>
                     </section>
                 )}
                 <Outlet />

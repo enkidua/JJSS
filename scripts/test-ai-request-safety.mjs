@@ -36,12 +36,15 @@ const {
     MAX_ATTEMPTS_PER_JOB,
     MAX_ATTEMPTS_PER_PROVIDER_PER_JOB,
     MAX_AUTOMATIC_RETRIES,
+    AI_TEXT_TIMEOUT_MS,
+    AI_FILE_TIMEOUT_MS,
     beginAIRequestJob,
     createAIRequestFingerprint,
+    isAIRequestAbort,
     __resetAIRequestSafetyForTests,
 } = await import(safetyModuleUrl);
 const { executeAIRequestPlan } = await import(executorModuleUrl);
-const { classifyAIFailoverReason } = await import(classificationModuleUrl);
+const { classifyAIFailoverReason, shouldCountTowardFailureBlock } = await import(classificationModuleUrl);
 const { lockAttachmentRequestPlan } = await import(capabilitiesModuleUrl);
 
 const candidates = [
@@ -266,6 +269,62 @@ assert.ok(premiumCalls.length <= MAX_ATTEMPTS_PER_JOB);
 assert.equal(new Set(premiumCalls).size, premiumCalls.length);
 console.log('PASS paid mode safety cap');
 
+// A-1 — 시간제한: 응답이 멈춰도 작업이 끝나고 기능 잠금이 풀리며, 전용 한국어 메시지로 끝난다.
+assert.equal(AI_TEXT_TIMEOUT_MS, 180_000);
+assert.equal(AI_FILE_TIMEOUT_MS, 300_000);
+// 작업 시간제한 타이머는 unref되어 있으므로, 테스트가 기다리는 동안 프로세스가 끝나지 않게 붙잡아 둔다.
+const keepAlive = setInterval(() => {}, 1000);
+const timeoutFeature = `timeout:${++sequence}`;
+const timeoutCalls = [];
+const timeoutRun = executeAIRequestPlan(executorOptions({
+    job: beginAIRequestJob({ featureKey: timeoutFeature, requestFingerprint: createAIRequestFingerprint('slow'), timeoutMs: 30 }),
+    call: async (candidate, context) => {
+        timeoutCalls.push(candidate.provider);
+        return new Promise((resolve, reject) => {
+            context.signal.addEventListener('abort', () => reject(context.signal.reason || new Error('aborted')), { once: true });
+        });
+    },
+}));
+await assert.rejects(timeoutRun, error => error?.code === 'AI_REQUEST_TIMEOUT'
+    && /응답 시간이 초과/.test(error.message)
+    && !isAIRequestAbort(error)
+    && classifyAIFailoverReason(error) === undefined);
+assert.deepEqual(timeoutCalls, ['gemini'], 'timeout must not fail over to another provider');
+assert.doesNotThrow(() => beginAIRequestJob({ featureKey: timeoutFeature, requestFingerprint: createAIRequestFingerprint('after-timeout') }).finish('completed'));
+
+// 제공업체 호출이 신호를 무시하고 영원히 멈춰도 시간 초과 시점에 기능 잠금이 풀려야 한다.
+const hangingFeature = `hanging:${++sequence}`;
+const hangingJob = beginAIRequestJob({ featureKey: hangingFeature, requestFingerprint: createAIRequestFingerprint('hang'), timeoutMs: 20 });
+void executeAIRequestPlan(executorOptions({ job: hangingJob, call: () => new Promise(() => {}) })).catch(() => {});
+assert.throws(() => beginAIRequestJob({ featureKey: hangingFeature, requestFingerprint: createAIRequestFingerprint('hang-2') }), error => error?.code === 'AI_DUPLICATE_REQUEST');
+await new Promise(resolve => setTimeout(resolve, 60));
+assert.equal(hangingJob.timedOut, true);
+assert.throws(() => hangingJob.assertActive(), error => error?.code === 'AI_REQUEST_TIMEOUT');
+assert.doesNotThrow(() => beginAIRequestJob({ featureKey: hangingFeature, requestFingerprint: createAIRequestFingerprint('hang-3') }).finish('completed'));
+
+// 사용자 취소도 응답을 기다리지 않고 바로 잠금을 푼다.
+const cancelFeature = `cancel-release:${++sequence}`;
+const cancelController = new AbortController();
+beginAIRequestJob({ featureKey: cancelFeature, requestFingerprint: createAIRequestFingerprint('cancel'), signal: cancelController.signal });
+cancelController.abort();
+assert.doesNotThrow(() => beginAIRequestJob({ featureKey: cancelFeature, requestFingerprint: createAIRequestFingerprint('cancel-2') }).finish('completed'));
+clearInterval(keepAlive);
+console.log('PASS request timeout releases the feature lock with a dedicated message');
+
+// A-5 — 제공업체 원문 메시지 기반 분류(할당량·크레딧), A-7 — 인증·권한·입력 오류는 반복 실패 차단에서 제외.
+assert.equal(classifyAIFailoverReason({ status: 429, message: 'got status: 429. {"error":{"message":"You exceeded your current quota, please check your plan and billing details."}}' }), 'quotaExceeded');
+assert.equal(classifyAIFailoverReason({ status: 429, providerMessage: 'You exceeded your current quota' }), 'quotaExceeded');
+assert.equal(classifyAIFailoverReason({ status: 400, providerCode: 'invalid_request_error', providerMessage: 'Your credit balance is too low to access the Anthropic API.' }), 'creditUnavailable');
+assert.equal(classifyAIFailoverReason({ status: 400, providerCode: 'INVALID_ARGUMENT', providerMessage: 'API key not valid. Please pass a valid API key.' }), 'authError');
+assert.equal(classifyAIFailoverReason({ status: 400, providerCode: 'invalid_request_error', providerMessage: 'messages: field required' }), undefined);
+assert.equal(shouldCountTowardFailureBlock({ status: 401 }), false);
+assert.equal(shouldCountTowardFailureBlock({ status: 403, providerCode: 'PERMISSION_DENIED' }), false);
+assert.equal(shouldCountTowardFailureBlock({ reason: 'api-key', status: 401 }), false);
+assert.equal(shouldCountTowardFailureBlock({ code: 'AI_INPUT_ERROR' }), false);
+assert.equal(shouldCountTowardFailureBlock({ status: 503 }), true);
+assert.equal(shouldCountTowardFailureBlock({ code: 'AI_REQUEST_TIMEOUT' }), true);
+console.log('PASS quota/credit classification from provider messages and failure-block exclusions');
+
 async function listSourceFiles(directory) {
     const entries = await readdir(directory, { withFileTypes: true });
     const files = [];
@@ -326,5 +385,23 @@ assert.doesNotMatch(allowedImageModelsBlock, /image-preview|gemini-2\.5-flash-im
 assert.match(geminiSource, /checkGeminiConnection[\s\S]*?models\.get/);
 assert.doesNotMatch(geminiSource.match(/export async function checkGeminiConnection[\s\S]*?\n}\n/)?.[0] || '', /generateContent/);
 console.log('PASS image/text model separation and generation-free connection check');
+
+// P0-1 — 비식별화 도구: 원문 우회 경로가 없고, 개인정보 점검 요청은 다른 제공업체로 전환하지 않는다.
+assert.doesNotMatch(geminiSource, /isMaskingMode/);
+assert.match(geminiSource, /type === 'masking' \|\| options\?\.disableCrossProviderFailover === true/);
+assert.match(geminiSource, /allowCrossProvider: false/);
+const maskingViewSource = await readFile(new URL('../src/components/MaskingView.tsx', import.meta.url), 'utf8');
+assert.match(maskingViewSource, /anonymizeText\(input/);
+assert.match(maskingViewSource, /wrapAsData\(maskedText\)/);
+assert.doesNotMatch(maskingViewSource, /generateText\([^)]*\binput\b/);
+assert.match(maskingViewSource, /disableCrossProviderFailover: true/);
+assert.match(maskingViewSource, /!aiConsent/);
+console.log('PASS masking tool sends only locally masked text after consent, without cross-provider failover');
+
+// P0-8 — OCR은 API 키를 URL 쿼리에 넣지 않는다.
+const ocrSource = await readFile(new URL('../src/services/ocr.ts', import.meta.url), 'utf8');
+assert.doesNotMatch(ocrSource, /[?&]key=/);
+assert.match(ocrSource, /'x-goog-api-key': visionApiKey/);
+console.log('PASS OCR API keys are sent in headers only');
 
 console.log('AI request safety tests passed without using any real API key or network request.');

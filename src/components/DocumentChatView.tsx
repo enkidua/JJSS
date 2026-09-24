@@ -1,15 +1,21 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { 
-    Send, Paperclip, X, Loader2, FileText, 
-    User, Sparkles, ArrowLeft, Trash2, 
-    Copy, Check, FileUp, Download, MessageSquare
+import { useState, useRef, useEffect } from 'react';
+import { motion } from 'framer-motion';
+import {
+    Send, Paperclip, X, Loader2, FileText,
+    User, Sparkles, Trash2, FileUp, MessageSquare
 } from 'lucide-react';
 import { generateText, ChatMessage } from '../services/gemini';
 import { getAiDocumentValidationError, getFileFingerprint } from '../utils/fileValidation';
+import { fileToBase64 } from '../utils/file';
+import { CopyButton } from './common/CopyButton';
+import { FileDropZone } from './common/FileDropZone';
+import { useConfirm } from './common/ConfirmProvider';
+import { ToolPageShell } from './tools/ToolPageShell';
+import { useReportDirty } from './tools/useReportDirty';
 
 interface DocumentChatViewProps {
     onBack: () => void;
+    onDirtyChange?: (dirty: boolean) => void;
 }
 
 interface UploadedFile {
@@ -50,16 +56,23 @@ function buildLimitedApiHistory(messages: Message[]): ChatMessage[] {
     return limited;
 }
 
-export function DocumentChatView({ onBack }: DocumentChatViewProps) {
+function formatSize(bytes: number) {
+    return bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)}MB` : `${Math.max(1, Math.round(bytes / 1024))}KB`;
+}
+
+export function DocumentChatView({ onBack, onDirtyChange }: DocumentChatViewProps) {
+    const confirm = useConfirm();
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
     const [files, setFiles] = useState<UploadedFile[]>([]);
     const [isLoading, setIsLoading] = useState(false);
-    const [copiedId, setCopiedId] = useState<string | null>(null);
     const [error, setError] = useState('');
     const scrollRef = useRef<HTMLDivElement>(null);
-    const fileInputRef = useRef<HTMLInputElement>(null);
     const [isDragging, setIsDragging] = useState(false);
+    const dragDepth = useRef(0);
+
+    // 이탈 확인은 부모 페이지(AITools)의 useUnsavedGuard가 담당합니다.
+    useReportDirty(Boolean(messages.length || files.length || input.trim() || isLoading), onDirtyChange);
 
     useEffect(() => {
         if (scrollRef.current) {
@@ -77,9 +90,7 @@ export function DocumentChatView({ onBack }: DocumentChatViewProps) {
             }
 
             const fingerprint = getFileFingerprint(file);
-            const reader = new FileReader();
-            reader.onload = () => {
-                const base64 = (reader.result as string).split(',')[1];
+            void fileToBase64(file).then(base64 => {
                 if (!base64) {
                     setError(`${file.name}: 파일을 읽지 못했습니다.`);
                     return;
@@ -91,33 +102,29 @@ export function DocumentChatView({ onBack }: DocumentChatViewProps) {
                     size: file.size,
                     fingerprint,
                 }]);
-            };
-            reader.onerror = () => setError(`${file.name}: 파일을 읽지 못했습니다.`);
-            reader.readAsDataURL(file);
+            }, () => setError(`${file.name}: 파일을 읽지 못했습니다.`));
         });
-    };
-
-    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-        addUploadedFiles(Array.from(e.target.files || []));
-        if (fileInputRef.current) fileInputRef.current.value = '';
     };
 
     const removeFile = (index: number) => {
         setFiles(prev => prev.filter((_, i) => i !== index));
     };
 
-    const handleDragOver = (e: React.DragEvent) => {
+    const handleDragEnter = (e: React.DragEvent) => {
         e.preventDefault();
+        dragDepth.current += 1;
         setIsDragging(true);
     };
 
     const handleDragLeave = (e: React.DragEvent) => {
         e.preventDefault();
-        setIsDragging(false);
+        dragDepth.current = Math.max(0, dragDepth.current - 1);
+        if (dragDepth.current === 0) setIsDragging(false);
     };
 
     const handleDrop = (e: React.DragEvent) => {
         e.preventDefault();
+        dragDepth.current = 0;
         setIsDragging(false);
         const droppedFiles = Array.from(e.dataTransfer.files || []);
         if (droppedFiles.length === 0) return;
@@ -125,6 +132,7 @@ export function DocumentChatView({ onBack }: DocumentChatViewProps) {
     };
 
     const handleSend = async () => {
+        if (isLoading) return;
         if (!input.trim()) {
             setError('문서에 대해 물어볼 질문을 입력해 주세요.');
             return;
@@ -133,12 +141,12 @@ export function DocumentChatView({ onBack }: DocumentChatViewProps) {
             setError('먼저 문서를 업로드한 뒤 질문해 주세요. 문서 없이 일반 질문을 처리하는 도구는 아닙니다.');
             return;
         }
-        if (isLoading) return;
 
+        const question = input;
         const userMessage: Message = {
             id: Date.now().toString(),
             role: 'user',
-            content: input,
+            content: question,
             timestamp: new Date()
         };
 
@@ -151,12 +159,12 @@ export function DocumentChatView({ onBack }: DocumentChatViewProps) {
             // 화면의 전체 대화는 유지하되, API에는 최근 5턴 또는 10,000자 이내만 전송합니다.
             const history = buildLimitedApiHistory(messages);
 
-            // 파일 데이터 준비
+            // 첨부 파일은 질문할 때마다 함께 다시 전송됩니다(화면에 안내).
             const fileData = files.map(f => ({ mimeType: f.mimeType, data: f.data }));
 
             const response = await generateText(
-                'summary', 
-                input || '첨부된 문서의 내용을 분석하고 요약해줘.', 
+                'summary',
+                question,
                 fileData.length > 0 ? fileData : undefined,
                 { history, featureKey: 'tools', documentType: 'document-chat' }
             );
@@ -169,8 +177,9 @@ export function DocumentChatView({ onBack }: DocumentChatViewProps) {
             };
 
             setMessages(prev => [...prev, aiMessage]);
-        } catch (error: any) {
-            setError(`답변 생성에 실패했습니다. ${error?.message || 'API 키, 모델 권한 또는 네트워크 상태를 확인해 주세요.'} 질문은 입력란에 유지됩니다. 확인 후 전송 버튼으로 다시 시도해 주세요.`);
+        } catch (error: unknown) {
+            const detail = error instanceof Error && error.message ? error.message : 'API 키, 모델 권한 또는 네트워크 상태를 확인해 주세요.';
+            setError(`답변 생성에 실패했습니다. ${detail} 질문은 입력란에 유지됩니다. 확인 후 전송 버튼으로 다시 시도해 주세요.`);
             setInput(current => current || userMessage.content);
             setMessages(prev => prev.filter(message => message.id !== userMessage.id));
         } finally {
@@ -178,84 +187,84 @@ export function DocumentChatView({ onBack }: DocumentChatViewProps) {
         }
     };
 
-    const handleCopy = (id: string, text: string) => {
-        navigator.clipboard.writeText(text);
-        setCopiedId(id);
-        setTimeout(() => setCopiedId(null), 2000);
+    const clearChat = async () => {
+        if (!(await confirm({
+            title: '대화 지우기',
+            message: '대화 내용과 첨부한 파일을 모두 지웁니다. 계속할까요?',
+            confirmLabel: '지우기',
+            tone: 'danger',
+        }))) return;
+        setMessages([]);
+        setFiles([]);
     };
 
-    const clearChat = () => {
-        if (confirm('대화 내용을 모두 삭제하시겠습니까?')) {
-            setMessages([]);
-            setFiles([]);
-        }
-    };
+    const totalFileBytes = files.reduce((sum, file) => sum + file.size, 0);
 
     return (
-        <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
+        <ToolPageShell
+            onBack={onBack}
             className="w-full max-w-5xl mx-auto flex flex-col h-[calc(100vh-180px)]"
-        >
-            <div className="flex items-center justify-between mb-4 shrink-0">
-                <button
-                    onClick={() => {
-                        if ((messages.length || files.length || input.trim() || isLoading) && !window.confirm('도구 목록으로 돌아가면 현재 대화와 첨부가 사라집니다. 돌아가시겠습니까?')) return;
-                        onBack();
-                    }}
-                    className="btn-ghost flex items-center gap-2 text-sm text-white/50 hover:text-white transition-colors"
-                >
-                    <ArrowLeft className="w-4 h-4" /> 도구 목록
-                </button>
-                <div className="flex items-center gap-3">
-                    <span className="text-xs font-black px-3 py-1 rounded-full bg-violet-500/20 text-violet-300 border border-violet-500/30 tracking-widest uppercase">Chat Beta</span>
-                    <button onClick={clearChat} className="p-2 text-white/30 hover:text-red-400 transition-colors rounded-lg hover:bg-red-400/10">
+            actions={(
+                <>
+                    <span className="text-xs font-black px-3 py-1 rounded-full bg-violet-500/20 text-violet-300 border border-violet-500/30 tracking-widest uppercase">Beta</span>
+                    <button
+                        type="button"
+                        onClick={() => void clearChat()}
+                        disabled={isLoading || (!messages.length && !files.length)}
+                        aria-label="대화 지우기"
+                        title="대화 지우기"
+                        className="p-2 text-white/30 hover:text-red-400 transition-colors rounded-lg hover:bg-red-400/10 disabled:opacity-30"
+                    >
                         <Trash2 className="w-4 h-4" />
                     </button>
-                </div>
-            </div>
-
-            <div className="flex-1 flex flex-col glass-strong rounded-[2.5rem] border border-white/10 shadow-2xl overflow-hidden mb-4">
+                </>
+            )}
+        >
+            <div className="flex-1 min-h-0 flex flex-col glass-strong rounded-[2.5rem] border border-white/10 shadow-2xl overflow-hidden mb-4">
                 {/* Chat Header */}
-                <div className="px-8 py-4 border-b border-white/10 bg-white/5 flex items-center justify-between shrink-0">
+                <div className="px-8 py-4 border-b border-white/10 bg-white/5 flex items-center justify-between shrink-0 gap-3">
                     <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-lg">
                             <MessageSquare className="w-5 h-5 text-white" />
                         </div>
                         <div>
                             <h3 className="text-white font-bold leading-none">AI 문서 멀티 질의응답</h3>
-                            <p className="text-[10px] text-white/30 mt-1 uppercase tracking-wider font-bold">Document Intelligence Chat</p>
+                            <p className="text-[11px] text-white/40 mt-1 font-bold">업로드한 문서를 바탕으로 답합니다</p>
                         </div>
                     </div>
                     {files.length > 0 && (
-                        <div className="flex gap-2">
+                        <div className="flex flex-wrap gap-2 justify-end">
                             {files.map((f, i) => (
-                                <div key={i} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-violet-600/30 border border-violet-500/50 text-xs text-white font-bold shadow-md shadow-violet-900/20">
+                                <div key={f.fingerprint} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-violet-600/30 border border-violet-500/50 text-xs text-white font-bold shadow-md shadow-violet-900/20">
                                     <FileText className="w-3.5 h-3.5 text-violet-300" />
                                     <span className="max-w-[120px] truncate tracking-wide">{f.name}</span>
-                                    <X className="w-3.5 h-3.5 cursor-pointer hover:text-rose-400 transition-colors ml-1" onClick={() => removeFile(i)} />
+                                    <button type="button" aria-label={`${f.name} 첨부 빼기`} onClick={() => removeFile(i)} className="ml-1 hover:text-rose-400 transition-colors">
+                                        <X className="w-3.5 h-3.5" />
+                                    </button>
                                 </div>
                             ))}
                         </div>
                     )}
                 </div>
                 {error && (
-                    <div className="mx-6 mt-4 rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                    <div role="alert" className="mx-6 mt-4 rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
                         {error}
                     </div>
                 )}
                 <div className="mx-6 mt-4 rounded-xl border border-violet-400/20 bg-violet-500/10 px-4 py-3 text-xs leading-relaxed text-violet-100/80">
-                    API 사용량 안내: 화면의 대화 기록은 유지되지만 답변 생성 시에는 최근 5턴 또는 최근 10,000자 이내의 대화만 함께 보냅니다. 큰 PDF나 여러 이미지 파일은 페이지 수와 용량에 따라 Gemini 사용량이 늘 수 있습니다.
+                    <strong className="text-violet-50">사용량 안내:</strong> 질문할 때마다 첨부한 파일 전체가 AI로 다시 전송됩니다. 파일이 크거나 많을수록 질문 한 번마다 사용량(비용)이 늘어나니, 필요한 파일만 남겨 두세요.
+                    {files.length > 0 && <span className="block mt-1">현재 첨부: {files.length}개, 약 {formatSize(totalFileBytes)} (질문마다 함께 전송)</span>}
+                    <span className="block mt-1 text-violet-100/60">대화 기록은 화면에 모두 남지만, AI에는 최근 5턴 또는 10,000자 이내의 대화만 함께 보냅니다. 문서 내용은 외부 AI 서비스(Gemini)로 전송됩니다.</span>
                     {files.some(file => file.size > LARGE_DOCUMENT_BYTES) && (
-                        <span className="block mt-1 text-amber-100">현재 업로드된 큰 파일은 원문 전체 분석 요청으로 처리됩니다. 비용이나 quota가 부담되면 필요한 페이지만 이미지/PDF로 나누어 질문해 주세요.</span>
+                        <span className="block mt-1 text-amber-100">큰 파일이 첨부되어 있습니다. 부담되면 필요한 페이지만 이미지/PDF로 나누어 질문해 주세요.</span>
                     )}
                 </div>
 
                 {/* Messages Area */}
-                <div 
+                <div
                     ref={scrollRef}
-                    onDragOver={handleDragOver}
+                    onDragEnter={handleDragEnter}
+                    onDragOver={e => e.preventDefault()}
                     onDragLeave={handleDragLeave}
                     onDrop={handleDrop}
                     className={`flex-1 overflow-y-auto p-8 space-y-8 scroll-smooth custom-scrollbar relative ${
@@ -263,7 +272,7 @@ export function DocumentChatView({ onBack }: DocumentChatViewProps) {
                     }`}
                 >
                     {isDragging && (
-                        <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#1e293b]/80 backdrop-blur-sm border-2 border-dashed border-violet-500 rounded-2xl m-4">
+                        <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-[#1e293b]/80 backdrop-blur-sm border-2 border-dashed border-violet-500 rounded-2xl m-4">
                             <div className="text-center">
                                 <FileUp className="w-16 h-16 text-violet-400 mx-auto mb-4 animate-bounce" />
                                 <p className="text-xl font-bold text-white">여기에 파일을 놓아주세요</p>
@@ -271,9 +280,13 @@ export function DocumentChatView({ onBack }: DocumentChatViewProps) {
                         </div>
                     )}
                     {messages.length === 0 ? (
-                        <div 
-                            className="h-full flex flex-col items-center justify-center text-center opacity-60 hover:opacity-100 transition-opacity cursor-pointer group"
-                            onClick={() => fileInputRef.current?.click()}
+                        <FileDropZone
+                            accept="image/*,.pdf"
+                            multiple
+                            onFiles={addUploadedFiles}
+                            ariaLabel="질문할 문서 파일 선택"
+                            className="h-full flex flex-col items-center justify-center text-center opacity-60 hover:opacity-100 transition-opacity cursor-pointer group rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400"
+                            activeClassName="opacity-100"
                         >
                             <div className="w-24 h-24 rounded-full border-2 border-dashed border-white/20 flex items-center justify-center mb-6 group-hover:border-violet-400/50 group-hover:bg-violet-500/10 transition-all">
                                 <FileUp className="w-10 h-10 text-white/50 group-hover:text-violet-400 transition-colors" />
@@ -283,18 +296,18 @@ export function DocumentChatView({ onBack }: DocumentChatViewProps) {
                                 이곳을 클릭하거나 파일을 끌어다 놓아주세요.<br/>
                                 여러 개의 파일(이미지, PDF)을 지원하며,<br/>문서의 내용을 바탕으로 연속적인 질문이 가능합니다.
                             </p>
-                        </div>
+                        </FileDropZone>
                     ) : (
                         messages.map((msg) => (
-                            <motion.div 
+                            <motion.div
                                 key={msg.id}
                                 initial={{ opacity: 0, y: 10 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 className={`flex gap-4 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}
                             >
                                 <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 shadow-lg ${
-                                    msg.role === 'user' 
-                                        ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' 
+                                    msg.role === 'user'
+                                        ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
                                         : 'bg-violet-500/20 text-violet-400 border border-violet-500/30'
                                 }`}>
                                     {msg.role === 'user' ? <User className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
@@ -308,12 +321,12 @@ export function DocumentChatView({ onBack }: DocumentChatViewProps) {
                                         <div className="whitespace-pre-wrap">{msg.content}</div>
                                         {msg.role === 'model' && (
                                             <div className="mt-4 pt-4 border-t border-white/5 flex justify-end">
-                                                <button 
-                                                    onClick={() => handleCopy(msg.id, msg.content)}
+                                                <CopyButton
+                                                    text={msg.content}
+                                                    iconOnly
+                                                    label="답변 복사"
                                                     className="p-1.5 hover:bg-white/10 rounded-md transition-colors text-white/30 hover:text-white"
-                                                >
-                                                    {copiedId === msg.id ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                                                </button>
+                                                />
                                             </div>
                                         )}
                                     </div>
@@ -340,39 +353,40 @@ export function DocumentChatView({ onBack }: DocumentChatViewProps) {
                 {/* Input Area */}
                 <div className="p-6 border-t border-white/10 bg-white/5">
                     <div className="flex items-end gap-3 glass-strong p-2 rounded-2xl border border-white/10 bg-black/40">
-                        <input 
-                            type="file" 
-                            ref={fileInputRef} 
-                            onChange={handleFileUpload} 
-                            multiple 
-                            className="hidden" 
+                        <FileDropZone
                             accept="image/*,.pdf"
-                        />
-                        <button 
-                            onClick={() => fileInputRef.current?.click()}
-                            className="p-3 text-white/40 hover:text-white hover:bg-white/10 rounded-xl transition-all"
+                            multiple
+                            onFiles={addUploadedFiles}
+                            ariaLabel="문서 파일 첨부"
+                            className="p-3 text-white/40 hover:text-white hover:bg-white/10 rounded-xl transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400"
+                            activeClassName="bg-violet-500/20 text-white"
                         >
-                            <Paperclip className="w-5 h-5" />
-                        </button>
-                        <textarea 
+                            <Paperclip className="w-5 h-5" aria-hidden="true" />
+                        </FileDropZone>
+                        <textarea
+                            aria-label="문서에 대한 질문"
                             value={input}
                             onChange={(e) => setInput(e.target.value)}
                             onKeyDown={(e) => {
+                                // 한글 조합 중 Enter는 글자 확정용이므로 전송하지 않습니다.
+                                if (e.nativeEvent.isComposing || e.key === 'Process') return;
                                 if (e.key === 'Enter' && !e.shiftKey) {
                                     e.preventDefault();
-                                    handleSend();
+                                    void handleSend();
                                 }
                             }}
-                            placeholder="업로드한 문서에 대해 질문하세요..."
+                            placeholder="업로드한 문서에 대해 질문하세요... (Shift+Enter: 줄바꿈)"
                             className="flex-1 bg-transparent border-none focus:ring-0 text-white p-3 min-h-[48px] max-h-32 resize-none text-sm placeholder:text-white/20"
                             rows={1}
                         />
-                        <button 
-                            onClick={handleSend}
+                        <button
+                            type="button"
+                            aria-label="질문 보내기"
+                            onClick={() => void handleSend()}
                             disabled={isLoading || !input.trim()}
                             className={`p-3 rounded-xl transition-all shadow-lg ${
                                 !input.trim()
-                                    ? 'bg-white/5 text-white/10' 
+                                    ? 'bg-white/5 text-white/10'
                                     : 'bg-violet-600 text-white hover:bg-violet-500 hover:scale-105 active:scale-95 shadow-violet-600/20'
                             }`}
                         >
@@ -381,11 +395,10 @@ export function DocumentChatView({ onBack }: DocumentChatViewProps) {
                     </div>
                 </div>
             </div>
-            
-            <p className="text-[10px] text-center text-white/20 font-bold uppercase tracking-widest mt-2 px-12 leading-relaxed">
-                Antigravity AI Document Intelligence uses advanced LLM technology to analyze and reason over your files. 
-                Keep sensitive information protected and review important conclusions.
+
+            <p className="text-[11px] text-center text-white/30 font-bold mt-2 px-12 leading-relaxed">
+                AI 답변은 틀릴 수 있습니다. 중요한 내용은 원문과 대조해 확인하고, 민감한 개인정보가 담긴 문서는 올리기 전에 한 번 더 살펴 주세요.
             </p>
-        </motion.div>
+        </ToolPageShell>
     );
 }

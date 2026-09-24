@@ -126,6 +126,8 @@ export const PROVIDER_MODEL_TIERS: Record<AIProvider, Partial<Record<AIModelTier
     anthropic: {
         economy: 'claude-haiku-4-5',
         balanced: 'claude-sonnet-5',
+        // 2026-09-24 Anthropic 공식 모델 목록에서 claude-opus-4-8이 유효한 ID임을 확인했다.
+        // 이미 동의받은 premium 전환 대상을 조용히 바꾸지 않도록 유지한다(claude-opus-5는 직접 선택 시에만 사용).
         premium: 'claude-opus-4-8',
     },
 };

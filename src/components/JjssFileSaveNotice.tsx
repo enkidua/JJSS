@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { CheckCircle2, FolderOpen, X } from 'lucide-react';
 import { JJSS_FILE_SAVED_EVENT, openSavedDirectory } from '../utils/jjssFileService';
 import type { JjssFileCategory } from '../types/jjssFiles';
+import { useAppToast } from './Toast';
 
 interface SavedFileDetail {
     category: JjssFileCategory;
@@ -13,6 +14,7 @@ interface SavedFileDetail {
 
 export default function JjssFileSaveNotice() {
     const [saved, setSaved] = useState<SavedFileDetail | null>(null);
+    const showToast = useAppToast();
 
     useEffect(() => {
         let timeoutId: number | undefined;
@@ -30,7 +32,7 @@ export default function JjssFileSaveNotice() {
 
     if (!saved) return null;
     return (
-        <div role="status" aria-atomic="true" className="fixed bottom-6 right-4 z-[9998] w-[min(92vw,32rem)] rounded-2xl border border-emerald-400/30 bg-[#11162b]/95 p-4 shadow-2xl backdrop-blur-xl">
+        <div role="status" aria-atomic="true" className="pointer-events-auto w-full rounded-2xl border border-emerald-400/30 bg-[#11162b]/95 p-4 shadow-2xl backdrop-blur-xl">
             <div className="flex items-start gap-3">
                 <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-400" />
                 <div className="min-w-0 flex-1">
@@ -40,7 +42,7 @@ export default function JjssFileSaveNotice() {
                         <button
                             type="button"
                             onClick={() => void openSavedDirectory(saved.openToken!).catch(() => {
-                                window.alert('실제 저장된 파일의 폴더를 열지 못했습니다. 파일이 이동되었는지 확인해 주세요.');
+                                showToast('실제 저장된 파일의 폴더를 열지 못했습니다. 파일이 이동되었는지 확인해 주세요.', 'error');
                             })}
                             className="mt-3 inline-flex items-center gap-2 rounded-lg bg-emerald-500/15 px-3 py-2 text-xs font-bold text-emerald-200 hover:bg-emerald-500/25"
                         >

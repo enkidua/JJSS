@@ -32,6 +32,8 @@ interface DataState {
         content: string;
     }) => Promise<CaseDocument>;
     deleteCaseDocument: (id: string) => Promise<void>;
+    /** 이용자에게 연결된 사례문서를 모두 삭제하고 삭제한 개수를 돌려준다. 이용자 삭제(deleteSeeker) 전에 호출한다. */
+    deleteCaseDocumentsForSeeker: (seekerId: string) => Promise<number>;
     // 예산 관리
     fetchExpenses: () => Promise<Expense[]>;
     addExpense: (expense: Omit<Expense, 'id' | 'organization' | 'createdAt' | 'createdBy'>) => Promise<Expense>;
@@ -407,6 +409,34 @@ export const useDataStore = create<DataState>()((set, get) => ({
         } catch (error: any) {
             console.error('Delete CaseDocument Error:', safeErrorMetadata(error, 'case-document-delete'));
             const message = '문서 삭제 중 오류가 발생했습니다.';
+            set({ error: message });
+            throw new Error(message);
+        }
+    },
+
+    deleteCaseDocumentsForSeeker: async (seekerId: string) => {
+        if (!seekerId) throw new Error('삭제할 이용자 ID가 없습니다.');
+        try {
+            const seekers = get().seekers;
+            const seekerKeys = getPrimarySeekerKeys(seekerId, seekers);
+            const matchedSeeker = seekers.find(item => item.id === seekerId || item.seekerId === seekerId);
+            const seekerName = matchedSeeker?.name || '';
+            // 문서 목록(fetchCaseDocuments)에 보이던 것과 같은 기준으로 고른다.
+            const allowNameFallback = Boolean(matchedSeeker) && isUniqueSeekerName(seekerName, seekers);
+            const docs = await localDB.query<CaseDocument>('caseDocuments', (d) => {
+                const docKeys = getCaseDocumentPrimaryKeys(d as any);
+                if ([...docKeys].some(key => seekerKeys.has(key))) return true;
+                if (!allowNameFallback || docKeys.size > 0) return false;
+                return getCaseDocumentNames(d as any).has(seekerName);
+            });
+            const ids = docs.map(doc => doc.id).filter((id): id is string => Boolean(id));
+            await localDB.deleteDocs('caseDocuments', ids);
+            const deleted = new Set(ids);
+            set(state => ({ caseDocuments: state.caseDocuments.filter(d => !d.id || !deleted.has(d.id)) }));
+            return ids.length;
+        } catch (error: any) {
+            console.error('Delete Seeker CaseDocuments Error:', safeErrorMetadata(error, 'case-document-bulk-delete'));
+            const message = '이용자의 문서를 삭제하는 중 오류가 발생했습니다. 문서는 삭제되지 않았습니다.';
             set({ error: message });
             throw new Error(message);
         }

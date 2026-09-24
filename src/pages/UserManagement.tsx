@@ -2,17 +2,24 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Users, Briefcase, Plus, Search, Trash2, ChevronDown, ChevronUp,
-    User, MapPin, Clock, DollarSign, Sparkles, FileText, Wand2, ClipboardCheck, Pencil, LayoutDashboard
+    User, MapPin, Clock, DollarSign, Sparkles, FileText, Wand2, ClipboardCheck, Pencil, ClipboardList
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useDataStore } from '../store/dataStore';
 import { Seeker, JobOpening } from '../types/matching';
 import JobSeekerModal from '../components/JobSeekerModal';
+import { useConfirm } from '../components/common/ConfirmProvider';
+import { useAppToast } from '../components/Toast';
+import { getSeekerKey } from '../utils/seeker';
 
 type ViewMode = 'seekers' | 'jobs';
 
 export default function UserManagement() {
     const { fetchData, seekers, jobs, loading, deleteSeeker, deleteJob } = useDataStore();
+    const deleteCaseDocumentsForSeeker = useDataStore(state => state.deleteCaseDocumentsForSeeker);
+    const confirm = useConfirm();
+    const showToast = useAppToast();
+    const [deletingId, setDeletingId] = useState<string | null>(null);
     const [viewMode, setViewMode] = useState<ViewMode>('seekers');
     const [searchTerm, setSearchTerm] = useState('');
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -44,14 +51,45 @@ export default function UserManagement() {
     ), [jobs, searchTerm]);
 
     const handleDelete = async (type: 'seeker' | 'job', id: string, name: string) => {
-        if (window.confirm(`"${name}" 정보를 삭제하시겠습니까? 되돌릴 수 없습니다.`)) {
-            try {
-                if (type === 'seeker') await deleteSeeker(id);
-                else await deleteJob(id);
-                if (expandedId === id) setExpandedId(null);
-            } catch (error: any) {
-                alert(error?.message || '삭제 중 오류가 발생했습니다.');
+        if (!id || deletingId) return;
+        const label = name || (type === 'seeker' ? '이용자' : '사업체');
+        const ok = await confirm({
+            title: type === 'seeker' ? '이용자 삭제' : '사업체 삭제',
+            message: `"${label}" 정보를 삭제할까요? 삭제한 정보는 되돌릴 수 없습니다.`,
+            confirmLabel: '삭제', tone: 'danger',
+        });
+        if (!ok) return;
+
+        // 이용자를 지울 때는 그 이용자의 사례문서(사례회의록·계획서·상담일지 등)도 함께 지울지 따로 묻습니다.
+        // "문서는 남기기"를 고르거나 창을 닫으면 문서는 그대로 두고 이용자 정보만 삭제합니다.
+        const alsoDeleteDocuments = type === 'seeker' && await confirm({
+            title: '사례문서도 삭제할까요?',
+            message: `"${label}"님의 사례회의록·직업재활계획서·상담일지·현황판 기록, 연결된 직업평가 문서와 지원고용 회차 기록까지 함께 삭제할까요?\n문서를 남겨 두면 백업 파일에는 계속 포함됩니다.`,
+            confirmLabel: '문서도 삭제', cancelLabel: '문서는 남기기', tone: 'danger',
+        });
+
+        setDeletingId(id);
+        let deletedDocuments: number | null = null;
+        try {
+            if (type === 'seeker') {
+                // 문서 삭제를 먼저 해야 이용자 정보(내부 ID·구직자 ID)로 문서를 정확히 찾을 수 있습니다.
+                if (alsoDeleteDocuments) deletedDocuments = await deleteCaseDocumentsForSeeker(id);
+                await deleteSeeker(id);
+                showToast(alsoDeleteDocuments
+                    ? `"${label}" 정보와 사례문서 ${deletedDocuments}건을 삭제했습니다.`
+                    : `"${label}" 정보를 삭제했습니다. 사례문서는 남겨 두었습니다.`, 'success');
+            } else {
+                await deleteJob(id);
+                showToast(`"${label}" 정보를 삭제했습니다.`, 'success');
             }
+            if (expandedId === id) setExpandedId(null);
+        } catch (error: any) {
+            const message = error?.message || '삭제 중 오류가 발생했습니다.';
+            showToast(deletedDocuments !== null
+                ? `사례문서 ${deletedDocuments}건은 삭제했지만 이용자 정보는 삭제하지 못했습니다. ${message}`
+                : message, 'error');
+        } finally {
+            setDeletingId(null);
         }
     };
 
@@ -78,7 +116,7 @@ export default function UserManagement() {
         setIsModalOpen(false);
         setEditItem(null);
         fetchData(true);
-        window.alert(message);
+        showToast(message, 'success');
     };
 
     return (
@@ -127,7 +165,7 @@ export default function UserManagement() {
                             onClick={() => navigate('/overview')}
                             className="btn-secondary !py-2.5 !px-4 text-sm font-bold flex items-center gap-2"
                         >
-                            <LayoutDashboard className="w-4 h-4" /> 현황판
+                            <ClipboardList className="w-4 h-4" /> 현황판
                         </button>
                         <button
                             onClick={() => openCreateModal('seeker')}
@@ -226,7 +264,8 @@ export default function UserManagement() {
                                                     <button
                                                         type="button"
                                                         aria-label={`${s.name || '이용자'} 정보 삭제`}
-                                                        onClick={(e) => { e.stopPropagation(); handleDelete('seeker', s.id!, s.name); }}
+                                                        onClick={(e) => { e.stopPropagation(); void handleDelete('seeker', s.id || '', s.name); }}
+                                                        disabled={!s.id || deletingId === s.id}
                                                         className="p-2 rounded-lg text-white/30 hover:bg-red-500/20 hover:text-red-400 transition-all"
                                                     >
                                                         <Trash2 className="w-4 h-4" />
@@ -265,30 +304,30 @@ export default function UserManagement() {
                                                                 onClick={() => navigate(`/overview?seekerId=${encodeURIComponent(s.id || '')}`)}
                                                                 className="text-xs px-3 py-1.5 rounded-lg bg-teal-500/20 text-teal-200 hover:bg-teal-500/30 transition-all inline-flex items-center gap-1 font-medium mb-3"
                                                             >
-                                                                <LayoutDashboard className="w-3 h-3" /> 후속 일정·목표 현황
+                                                                <ClipboardList className="w-3 h-3" /> 후속 일정·목표 현황
                                                             </button>
                                                             <p className="text-xs text-white/40 mb-2 font-medium">이 이용자 대상 AI 문서 작성</p>
                                                             <div className="flex flex-wrap gap-2">
                                                                 <button
-                                                                    onClick={() => navigate('/workmate', { state: { tab: 'pipeline', seekerName: s.name, step: 'meeting' } })}
+                                                                    onClick={() => navigate('/workmate', { state: { tab: 'pipeline', seekerId: getSeekerKey(s), seekerName: s.name, step: 'meeting' } })}
                                                                     className="text-xs px-3 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 transition-all flex items-center gap-1 font-medium"
                                                                 >
                                                                     <Wand2 className="w-3 h-3" /> 사례회의록
                                                                 </button>
                                                                 <button
-                                                                    onClick={() => navigate('/workmate', { state: { tab: 'pipeline', seekerName: s.name, step: 'plan' } })}
+                                                                    onClick={() => navigate('/workmate', { state: { tab: 'pipeline', seekerId: getSeekerKey(s), seekerName: s.name, step: 'plan' } })}
                                                                     className="text-xs px-3 py-1.5 rounded-lg bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 transition-all flex items-center gap-1 font-medium"
                                                                 >
                                                                     <FileText className="w-3 h-3" /> 직업재활계획서
                                                                 </button>
                                                                 <button
-                                                                    onClick={() => navigate('/workmate', { state: { tab: 'pipeline', seekerName: s.name, step: 'counseling' } })}
+                                                                    onClick={() => navigate('/workmate', { state: { tab: 'pipeline', seekerId: getSeekerKey(s), seekerName: s.name, step: 'counseling' } })}
                                                                     className="text-xs px-3 py-1.5 rounded-lg bg-blue-500/20 text-blue-300 hover:bg-blue-500/30 transition-all flex items-center gap-1 font-medium"
                                                                 >
                                                                     <FileText className="w-3 h-3" /> 상담일지
                                                                 </button>
                                                                 <button
-                                                                    onClick={() => navigate('/workmate', { state: { tab: 'pipeline', seekerName: s.name, step: 'evaluation' } })}
+                                                                    onClick={() => navigate('/workmate', { state: { tab: 'pipeline', seekerId: getSeekerKey(s), seekerName: s.name, step: 'evaluation' } })}
                                                                     className="text-xs px-3 py-1.5 rounded-lg bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 transition-all flex items-center gap-1 font-medium"
                                                                 >
                                                                     <ClipboardCheck className="w-3 h-3" /> 정기평가
@@ -356,7 +395,8 @@ export default function UserManagement() {
                                                     <button
                                                         type="button"
                                                         aria-label={`${j.companyName || '사업체'} 정보 삭제`}
-                                                        onClick={(e) => { e.stopPropagation(); handleDelete('job', j.id!, j.companyName); }}
+                                                        onClick={(e) => { e.stopPropagation(); void handleDelete('job', j.id || '', j.companyName); }}
+                                                        disabled={!j.id || deletingId === j.id}
                                                         className="p-2 rounded-lg text-white/30 hover:bg-red-500/20 hover:text-red-400 transition-all"
                                                     >
                                                         <Trash2 className="w-4 h-4" />

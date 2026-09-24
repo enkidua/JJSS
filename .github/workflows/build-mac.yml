@@ -1,0 +1,37 @@
+name: Build macOS (Apple Silicon)
+
+# 수동 실행 전용. 릴리스를 자동 게시하지 않고, 빌드 결과를 Actions Artifacts로만 올립니다.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-mac:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !/website/
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsc -p tsconfig.app.json --noEmit
+      - run: npm run test:all
+      - run: npm run electron:build:mac
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jjss-mac-arm64
+          path: |
+            release/*.dmg
+            release/*-mac.zip
+          if-no-files-found: error
+          retention-days: 14

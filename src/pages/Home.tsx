@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { Sparkles, ArrowRight, LayoutDashboard, Wand2, UserCheck, Building2, FileSearch, GraduationCap, DollarSign, Archive } from 'lucide-react';
+import { Sparkles, ArrowRight, LayoutDashboard, ClipboardList, Wand2, UserCheck, Building2, FileSearch, GraduationCap, DollarSign, Archive } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useDataStore } from '../store/dataStore';
 
@@ -21,9 +21,9 @@ const features = [
         path: '/manage',
     },
     {
-        icon: LayoutDashboard,
+        icon: ClipboardList,
         title: '직업재활 현황판',
-        desc: '이용자별 후속 일정, 목표 변화와 작성된 사례문서를 한곳에서 확인합니다.',
+        desc: '상담·평가·훈련 현황, 후속 일정과 목표 변화, 취업 후 적응지원·직무 비교·당사자 참여 기록을 연결합니다.',
         color: 'from-teal-500 to-cyan-600',
         path: '/overview',
     },
@@ -72,7 +72,8 @@ const features = [
 ];
 
 export default function Home() {
-    const { seekers, jobs } = useDataStore();
+    const seekers = useDataStore(state => state.seekers);
+    const jobs = useDataStore(state => state.jobs);
 
     return (
         <div className="min-h-screen">
@@ -237,15 +238,6 @@ export default function Home() {
                     </div>
                 </div>
             </section>
-
-            {/* Footer */}
-            <footer className="border-t border-white/5 py-8 px-4">
-                <div className="max-w-6xl mx-auto text-center">
-                    <p className="text-white/30 text-sm">
-                        © 2026 직업재활지원시스템 — 사회복지 기관 업무지원 및 직업재활 기록 관리 시스템.
-                    </p>
-                </div>
-            </footer>
         </div>
     );
 }

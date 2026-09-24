@@ -8,6 +8,8 @@ import * as localDB from '../config/localDB';
 import { useAuthStore } from '../store/authStore';
 import { safeErrorMetadata } from '../utils/safeError';
 import { useDialogFocus } from '../hooks/useDialogFocus';
+import { useConfirm } from '../components/common/ConfirmProvider';
+import { useAppToast } from '../components/Toast';
 
 interface Resource {
     id: string;
@@ -18,6 +20,7 @@ interface Resource {
     organization: string;
     authorUid: string;
     createdAt: { seconds: number } | null;
+    updatedAt?: { seconds: number } | null;
 }
 
 const categories = [
@@ -52,7 +55,10 @@ export default function InfoMate() {
     const [error, setError] = useState('');
     const [saving, setSaving] = useState(false);
     const saveInFlightRef = useRef(false);
+    const closeConfirmPendingRef = useRef(false);
     const fetchRequestRef = useRef(0);
+    const confirm = useConfirm();
+    const showToast = useAppToast();
 
     const fetchResources = async () => {
         const requestId = ++fetchRequestRef.current;
@@ -100,57 +106,81 @@ export default function InfoMate() {
         ? formTitle !== editingResource.title || formLink !== editingResource.link || formMemo !== editingResource.memo
         : Boolean(formTitle.trim() || formLink.trim() || formMemo.trim());
 
-    const closeModal = (force = false) => {
-        if (!force && saveInFlightRef.current) return;
-        if (!force && isFormDirty() && !window.confirm('작성 중인 내용이 있습니다. 저장하지 않고 닫으시겠습니까?')) return;
+    const closeModal = async (force = false) => {
+        if (!force && (saveInFlightRef.current || closeConfirmPendingRef.current)) return;
+        if (!force && isFormDirty()) {
+            closeConfirmPendingRef.current = true;
+            try {
+                const ok = await confirm({
+                    title: '저장하지 않은 내용',
+                    message: '작성 중인 내용이 있습니다. 저장하지 않고 닫을까요?',
+                    confirmLabel: '닫기', cancelLabel: '계속 작성', tone: 'danger',
+                });
+                if (!ok) return;
+            } finally {
+                closeConfirmPendingRef.current = false;
+            }
+        }
         setModalOpen(false);
     };
-    const dialogRef = useDialogFocus(modalOpen, () => closeModal());
+    const dialogRef = useDialogFocus(modalOpen, () => { void closeModal(); });
 
     const handleSave = async () => {
         if (saveInFlightRef.current) return;
-        if (!formTitle.trim()) { alert('자료 제목을 입력해 주세요.'); return; }
+        if (!formTitle.trim()) { showToast('자료 제목을 입력해 주세요.', 'error'); return; }
         const safeLink = formLink.trim() ? getAllowedResourceUrl(formLink) : '';
         if (formLink.trim() && !safeLink) {
-            alert('링크는 http:// 또는 https:// 주소만 입력할 수 있습니다.');
+            showToast('링크는 http:// 또는 https:// 주소만 입력할 수 있습니다.', 'error');
             return;
         }
-        const data: Omit<Resource, 'id'> = {
-            title: formTitle,
+        const fields = {
+            title: formTitle.trim(),
             link: safeLink || '',
             memo: formMemo,
-            category: activeCategory,
-            organization: currentProfile.organization,
-            authorUid: currentProfile.uid,
-            createdAt: localDB.localTimestamp(),
         };
 
         saveInFlightRef.current = true;
         setSaving(true);
         try {
             if (editingResource) {
-                await localDB.updateDoc<Resource>('resources', editingResource.id, data as Partial<Resource>);
+                // 수정 시 작성일(createdAt)·분류·작성자는 그대로 두고 수정일만 기록합니다.
+                await localDB.updateDoc<Resource>('resources', editingResource.id, {
+                    ...fields,
+                    updatedAt: localDB.localTimestamp(),
+                });
             } else {
+                const data: Omit<Resource, 'id'> = {
+                    ...fields,
+                    category: activeCategory,
+                    organization: currentProfile.organization,
+                    authorUid: currentProfile.uid,
+                    createdAt: localDB.localTimestamp(),
+                };
                 await localDB.addDoc<Resource>('resources', data as Resource);
             }
-            closeModal(true);
+            void closeModal(true);
+            showToast(editingResource ? '자료를 수정했습니다.' : '자료를 추가했습니다.', 'success');
             fetchResources();
         } catch (err: unknown) {
             console.error('Resource save error:', safeErrorMetadata(err, 'resource-save'));
-            alert('저장 중 오류가 발생했습니다.');
+            showToast('저장 중 오류가 발생했습니다. 입력한 내용은 그대로 있습니다.', 'error');
         } finally {
             saveInFlightRef.current = false;
             setSaving(false);
         }
     };
 
-    const handleDelete = async (id: string) => {
-        if (window.confirm('정말 삭제하시겠습니까?')) {
-            try {
-                await localDB.deleteDoc('resources', id);
-                await fetchResources();
-            } catch { setError('자료를 삭제하지 못했습니다. 다시 시도해 주세요.'); }
-        }
+    const handleDelete = async (res: Resource) => {
+        const ok = await confirm({
+            title: '자료 삭제',
+            message: `"${res.title}" 자료를 삭제할까요? 삭제한 자료는 되돌릴 수 없습니다.`,
+            confirmLabel: '삭제', tone: 'danger',
+        });
+        if (!ok) return;
+        try {
+            await localDB.deleteDoc('resources', res.id);
+            await fetchResources();
+        } catch { setError('자료를 삭제하지 못했습니다. 다시 시도해 주세요.'); }
     };
 
     const filtered = resources.filter(
@@ -271,7 +301,7 @@ export default function InfoMate() {
                                         <button type="button" aria-label={`${res.title} 수정`} onClick={() => openEditModal(res)} className="btn-ghost !p-2">
                                             <Edit3 className="w-4 h-4" />
                                         </button>
-                                        <button type="button" aria-label={`${res.title} 삭제`} onClick={() => handleDelete(res.id)} className="btn-ghost !p-2 hover:!text-red-400">
+                                        <button type="button" aria-label={`${res.title} 삭제`} onClick={() => { void handleDelete(res); }} className="btn-ghost !p-2 hover:!text-red-400">
                                             <Trash2 className="w-4 h-4" />
                                         </button>
                                     </div>
@@ -285,7 +315,7 @@ export default function InfoMate() {
             {/* Create/Edit Modal */}
             <AnimatePresence>
                 {modalOpen && (
-                    <div className="modal-overlay" onClick={() => closeModal()}>
+                    <div className="modal-overlay" onClick={() => { void closeModal(); }}>
                         <motion.div
                             ref={dialogRef}
                             tabIndex={-1}
@@ -302,7 +332,7 @@ export default function InfoMate() {
                                 <h2 id="resource-modal-title" className="text-xl font-bold text-white">
                                     {editingResource ? '리소스 수정' : '새 리소스 추가'}
                                 </h2>
-                                <button type="button" aria-label="자료 편집 창 닫기" onClick={() => closeModal()} className="btn-ghost !p-2">
+                                <button type="button" aria-label="자료 편집 창 닫기" onClick={() => { void closeModal(); }} className="btn-ghost !p-2">
                                     <X className="w-5 h-5" />
                                 </button>
                             </div>

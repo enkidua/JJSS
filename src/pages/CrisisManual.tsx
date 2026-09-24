@@ -1,22 +1,41 @@
-import React, { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { AlertTriangle, ShieldCheck, HeartPulse, Briefcase, Users, FileText, ChevronRight, CheckCircle2, XCircle, ArrowLeft, BookOpen, Search, Loader2, Sparkles } from 'lucide-react';
-import { crisisScenarios, CrisisScenario, ScenarioOption } from '../data/crisisScenarios';
+import { AlertTriangle, ShieldCheck, HeartPulse, Briefcase, Users, FileText, ChevronRight, CheckCircle2, XCircle, ArrowLeft, BookOpen, Search, Loader2, Sparkles, Layers } from 'lucide-react';
+import { crisisScenarios, CrisisScenario } from '../data/crisisScenarios';
 import { generateText } from '../services/gemini';
+import { CopyButton } from '../components/common/CopyButton';
+import { AiTransmissionNotice } from '../components/tools/AiTransmissionNotice';
+import { useReportDirty } from '../components/tools/useReportDirty';
 
 type ViewMode = 'dashboard' | 'simulator' | 'manual';
 
-export default function CrisisManual({ onBack }: { onBack?: () => void }) {
+interface CustomGuideState {
+  situation: string;
+  guide: string;
+  error: string;
+  loading: boolean;
+}
+
+const INITIAL_CUSTOM_GUIDE: CustomGuideState = { situation: '', guide: '', error: '', loading: false };
+const TOTAL_CATEGORIES = new Set(crisisScenarios.map(scenario => scenario.category)).size;
+
+interface CrisisManualProps {
+  onBack?: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
+}
+
+export default function CrisisManual({ onBack, onDirtyChange }: CrisisManualProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('dashboard');
   const [selectedScenario, setSelectedScenario] = useState<CrisisScenario | null>(null);
-  
-  // Dashboard category stats
-  const totalScenarios = crisisScenarios.length;
-  
+  // 직접 입력 안내는 시나리오 화면을 오가도 사라지지 않도록 이 컴포넌트에서 보관합니다.
+  const [customGuide, setCustomGuide] = useState<CustomGuideState>(INITIAL_CUSTOM_GUIDE);
+
+  useReportDirty(customGuide.loading || Boolean(customGuide.situation.trim() || customGuide.guide), onDirtyChange);
+
+  // 브라우저 뒤로가기 기록을 쌓지 않고 화면 안에서만 전환합니다.
   const handleSelectScenario = (scenario: CrisisScenario, mode: 'simulator' | 'manual') => {
     setSelectedScenario(scenario);
     setViewMode(mode);
-    window.history.pushState({ crisisManualView: mode }, '', window.location.href);
   };
 
   const goBack = () => {
@@ -24,23 +43,10 @@ export default function CrisisManual({ onBack }: { onBack?: () => void }) {
     setSelectedScenario(null);
   };
 
-  useEffect(() => {
-    const handlePopState = () => {
-      if (viewMode !== 'dashboard') {
-        setViewMode('dashboard');
-        setSelectedScenario(null);
-        window.history.pushState({ crisisManualView: 'dashboard' }, '', window.location.href);
-      }
-    };
-
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
-  }, [viewMode]);
-
   return (
     <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
       {/* Header section */}
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
         className="flex items-center justify-between mb-8"
@@ -52,9 +58,10 @@ export default function CrisisManual({ onBack }: { onBack?: () => void }) {
           </h1>
           <p className="text-white/60 mt-2 font-medium">현장에서 발생할 수 있는 위기 상황을 미리 체험하고 대처 능력을 기릅니다.</p>
         </div>
-        
+
         {viewMode !== 'dashboard' ? (
-          <button 
+          <button
+            type="button"
             onClick={goBack}
             className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-all font-medium border border-white/10 shadow-lg backdrop-blur-md"
           >
@@ -62,7 +69,8 @@ export default function CrisisManual({ onBack }: { onBack?: () => void }) {
             시뮬레이터 홈으로
           </button>
         ) : onBack ? (
-          <button 
+          <button
+            type="button"
             onClick={onBack}
             className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-all font-medium border border-white/10 shadow-lg backdrop-blur-md"
           >
@@ -74,7 +82,7 @@ export default function CrisisManual({ onBack }: { onBack?: () => void }) {
 
       <AnimatePresence mode="wait">
         {viewMode === 'dashboard' && (
-          <DashboardView key="dashboard" onSelect={handleSelectScenario} />
+          <DashboardView key="dashboard" onSelect={handleSelectScenario} customGuide={customGuide} setCustomGuide={setCustomGuide} />
         )}
         {viewMode === 'simulator' && selectedScenario && (
           <SimulatorView key="simulator" scenario={selectedScenario} />
@@ -90,11 +98,14 @@ export default function CrisisManual({ onBack }: { onBack?: () => void }) {
 // ------------------------------
 // Dashboard (Bento Grid)
 // ------------------------------
-function DashboardView({ onSelect }: { onSelect: (scenario: CrisisScenario, mode: 'simulator' | 'manual') => void }) {
-  const [customSituation, setCustomSituation] = useState('');
-  const [customGuide, setCustomGuide] = useState('');
-  const [customLoading, setCustomLoading] = useState(false);
-  const [customError, setCustomError] = useState('');
+interface DashboardViewProps {
+  onSelect: (scenario: CrisisScenario, mode: 'simulator' | 'manual') => void;
+  customGuide: CustomGuideState;
+  setCustomGuide: React.Dispatch<React.SetStateAction<CustomGuideState>>;
+}
+
+function DashboardView({ onSelect, customGuide, setCustomGuide }: DashboardViewProps) {
+  const { situation: customSituation, guide: customGuideText, error: customError, loading: customLoading } = customGuide;
 
   const fallbackGuide = (situation: string) => `1. 상황 요약
 ${situation || '현장 위기 상황이 접수되었습니다.'}
@@ -123,13 +134,13 @@ ${situation || '현장 위기 상황이 접수되었습니다.'}
 - 필요 시 사례회의 또는 개별지원계획 수정으로 연결합니다.`;
 
   const handleCustomGuide = async () => {
+    if (customLoading) return;
     if (!customSituation.trim()) {
-      setCustomError('위기 상황 내용을 먼저 입력해 주세요.');
+      setCustomGuide(prev => ({ ...prev, error: '위기 상황 내용을 먼저 입력해 주세요.' }));
       return;
     }
-    setCustomLoading(true);
-    setCustomError('');
-    setCustomGuide('');
+    // 새 안내가 나올 때까지 기존 안내는 그대로 둡니다.
+    setCustomGuide(prev => ({ ...prev, loading: true, error: '' }));
     const fallback = fallbackGuide(customSituation);
     try {
       const prompt = `다음 직업재활 현장 위기 상황에 대해 대응 안내를 작성해 주세요.
@@ -147,12 +158,10 @@ ${customSituation}
 - 의료적/법적 판단을 단정하지 말 것
 - 긴급 상황은 119, 보호자, 기관 지침에 따르도록 안내할 것`;
       const result = await generateText('utilities', prompt);
-      setCustomGuide(result || fallback);
-    } catch (error: any) {
-      setCustomError(error?.message ? `AI 안내 생성에 실패하여 기본 템플릿을 표시합니다. (${error.message})` : 'AI 안내 생성에 실패하여 기본 템플릿을 표시합니다.');
-      setCustomGuide(fallback);
-    } finally {
-      setCustomLoading(false);
+      setCustomGuide(prev => ({ ...prev, guide: result || fallback, loading: false }));
+    } catch (error: unknown) {
+      const detail = error instanceof Error && error.message ? ` (${error.message})` : '';
+      setCustomGuide(prev => ({ ...prev, guide: fallback, error: `AI 안내 생성에 실패하여 기본 템플릿을 표시합니다.${detail}`, loading: false }));
     }
   };
 
@@ -163,7 +172,7 @@ ${customSituation}
       transition: { staggerChildren: 0.1 }
     }
   };
-  
+
   const itemVars = {
     hidden: { opacity: 0, y: 20 },
     show: { opacity: 1, y: 0, transition: { type: 'spring', stiffness: 300, damping: 24 } }
@@ -178,12 +187,12 @@ ${customSituation}
   };
 
   return (
-    <motion.div 
+    <motion.div
       variants={containerVars} initial="hidden" animate="show"
       className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6"
     >
       {/* Bento Main Hero */}
-      <motion.div variants={itemVars} className="md:col-span-2 lg:col-span-2 row-span-2 relative overflow-hidden rounded-3xl p-8 glass-strong border border-white/10 group cursor-pointer hover:border-primary-500/50 transition-all duration-500 flex flex-col justify-between">
+      <motion.div variants={itemVars} className="md:col-span-2 lg:col-span-2 row-span-2 relative overflow-hidden rounded-3xl p-8 glass-strong border border-white/10 group hover:border-primary-500/50 transition-all duration-500 flex flex-col justify-between">
         <div className="absolute top-0 right-0 p-8 opacity-20 group-hover:opacity-40 group-hover:scale-110 transition-all duration-700">
           <AlertTriangle className="w-48 h-48 text-rose-500 blur-sm" />
         </div>
@@ -192,10 +201,11 @@ ${customSituation}
             필수 이수 권장
           </div>
           <h2 className="text-4xl font-black text-white mb-4 leading-tight">위기 상황,<br/>당신은 어떻게<br/>대처하시겠습니까?</h2>
-          <p className="text-white/70 max-w-sm">실제 현장에서 수집된 29개의 리얼 시나리오. 지금 바로 시뮬레이션을 통해 대응 역량을 확인하세요.</p>
+          <p className="text-white/70 max-w-sm">실제 현장에서 수집된 {crisisScenarios.length}개의 리얼 시나리오. 지금 바로 시뮬레이션을 통해 대응 역량을 확인하세요.</p>
         </div>
         <div className="relative z-10 mt-8 flex gap-3">
-          <button 
+          <button
+            type="button"
             onClick={() => onSelect(crisisScenarios[0], 'simulator')}
             className="flex-1 px-6 py-4 bg-gradient-to-r from-rose-500 to-pink-600 rounded-2xl text-white font-bold flex items-center justify-center gap-2 hover:shadow-[0_0_30px_rgba(244,63,94,0.4)] transition-all hover:-translate-y-1"
           >
@@ -216,21 +226,26 @@ ${customSituation}
           </div>
         </div>
         <textarea
+          aria-label="위기 상황 내용"
           value={customSituation}
-          onChange={e => setCustomSituation(e.target.value)}
+          onChange={e => setCustomGuide(prev => ({ ...prev, situation: e.target.value }))}
           className="textarea-field !bg-black/30 border-white/10 !min-h-[110px] text-sm"
           placeholder="예: 훈련 중 이용자가 갑자기 크게 소리를 지르고 물건을 던지려 하며 다른 이용자들이 불안해함."
         />
+        <AiTransmissionNotice className="mt-3" message="입력한 상황은 안내 작성을 위해 외부 AI 서비스로 전송됩니다. 이용자 이름 등 개인정보는 빼고 상황만 적어 주세요." />
         <div className="flex justify-end mt-3">
-          <button onClick={handleCustomGuide} disabled={customLoading} className="btn-primary flex items-center gap-2">
+          <button type="button" onClick={() => void handleCustomGuide()} disabled={customLoading} className="btn-primary flex items-center gap-2">
             {customLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
-            대응 흐름 생성
+            {customGuideText ? '대응 흐름 다시 생성하기' : '대응 흐름 생성하기'}
           </button>
         </div>
-        {customError && <div className="mt-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-100 text-sm">{customError}</div>}
-        {customGuide && (
+        {customError && <div role="alert" className="mt-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-100 text-sm">{customError}</div>}
+        {customGuideText && (
           <div className="mt-4 p-5 rounded-2xl bg-black/25 border border-white/10">
-            <pre className="text-white/80 text-sm whitespace-pre-wrap leading-relaxed font-sans">{customGuide}</pre>
+            <div className="flex justify-end mb-2">
+              <CopyButton text={customGuideText} />
+            </div>
+            <pre className="text-white/80 text-sm whitespace-pre-wrap leading-relaxed font-sans">{customGuideText}</pre>
           </div>
         )}
       </motion.div>
@@ -243,22 +258,12 @@ ${customSituation}
         <p className="text-4xl font-black text-white">{crisisScenarios.length}<span className="text-lg text-white/50 ml-1">개</span></p>
       </motion.div>
 
-      {/* Progress Bento */}
-      <motion.div variants={itemVars} className="rounded-3xl p-6 glass border border-white/10 flex flex-col justify-center relative overflow-hidden group">
+      {/* Category Bento */}
+      <motion.div variants={itemVars} className="rounded-3xl p-6 glass border border-white/10 flex flex-col justify-center items-center text-center relative overflow-hidden group">
         <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-        <h3 className="text-white/80 font-bold mb-4 flex items-center gap-2">
-          <CheckCircle2 className="w-5 h-5 text-emerald-400" /> 
-          나의 훈련 진도율
-        </h3>
-        <div className="w-full h-3 bg-white/5 rounded-full overflow-hidden">
-          <motion.div 
-            initial={{ width: 0 }}
-            animate={{ width: '15%' }}
-            transition={{ duration: 1, delay: 0.5 }}
-            className="h-full bg-gradient-to-r from-emerald-400 to-emerald-500 rounded-full" 
-          />
-        </div>
-        <p className="text-right text-sm text-white/50 mt-2 font-mono">15%</p>
+        <Layers className="w-8 h-8 text-emerald-400 mb-3" />
+        <h3 className="text-white/60 text-sm font-semibold mb-1">상황 분야</h3>
+        <p className="text-4xl font-black text-white">{TOTAL_CATEGORIES}<span className="text-lg text-white/50 ml-1">개</span></p>
       </motion.div>
 
       {/* Scenario List */}
@@ -269,7 +274,7 @@ ${customSituation}
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {crisisScenarios.map((scenario) => (
-            <motion.div 
+            <motion.div
               key={scenario.id}
               whileHover={{ scale: 1.02, y: -2 }}
               className="p-5 glass border border-white/5 rounded-2xl hover:bg-white/5 transition-all group flex flex-col h-full"
@@ -285,13 +290,15 @@ ${customSituation}
               <h4 className="text-white font-bold text-lg mb-2 break-words whitespace-normal leading-snug">{scenario.title}</h4>
               <p className="text-white/50 text-sm mb-6 flex-1 break-words whitespace-normal line-clamp-4">{scenario.background}</p>
               <div className="flex gap-2 mt-auto">
-                <button 
+                <button
+                  type="button"
                   onClick={() => onSelect(scenario, 'simulator')}
                   className="flex-1 py-2 bg-primary-500/20 hover:bg-primary-500/40 border border-primary-500/30 text-primary-300 rounded-xl text-sm font-bold transition-colors flex justify-center items-center gap-1"
                 >
                   <AlertTriangle className="w-4 h-4" /> 시뮬레이션
                 </button>
-                <button 
+                <button
+                  type="button"
                   onClick={() => onSelect(scenario, 'manual')}
                   className="flex-1 py-2 bg-white/5 hover:bg-white/10 border border-white/5 text-white/70 hover:text-white rounded-xl text-sm font-bold transition-colors flex justify-center items-center gap-1"
                 >

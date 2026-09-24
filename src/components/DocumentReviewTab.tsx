@@ -1,18 +1,35 @@
-import { useState, useRef } from 'react';
-import { FileText, Loader2, Sparkles, Image as ImageIcon, Copy, CheckCircle2, ClipboardCheck } from 'lucide-react';
+import { useState } from 'react';
+import { FileText, Loader2, Sparkles, Image as ImageIcon, CheckCircle2, ClipboardCheck } from 'lucide-react';
 import { performOCR } from '../services/ocr';
 import { generateText } from '../services/gemini';
-import { ToastContainer, useToast } from './Toast';
+import { useToast } from './Toast';
+import { getAiDocumentValidationError } from '../utils/fileValidation';
+import { CopyButton } from './common/CopyButton';
+import { FileDropZone } from './common/FileDropZone';
+import { useConfirm } from './common/ConfirmProvider';
+import { AiTransmissionNotice } from './tools/AiTransmissionNotice';
+import { useReportDirty } from './tools/useReportDirty';
 
-export function DocumentReviewTab() {
-    const { toasts, showToast, removeToast } = useToast();
-    const fileInputRef = useRef<HTMLInputElement>(null);
+interface DocumentReviewTabProps {
+    onDirtyChange?: (dirty: boolean) => void;
+}
+
+export function DocumentReviewTab({ onDirtyChange }: DocumentReviewTabProps) {
+    const { showToast } = useToast();
+    const confirm = useConfirm();
     const [isOcrLoading, setIsOcrLoading] = useState(false);
     const [selectedOcrFile, setSelectedOcrFile] = useState<File | null>(null);
     const [ocrText, setOcrText] = useState('');
     const [counselText, setCounselText] = useState('');
     const [resultText, setResultText] = useState('');
+    /** 마지막으로 AI가 만든 결과. resultText와 다르면 사용자가 직접 고친 것입니다. */
+    const [generatedText, setGeneratedText] = useState('');
     const [isGenerating, setIsGenerating] = useState(false);
+
+    useReportDirty(
+        isGenerating || isOcrLoading || Boolean(ocrText.trim() || counselText.trim() || resultText.trim()),
+        onDirtyChange,
+    );
 
     const restoreReviewHeadings = (text: string) => text
         .replace(/^1\)\s*반영 기준 요약/gm, '### 1) 반영 기준 요약')
@@ -21,11 +38,20 @@ export function DocumentReviewTab() {
         .replace(/^4\)\s*반영 내용 확인/gm, '### 4) 반영 내용 확인')
         .replace(/^(\d{4}[./-]\d{1,2}[./-]\d{1,2})$/gm, '#### $1');
 
-    const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-        setSelectedOcrFile(e.target.files?.[0] || null);
+    // 파일 선택만으로는 AI를 호출하지 않습니다. "선택 파일 분석" 버튼을 눌러야 전송합니다.
+    const handleFiles = (files: File[]) => {
+        const file = files[0];
+        if (!file) return;
+        const validationError = getAiDocumentValidationError(file);
+        if (validationError) {
+            showToast(validationError, 'error');
+            return;
+        }
+        setSelectedOcrFile(file);
     };
 
     const handleRunOcr = async () => {
+        if (isOcrLoading) return;
         if (!selectedOcrFile) {
             showToast('분석할 이미지/PDF 파일을 먼저 선택해 주세요.', 'error', 4000);
             return;
@@ -35,14 +61,15 @@ export function DocumentReviewTab() {
             const text = await performOCR(selectedOcrFile);
             setOcrText(prev => prev + (prev ? '\n\n' : '') + text);
             showToast('문서 내용이 성공적으로 추출되었습니다.', 'success');
-        } catch (error: any) {
-            showToast(error.message, 'error', 5000);
+        } catch (error: unknown) {
+            showToast(error instanceof Error && error.message ? error.message : '문서 내용을 추출하지 못했습니다.', 'error', 5000);
         } finally {
             setIsOcrLoading(false);
         }
     };
 
     const handleGenerateReview = async () => {
+        if (isGenerating) return;
         if (!ocrText.trim()) {
             showToast('기준이 되는 직업재활계획서 내용을 입력해주세요.', 'error', 4000);
             return;
@@ -51,6 +78,13 @@ export function DocumentReviewTab() {
             showToast('점검할 상담일지를 입력해주세요. 여러 회기 상담일지를 한 번에 붙여넣어도 됩니다.', 'error', 4000);
             return;
         }
+        if (resultText.trim() && resultText !== generatedText && !(await confirm({
+            title: '점검 결과 다시 생성',
+            message: '직접 수정한 점검 결과가 있습니다.\n다시 생성하면 수정한 내용이 새 결과로 바뀝니다. 계속할까요?',
+            confirmLabel: '다시 생성하기',
+            cancelLabel: '취소',
+            tone: 'danger',
+        }))) return;
 
         try {
             setIsGenerating(true);
@@ -181,108 +215,110 @@ ${counselText || '(입력 없음)'}
 `;
 
             const result = await generateText('summary', prompt, undefined, { featureKey: 'workmate', documentType: 'document-review' });
-            setResultText(restoreReviewHeadings(result));
+            const restored = restoreReviewHeadings(result);
+            setResultText(restored);
+            setGeneratedText(restored);
             showToast('상담일지 정합성 점검 및 수정이 완료되었습니다.', 'success');
-        } catch (error: any) {
-            showToast(error.message || 'AI 생성 중 오류가 발생했습니다.', 'error', 7000);
+        } catch (error: unknown) {
+            showToast(error instanceof Error && error.message ? error.message : 'AI 생성 중 오류가 발생했습니다.', 'error', 7000);
         } finally {
             setIsGenerating(false);
         }
     };
 
-    const handleCopy = async () => {
-        await navigator.clipboard.writeText(resultText);
-        showToast('결과가 복사되었습니다.', 'success');
-    };
-
     return (
-        <>
-            <ToastContainer toasts={toasts} removeToast={removeToast} />
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 w-full max-w-7xl mx-auto">
-                {/* 좌측: 입력 영역 */}
-                <div className="space-y-6">
-                    <div className="glass-strong rounded-3xl p-6 border border-white/5 shadow-2xl">
-                        <div className="flex justify-between items-center mb-4">
-                            <h3 className="font-bold text-white text-lg flex items-center gap-2">
-                                <FileText className="w-5 h-5 text-accent-400" />
-                                직업재활계획서 (기준 문서)
-                            </h3>
-                            <div className="flex flex-wrap justify-end gap-2">
-                                <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" accept="image/*,application/pdf" />
-                                <button onClick={() => fileInputRef.current?.click()} disabled={isOcrLoading} className="px-4 py-2 text-xs font-bold text-white bg-white/10 hover:bg-white/15 rounded-xl flex items-center gap-2 transition-colors">
-                                    <ImageIcon className="w-4 h-4" />
-                                    {selectedOcrFile ? '파일 다시 선택' : '이미지/PDF 선택'}
-                                </button>
-                                <button onClick={handleRunOcr} disabled={isOcrLoading || !selectedOcrFile} className="px-4 py-2 text-xs font-bold text-white bg-accent-500 hover:bg-accent-600 disabled:opacity-50 rounded-xl flex items-center gap-2 transition-colors shadow-lg shadow-accent-500/20">
-                                    {isOcrLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                                    {isOcrLoading ? '문서 분석 중...' : '선택 파일 분석'}
-                                </button>
-                                {selectedOcrFile && <span className="w-full text-right text-[11px] text-white/40">선택됨: {selectedOcrFile.name}</span>}
-                            </div>
-                        </div>
-                        <textarea
-                            value={ocrText}
-                            onChange={e => setOcrText(e.target.value)}
-                            placeholder="직업재활계획서 내용을 입력하거나 이미지/PDF로 업로드하세요. 계획 수립일, 목표, 수행방법을 기준으로 상담일지와 현장지원일지 반영 여부를 점검합니다."
-                            className="textarea-field !bg-black/40 border-white/5 !min-h-[260px] text-sm leading-relaxed"
-                        />
-                    </div>
-
-                    <div className="glass-strong rounded-3xl p-6 border border-white/5 shadow-2xl">
-                        <h3 className="font-bold text-white text-lg flex items-center gap-2 mb-4">
-                            <ClipboardCheck className="w-5 h-5 text-emerald-400" />
-                            점검할 상담일지/현장지원일지 전체
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 w-full max-w-7xl mx-auto">
+            {/* 좌측: 입력 영역 */}
+            <div className="space-y-6">
+                <div className="glass-strong rounded-3xl p-6 border border-white/5 shadow-2xl">
+                    <div className="flex justify-between items-center mb-4 gap-3">
+                        <h3 className="font-bold text-white text-lg flex items-center gap-2">
+                            <FileText className="w-5 h-5 text-accent-400" />
+                            직업재활계획서 (기준 문서)
                         </h3>
-                        <textarea
-                            value={counselText}
-                            onChange={e => setCounselText(e.target.value)}
-                            placeholder="작성해 둔 상담일지, 현장지원일지, 이용자상담, 보호자상담 기록을 붙여넣어 주세요. 상담일자와 장소는 유지하고, 계획 수립 전/직후/후/유지지원 흐름에 맞게 수행방법 반영 여부를 점검합니다."
-                            className="textarea-field !bg-black/40 border-white/5 !min-h-[360px] text-sm leading-relaxed"
-                        />
+                        <div className="flex flex-wrap justify-end gap-2">
+                            <FileDropZone
+                                accept="image/*,application/pdf"
+                                onFiles={handleFiles}
+                                disabled={isOcrLoading}
+                                ariaLabel="직업재활계획서 이미지 또는 PDF 선택"
+                                className="cursor-pointer px-4 py-2 text-xs font-bold text-white bg-white/10 hover:bg-white/15 border border-dashed border-white/20 rounded-xl flex items-center gap-2 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400"
+                                activeClassName="border-accent-400 bg-accent-500/20"
+                            >
+                                <ImageIcon className="w-4 h-4" aria-hidden="true" />
+                                {selectedOcrFile ? '파일 다시 선택' : '이미지/PDF 선택'}
+                            </FileDropZone>
+                            <button type="button" onClick={handleRunOcr} disabled={isOcrLoading || !selectedOcrFile} className="px-4 py-2 text-xs font-bold text-white bg-accent-500 hover:bg-accent-600 disabled:opacity-50 rounded-xl flex items-center gap-2 transition-colors shadow-lg shadow-accent-500/20">
+                                {isOcrLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                                {isOcrLoading ? '문서 분석 중...' : '선택 파일 분석'}
+                            </button>
+                            {selectedOcrFile && <span className="w-full text-right text-[11px] text-white/40">선택됨: {selectedOcrFile.name} · 파일을 끌어다 놓아도 됩니다</span>}
+                        </div>
                     </div>
-
-                    <button
-                        onClick={handleGenerateReview}
-                        disabled={isGenerating}
-                        className="w-full btn-primary !py-4 rounded-2xl flex items-center justify-center gap-2 font-bold shadow-xl shadow-accent-500/20 text-lg"
-                    >
-                        {isGenerating ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
-                        {isGenerating ? 'AI가 수행방법 반영 여부와 시간 흐름을 점검하고 있습니다...' : '수행방법 반영 점검'}
-                    </button>
+                    <textarea
+                        aria-label="직업재활계획서 내용"
+                        value={ocrText}
+                        onChange={e => setOcrText(e.target.value)}
+                        placeholder="직업재활계획서 내용을 입력하거나 이미지/PDF로 업로드하세요. 계획 수립일, 목표, 수행방법을 기준으로 상담일지와 현장지원일지 반영 여부를 점검합니다."
+                        className="textarea-field !bg-black/40 border-white/5 !min-h-[260px] text-sm leading-relaxed"
+                    />
                 </div>
 
-                {/* 우측: 결과 영역 */}
-                <div className="glass-strong rounded-3xl p-6 border border-white/5 shadow-2xl flex flex-col h-full min-h-[600px]">
-                    <div className="flex justify-between items-center mb-4">
-                        <h3 className="font-bold text-white text-lg flex items-center gap-2">
-                            <Sparkles className="w-5 h-5 text-accent-400" />
-                            상담일지 보완 점검 결과
-                        </h3>
-                        {resultText && (
-                            <button onClick={handleCopy} className="p-2 text-white/50 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg transition-colors flex items-center gap-1 text-xs font-bold">
-                                <Copy className="w-3.5 h-3.5" /> 복사
-                            </button>
-                        )}
-                    </div>
-                    
-                    <div className="flex-1 bg-black/40 rounded-2xl border border-white/5 p-1 relative overflow-hidden flex flex-col">
-                        {!resultText && !isGenerating ? (
-                            <div className="absolute inset-0 flex flex-col items-center justify-center text-white/20 p-8 text-center">
-                                <CheckCircle2 className="w-12 h-12 mb-4 opacity-20" />
-                                <p className="font-bold mb-2 text-white/40">아직 점검 결과가 없습니다</p>
-                                <p className="text-sm">좌측에 직업재활계획서와 상담일지를 입력해 주세요.<br/>AI가 수행방법을 기준으로 시간 순서에 맞게 상담일지를 보완합니다.</p>
-                            </div>
-                        ) : (
-                            <textarea
-                                value={resultText}
-                                onChange={e => setResultText(e.target.value)}
-                                className="w-full h-full bg-transparent border-none text-white text-sm leading-relaxed p-4 resize-none focus:ring-0 custom-scrollbar flex-1"
-                                placeholder="AI가 수행방법 반영 기준으로 점검하고 보완한 상담일지가 여기에 표시됩니다..."
-                            />
-                        )}
-                    </div>
+                <div className="glass-strong rounded-3xl p-6 border border-white/5 shadow-2xl">
+                    <h3 className="font-bold text-white text-lg flex items-center gap-2 mb-4">
+                        <ClipboardCheck className="w-5 h-5 text-emerald-400" />
+                        점검할 상담일지/현장지원일지 전체
+                    </h3>
+                    <textarea
+                        aria-label="점검할 상담일지와 현장지원일지"
+                        value={counselText}
+                        onChange={e => setCounselText(e.target.value)}
+                        placeholder="작성해 둔 상담일지, 현장지원일지, 이용자상담, 보호자상담 기록을 붙여넣어 주세요. 상담일자와 장소는 유지하고, 계획 수립 전/직후/후/유지지원 흐름에 맞게 수행방법 반영 여부를 점검합니다."
+                        className="textarea-field !bg-black/40 border-white/5 !min-h-[360px] text-sm leading-relaxed"
+                    />
+                </div>
+
+                <AiTransmissionNotice message="계획서와 상담일지 내용은 점검을 위해 외부 AI 서비스로 전송됩니다. 이름·연락처 등 일부 개인정보는 자동으로 가려서 보내지만 모두 걸러지지는 않으니, 불필요한 개인정보는 지우고 붙여넣어 주세요." />
+
+                <button
+                    type="button"
+                    onClick={() => void handleGenerateReview()}
+                    disabled={isGenerating}
+                    className="w-full btn-primary !py-4 rounded-2xl flex items-center justify-center gap-2 font-bold shadow-xl shadow-accent-500/20 text-lg"
+                >
+                    {isGenerating ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
+                    {isGenerating ? 'AI가 수행방법 반영 여부와 시간 흐름을 점검하고 있습니다...' : '수행방법 반영 점검하기'}
+                </button>
+            </div>
+
+            {/* 우측: 결과 영역 */}
+            <div className="glass-strong rounded-3xl p-6 border border-white/5 shadow-2xl flex flex-col h-full min-h-[600px]">
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="font-bold text-white text-lg flex items-center gap-2">
+                        <Sparkles className="w-5 h-5 text-accent-400" />
+                        상담일지 보완 점검 결과
+                    </h3>
+                    {resultText && <CopyButton text={resultText} />}
+                </div>
+
+                <div className="flex-1 bg-black/40 rounded-2xl border border-white/5 p-1 relative overflow-hidden flex flex-col">
+                    {!resultText && !isGenerating ? (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center text-white/20 p-8 text-center">
+                            <CheckCircle2 className="w-12 h-12 mb-4 opacity-20" />
+                            <p className="font-bold mb-2 text-white/40">아직 점검 결과가 없습니다</p>
+                            <p className="text-sm">좌측에 직업재활계획서와 상담일지를 입력해 주세요.<br/>AI가 수행방법을 기준으로 시간 순서에 맞게 상담일지를 보완합니다.</p>
+                        </div>
+                    ) : (
+                        <textarea
+                            aria-label="상담일지 보완 점검 결과"
+                            value={resultText}
+                            onChange={e => setResultText(e.target.value)}
+                            className="w-full h-full bg-transparent border-none text-white text-sm leading-relaxed p-4 resize-none focus:ring-0 custom-scrollbar flex-1"
+                            placeholder="AI가 수행방법 반영 기준으로 점검하고 보완한 상담일지가 여기에 표시됩니다..."
+                        />
+                    )}
                 </div>
             </div>
-        </>
+        </div>
     );
 }

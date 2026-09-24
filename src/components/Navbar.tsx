@@ -1,14 +1,15 @@
 import { useState, useRef, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Home, Menu, X, Sparkles, Wand2, Users, LayoutDashboard, ChevronDown, DollarSign, Settings, Download, Upload, FileSearch, GraduationCap, Archive } from 'lucide-react';
+import { Home, Menu, X, Sparkles, Wand2, Users, LayoutDashboard, ChevronDown, DollarSign, Settings, Download, Upload, FileSearch, GraduationCap, Archive, ClipboardList } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuthStore } from '../store/authStore';
-import { exportAllData, importAllData } from '../config/localDB';
-import { saveJjssText, savedLocationMessage } from '../utils/jjssFileService';
+import { useBackupActions } from '../hooks/useBackupActions';
+import { preloadPage } from '../pagePreload';
 
 const navItems = [
     { path: '/', label: '서비스 소개', shortLabel: '홈', icon: Home },
     { path: '/manage', label: '이용자 및 사업체 관리', shortLabel: '이용자·사업체', icon: Users },
+    { path: '/overview', label: '직업재활 현황판', shortLabel: '현황판', icon: ClipboardList },
     { path: '/evaluation', label: '직업평가', icon: FileSearch },
     { path: '/training', label: '직업훈련', icon: GraduationCap },
     { path: '/workmate', label: '고용지원', icon: LayoutDashboard },
@@ -26,6 +27,7 @@ export default function Navbar() {
     const profileRef = useRef<HTMLDivElement>(null);
     const profileButtonRef = useRef<HTMLButtonElement>(null);
     const mobileButtonRef = useRef<HTMLButtonElement>(null);
+    const { startExport, chooseRestoreFile, busy: backupBusy, backupDialog } = useBackupActions();
 
     const closeMobileMenu = (restoreFocus = false) => {
         setMobileOpen(false);
@@ -79,43 +81,20 @@ export default function Navbar() {
         };
     }, [mobileOpen]);
 
-    // 데이터 내보내기
-    const handleExport = async () => {
-        try {
-            const json = await exportAllData();
-            const result = await saveJjssText('backup', `JJSS_backup_${new Date().toISOString().split('T')[0]}.json`, json, 'application/json');
-            if (result.canceled) alert(savedLocationMessage(result));
-            setProfileOpen(false);
-        } catch (err) {
-            alert('데이터 내보내기 중 오류가 발생했습니다.');
-        }
+    // 데이터 내보내기·불러오기 (설정 화면과 같은 공용 동작)
+    const handleExport = () => {
+        setProfileOpen(false);
+        startExport();
     };
 
-    // 데이터 불러오기
-    const handleImport = async () => {
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = '.json';
-        input.onchange = async (e) => {
-            const file = (e.target as HTMLInputElement).files?.[0];
-            if (!file) return;
-            try {
-                const text = await file.text();
-                if (window.confirm('기존 데이터가 불러온 데이터로 대체됩니다. 계속하시겠습니까?')) {
-                    await importAllData(text);
-                    window.location.reload();
-                }
-            } catch (err) {
-                alert('데이터 불러오기 중 오류가 발생했습니다. 올바른 백업 파일인지 확인해주세요.');
-            }
-        };
-        input.click();
+    const handleImport = () => {
         setProfileOpen(false);
+        chooseRestoreFile();
     };
 
     return (
         <nav aria-label="주요 메뉴" className="fixed top-0 left-0 right-0 z-40 glass-strong">
-            <div className="relative z-30 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="relative z-30 max-w-7xl 2xl:max-w-[90rem] mx-auto px-4 sm:px-6 lg:px-8">
                 <div className="flex items-center justify-between h-16">
                     {/* Logo */}
                     <Link to="/" aria-label="JJSS 서비스 소개로 이동" className="flex items-center gap-2 sm:gap-3 group shrink-0">
@@ -136,6 +115,8 @@ export default function Navbar() {
                                     key={item.path}
                                     to={item.path}
                                     onClick={() => setMobileOpen(false)}
+                                    onMouseEnter={() => void preloadPage(item.path)}
+                                    onFocus={() => void preloadPage(item.path)}
                                     aria-label={item.label}
                                     aria-current={isActive ? 'page' : undefined}
                                     className={`group/nav-item relative flex items-center gap-1.5 px-2.5 py-2 rounded-xl text-[13px] font-medium whitespace-nowrap transition-all duration-200 ${isActive
@@ -205,14 +186,18 @@ export default function Navbar() {
                                                 <Settings aria-hidden="true" className="w-4 h-4" /> 시스템 설정
                                             </Link>
                                             <button
+                                                type="button"
                                                 onClick={handleExport}
-                                                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors text-left"
+                                                disabled={backupBusy}
+                                                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors text-left disabled:opacity-50"
                                             >
                                                 <Download aria-hidden="true" className="w-4 h-4" /> 데이터 내보내기
                                             </button>
                                             <button
+                                                type="button"
                                                 onClick={handleImport}
-                                                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors text-left"
+                                                disabled={backupBusy}
+                                                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors text-left disabled:opacity-50"
                                             >
                                                 <Upload aria-hidden="true" className="w-4 h-4" /> 데이터 불러오기
                                             </button>
@@ -283,6 +268,7 @@ export default function Navbar() {
                     </>
                 )}
             </AnimatePresence>
+            {backupDialog}
         </nav>
     );
 }

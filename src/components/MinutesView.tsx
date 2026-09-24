@@ -1,43 +1,51 @@
-import React, { useState, useRef } from 'react';
+import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-    FileText, Zap, ArrowLeft, Download, Upload, Clock, Search, 
-    Sparkles, AlertCircle, CheckCircle2, ListTodo, ClipboardList,
-    Loader2, Trash2, FileUp, MessageSquare
-} from 'lucide-react';
+import { FileText, Zap, Download, Sparkles, Loader2, Trash2, FileUp, MessageSquare } from 'lucide-react';
 import { generateText } from '../services/gemini';
-import { useToast, ToastContainer } from './Toast';
+import { useToast } from './Toast';
 import { safeErrorMetadata } from '../utils/safeError';
 import { getTextFileValidationError } from '../utils/fileValidation';
 import { saveJjssText, savedLocationMessage } from '../utils/jjssFileService';
+import { CopyButton } from './common/CopyButton';
+import { FileDropZone } from './common/FileDropZone';
+import { useConfirm } from './common/ConfirmProvider';
+import { ToolPageShell } from './tools/ToolPageShell';
+import { AiTransmissionNotice } from './tools/AiTransmissionNotice';
+import { useReportDirty } from './tools/useReportDirty';
 
 interface MinutesViewProps {
     onBack: () => void;
+    onDirtyChange?: (dirty: boolean) => void;
 }
 
-export function MinutesView({ onBack }: MinutesViewProps) {
-    const { toasts, showToast, removeToast } = useToast();
+export function MinutesView({ onBack, onDirtyChange }: MinutesViewProps) {
+    const { showToast } = useToast();
+    const confirm = useConfirm();
     const [transcript, setTranscript] = useState('');
     const [activeTab, setActiveTab] = useState<'input' | 'result'>('input');
     const [isGenerating, setIsGenerating] = useState(false);
     const [result, setResult] = useState('');
-    const fileInputRef = useRef<HTMLInputElement>(null);
+    /** 마지막으로 AI가 만든 원본. result와 다르면 사용자가 직접 고친 것입니다. */
+    const [generatedResult, setGeneratedResult] = useState('');
+    const [savedResult, setSavedResult] = useState('');
 
-    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
+    const dirty = isGenerating || (result ? result !== savedResult : Boolean(transcript.trim()));
+    useReportDirty(dirty, onDirtyChange);
+
+    const handleFiles = (files: File[]) => {
+        const file = files[0];
         if (!file) return;
 
         const validationError = getTextFileValidationError(file);
         if (validationError) {
             showToast(validationError, 'error');
-            e.target.value = '';
             return;
         }
 
         const reader = new FileReader();
-        reader.onload = (event) => {
-            const content = event.target?.result as string;
-            setTranscript(content);
+        reader.onload = () => {
+            setTranscript(String(reader.result ?? ''));
+            setActiveTab('input');
             showToast('녹취록이 업로드되었습니다.', 'success');
         };
         reader.onerror = () => showToast('녹취록 파일을 읽지 못했습니다.', 'error');
@@ -45,77 +53,75 @@ export function MinutesView({ onBack }: MinutesViewProps) {
     };
 
     const handleGenerate = async () => {
+        if (isGenerating) return;
         if (!transcript.trim()) {
             showToast('분석할 녹취록 내용을 입력하거나 파일을 업로드해 주세요.', 'error');
             return;
         }
+        if (result && result !== generatedResult && !(await confirm({
+            title: '회의록 다시 생성',
+            message: '직접 수정한 회의록이 있습니다.\n다시 생성하면 수정한 내용이 새 결과로 바뀝니다. 계속할까요?',
+            confirmLabel: '다시 생성하기',
+            cancelLabel: '취소',
+            tone: 'danger',
+        }))) return;
 
         setIsGenerating(true);
         setActiveTab('result');
         try {
             const generatedMinutes = await generateText('minutes', transcript);
             setResult(generatedMinutes);
+            setGeneratedResult(generatedMinutes);
             showToast('회의록 작성이 완료되었습니다.', 'success');
-        } catch (error) {
+        } catch (error: unknown) {
             console.error('Minutes generation error:', safeErrorMetadata(error, 'minutes-generate'));
-            showToast('회의록 생성 중 오류가 발생했습니다.', 'error');
-            setActiveTab('input');
+            showToast(error instanceof Error && error.message ? error.message : '회의록 생성 중 오류가 발생했습니다.', 'error');
+            if (!result) setActiveTab('input');
         } finally {
             setIsGenerating(false);
         }
-    };
-
-    const handleCopy = async () => {
-        await navigator.clipboard.writeText(result);
-        showToast('회의록이 클립보드에 복사되었습니다.', 'success');
     };
 
     const handleDownload = async () => {
         try {
             const saved = await saveJjssText('minutes', '회의록.txt', result);
             showToast(savedLocationMessage(saved), saved.canceled ? 'info' : 'success', 5000);
-        } catch (error: any) {
-            showToast(error?.message || '회의록 파일을 저장하지 못했습니다.', 'error');
+            if (!saved.canceled) setSavedResult(result);
+        } catch (error: unknown) {
+            showToast(error instanceof Error && error.message ? error.message : '회의록 파일을 저장하지 못했습니다.', 'error');
         }
     };
 
-    return (
-        <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            className="w-full max-w-7xl mx-auto pb-10"
-        >
-            <ToastContainer toasts={toasts} removeToast={removeToast} />
-            
-            <div className="flex items-center justify-between mb-8">
-                <button
-                    onClick={onBack}
-                    className="btn-ghost flex items-center gap-2 text-sm text-white/70 hover:text-white transition-colors"
-                >
-                    <ArrowLeft className="w-4 h-4" /> 도구 목록
-                </button>
-                <div className="flex items-center gap-3">
-                    {result && (
-                        <>
-                            <button 
-                                onClick={handleCopy}
-                                className="p-2.5 rounded-xl bg-white/5 border border-white/10 text-white/60 hover:text-white transition-colors"
-                                title="복사"
-                            >
-                                <ClipboardList className="w-5 h-5" />
-                            </button>
-                            <button 
-                                onClick={handleDownload}
-                                className="flex items-center gap-2 px-5 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-bold border border-emerald-400/30 shadow-lg shadow-emerald-500/20 transition-all active:scale-95"
-                            >
-                                <Download className="w-4 h-4" /> 내보내기 (.txt)
-                            </button>
-                        </>
-                    )}
-                </div>
-            </div>
+    const clearTranscript = async () => {
+        if (!(await confirm({
+            title: '녹취록 지우기',
+            message: '입력한 녹취록 원문을 모두 지웁니다. 계속할까요?',
+            confirmLabel: '지우기',
+            tone: 'danger',
+        }))) return;
+        setTranscript('');
+    };
 
+    return (
+        <ToolPageShell
+            onBack={onBack}
+            className="w-full max-w-7xl mx-auto pb-10"
+            actions={result ? (
+                <>
+                    <CopyButton
+                        text={result}
+                        className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white/70 hover:text-white text-sm font-bold transition-colors disabled:opacity-40"
+                    />
+                    <button
+                        type="button"
+                        onClick={() => void handleDownload()}
+                        className="flex items-center gap-2 px-5 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-bold border border-emerald-400/30 shadow-lg shadow-emerald-500/20 transition-all active:scale-95"
+                    >
+                        <Download className="w-4 h-4" /> 파일로 저장
+                    </button>
+                </>
+            ) : undefined}
+        >
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 min-h-[700px]">
                 {/* Left Panel: Stats & Controls */}
                 <div className="lg:col-span-4 flex flex-col gap-6">
@@ -130,7 +136,7 @@ export function MinutesView({ onBack }: MinutesViewProps) {
                             </p>
                         </div>
 
-                        <div className="space-y-4 mb-8">
+                        <div className="space-y-4 mb-6">
                             <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
                                 <h4 className="text-xs font-bold text-white/30 mb-2 uppercase tracking-widest">분석 핵심 지침</h4>
                                 <ul className="space-y-2">
@@ -150,39 +156,42 @@ export function MinutesView({ onBack }: MinutesViewProps) {
                             </div>
                         </div>
 
-                        <button 
-                            onClick={handleGenerate}
+                        <AiTransmissionNotice className="mb-6" />
+
+                        <button
+                            type="button"
+                            onClick={() => void handleGenerate()}
                             disabled={isGenerating || !transcript.trim()}
                             className={`w-full flex items-center justify-center gap-3 py-4 rounded-2xl font-black transition-all shadow-xl hover:-translate-y-1 active:scale-95 ${isGenerating ? 'bg-white/10 text-white/30 cursor-not-allowed' : 'bg-primary-500 text-white shadow-primary-500/20 hover:shadow-primary-500/30'}`}
                         >
                             {isGenerating ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5 text-white" />}
-                            AI 회의록 생성 시작
+                            {result ? '회의록 다시 생성하기' : 'AI 회의록 생성하기'}
                         </button>
                     </div>
 
                     <div className="glass-strong rounded-[2rem] p-6 border border-white/10">
                         <h4 className="text-xs font-bold text-white/30 mb-4 uppercase tracking-widest">파일 업로드</h4>
-                        <input 
-                            type="file" 
+                        <FileDropZone
                             accept=".txt,.md"
-                            className="hidden" 
-                            ref={fileInputRef}
-                            onChange={handleFileUpload}
-                        />
-                        <button 
-                            onClick={() => fileInputRef.current?.click()}
-                            className="w-full py-6 rounded-2xl border-2 border-dashed border-white/10 hover:border-primary-500/50 hover:bg-white/5 transition-all flex flex-col items-center gap-3"
+                            onFiles={handleFiles}
+                            disabled={isGenerating}
+                            ariaLabel="녹취록 텍스트 파일 선택"
+                            className="w-full py-6 rounded-2xl border-2 border-dashed border-white/10 hover:border-primary-500/50 hover:bg-white/5 transition-all flex flex-col items-center gap-3 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400"
+                            activeClassName="border-primary-400 bg-primary-500/10"
                         >
-                            <FileUp className="w-8 h-8 text-white/20" />
-                            <span className="text-xs font-bold text-white/40">녹취록 파일 업로드 (.txt 등)</span>
-                        </button>
+                            <FileUp className="w-8 h-8 text-white/20" aria-hidden="true" />
+                            <span className="text-xs font-bold text-white/40">녹취록 파일 업로드 (.txt 등) · 끌어다 놓아도 됩니다</span>
+                        </FileDropZone>
                     </div>
                 </div>
 
                 {/* Right Panel: Content Area */}
                 <div className="lg:col-span-8 flex flex-col gap-6">
-                    <div className="flex bg-white/5 backdrop-blur-md p-1.5 rounded-2xl border border-white/10 w-fit">
+                    <div className="flex bg-white/5 backdrop-blur-md p-1.5 rounded-2xl border border-white/10 w-fit" role="tablist" aria-label="회의록 화면">
                         <button
+                            type="button"
+                            role="tab"
+                            aria-selected={activeTab === 'input'}
                             onClick={() => setActiveTab('input')}
                             className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${activeTab === 'input' ? 'bg-white text-slate-900 shadow-lg' : 'text-white/60 hover:text-white hover:bg-white/5'}`}
                         >
@@ -190,6 +199,9 @@ export function MinutesView({ onBack }: MinutesViewProps) {
                             녹취록 입력
                         </button>
                         <button
+                            type="button"
+                            role="tab"
+                            aria-selected={activeTab === 'result'}
                             onClick={() => setActiveTab('result')}
                             className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${activeTab === 'result' ? 'bg-white text-slate-900 shadow-lg' : 'text-white/60 hover:text-white hover:bg-white/5'}`}
                         >
@@ -201,7 +213,7 @@ export function MinutesView({ onBack }: MinutesViewProps) {
                     <div className="flex-1 glass-strong rounded-[2.5rem] border border-white/10 overflow-hidden flex flex-col relative">
                         <AnimatePresence mode="wait">
                             {activeTab === 'input' ? (
-                                <motion.div 
+                                <motion.div
                                     key="input"
                                     initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}
                                     className="flex-1 flex flex-col"
@@ -211,15 +223,19 @@ export function MinutesView({ onBack }: MinutesViewProps) {
                                             회의 녹취록 원문
                                         </h2>
                                         {transcript && (
-                                            <button 
-                                                onClick={() => setTranscript('')}
+                                            <button
+                                                type="button"
+                                                aria-label="녹취록 지우기"
+                                                title="녹취록 지우기"
+                                                onClick={() => void clearTranscript()}
                                                 className="text-white/20 hover:text-red-400 transition-colors"
                                             >
                                                 <Trash2 className="w-4 h-4" />
                                             </button>
                                         )}
                                     </div>
-                                    <textarea 
+                                    <textarea
+                                        aria-label="회의 녹취록 원문"
                                         value={transcript}
                                         onChange={(e) => setTranscript(e.target.value)}
                                         placeholder="이곳에 회의 녹취록이나 두서없는 회의 메모를 붙여넣으세요. AI가 분석하여 행정 문서 양식의 회의록으로 바꿔드립니다."
@@ -227,7 +243,7 @@ export function MinutesView({ onBack }: MinutesViewProps) {
                                     />
                                 </motion.div>
                             ) : (
-                                <motion.div 
+                                <motion.div
                                     key="result"
                                     initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}
                                     className="flex-1 flex flex-col"
@@ -240,6 +256,7 @@ export function MinutesView({ onBack }: MinutesViewProps) {
                                             <h2 className="text-2xl font-black text-white mb-4">AI 심층 분석 진행 중</h2>
                                             <p className="text-white/40 leading-relaxed max-w-sm mx-auto font-medium">
                                                 녹취록의 맥락을 파악하고 팀별 공지사항과 결정 사항을 구조화하고 있습니다. 잠시만 기다려 주세요.
+                                                {result && <span className="block mt-2 text-white/30">실패하면 기존 회의록은 그대로 남습니다.</span>}
                                             </p>
                                         </div>
                                     ) : result ? (
@@ -248,11 +265,12 @@ export function MinutesView({ onBack }: MinutesViewProps) {
                                                 <h2 className="text-xl font-bold text-white flex items-center gap-2">
                                                     분석 결과
                                                 </h2>
-                                                <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-bold text-emerald-400 uppercase tracking-widest">
-                                                    Analysis Complete
+                                                <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-bold text-emerald-400 tracking-widest">
+                                                    {result !== generatedResult ? '직접 수정함' : '생성 완료'}
                                                 </div>
                                             </div>
-                                            <textarea 
+                                            <textarea
+                                                aria-label="생성된 회의록"
                                                 value={result}
                                                 onChange={(e) => setResult(e.target.value)}
                                                 className="flex-1 p-8 bg-transparent text-white/90 resize-none focus:outline-none text-base leading-relaxed font-sans custom-scrollbar"
@@ -263,7 +281,7 @@ export function MinutesView({ onBack }: MinutesViewProps) {
                                             <div className="w-20 h-20 bg-white/5 rounded-3xl flex items-center justify-center mb-8">
                                                 <Sparkles className="w-10 h-10 text-white" />
                                             </div>
-                                            <p className="text-lg font-bold text-white">생성된 결과가 없습니다. <br/>왼쪽의 '생성 시작' 버튼을 눌러주세요.</p>
+                                            <p className="text-lg font-bold text-white">생성된 결과가 없습니다. <br/>왼쪽의 'AI 회의록 생성하기' 버튼을 눌러주세요.</p>
                                         </div>
                                     )}
                                 </motion.div>
@@ -272,6 +290,6 @@ export function MinutesView({ onBack }: MinutesViewProps) {
                     </div>
                 </div>
             </div>
-        </motion.div>
+        </ToolPageShell>
     );
 }

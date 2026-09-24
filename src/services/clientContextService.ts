@@ -1,6 +1,7 @@
 import * as localDB from '../config/localDB';
 import { CaseDocument } from '../types/caseDocument';
 import { Seeker } from '../types/matching';
+import { wrapAsData } from './gemini';
 
 interface TrainingRecord {
   plan?: string;
@@ -137,7 +138,8 @@ function buildSynthesis(seeker: Seeker, caseDocs: CaseDocument[], trainingText: 
 
 export async function buildClientContextSummary(seeker: Seeker, allSeekers: Seeker[] = []) {
   const caseDocs = (await localDB.getAll<CaseDocument>('caseDocuments'))
-    .filter(doc => doc.type !== 'workflow' && sameSeeker(doc, seeker, allSeekers))
+    // 현황판 기록(workflow)과 지원고용 회차(계좌·연락처가 든 JSON)는 AI 참고자료에 넣지 않습니다.
+    .filter(doc => doc.type !== 'workflow' && doc.type !== 'supported_employment' && sameSeeker(doc, seeker, allSeekers))
     .sort((a, b) => dateValue(b) - dateValue(a));
 
   const trainingState = await localDB.getById<TrainingState>('trainingState', 'work-training').catch(() => undefined);
@@ -181,7 +183,7 @@ export function withClientContextPrompt(prompt: string, contextSummary?: string)
   return `${prompt}
 
 [같은 이용자 최근 직업훈련 및 고용지원 기록 참고자료]
-${contextSummary}
+${wrapAsData(contextSummary)}
 
 위 참고자료는 보조 자료입니다. 현재 작성 중인 문서 목적과 담당자 입력을 우선하고, 참고자료를 그대로 복사하지 말고 필요한 내용만 반영해 주세요.`;
 }

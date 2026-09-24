@@ -1,10 +1,16 @@
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { AlertTriangle, RefreshCw, Home } from 'lucide-react';
 import { safeErrorMetadata } from '../utils/safeError';
 
 interface Props {
     children: ReactNode;
 }
+
+/**
+ * 앱 최상위 마지막 오류 경계.
+ * 화면(라우트) 단위 오류는 RouteErrorFallback이 메뉴를 유지한 채 처리하므로,
+ * 여기까지 오는 것은 라우터·공용 틀 자체가 실패한 경우뿐이다.
+ */
 
 interface State {
     hasError: boolean;
@@ -58,7 +64,7 @@ export class ErrorBoundary extends Component<Props, State> {
                         </p>
 
                         <div className="bg-black/40 rounded-2xl p-4 mb-8 border border-white/5 text-left overflow-x-auto">
-                            <p className="text-[10px] uppercase font-black text-red-400/50 tracking-widest mb-2 whitespace-nowrap">Error Details</p>
+                            <p className="text-xs font-bold text-red-300/70 mb-2 whitespace-nowrap">오류 정보</p>
                             <code className="text-xs text-red-300 font-mono break-all line-clamp-3">
                                 {this.state.errorName || 'Error'} — 자세한 오류 내용은 개인정보 보호를 위해 표시하지 않습니다.
                             </code>
@@ -66,22 +72,20 @@ export class ErrorBoundary extends Component<Props, State> {
 
                         <div className="flex flex-col sm:flex-row gap-4">
                             <button
+                                type="button"
                                 onClick={this.handleReset}
                                 className="flex-1 btn-primary !bg-red-600 !hover:bg-red-500 flex items-center justify-center gap-2 py-4 rounded-2xl font-bold shadow-xl shadow-red-900/20"
                             >
-                                <RefreshCw className="w-5 h-5" /> 다시 시도
+                                <RefreshCw className="w-5 h-5" /> 다시 불러오기
                             </button>
                             <button
+                                type="button"
                                 onClick={this.handleGoHome}
                                 className="flex-1 btn-secondary flex items-center justify-center gap-2 py-4 rounded-2xl font-bold"
                             >
                                 <Home className="w-5 h-5" /> 홈으로 이동
                             </button>
                         </div>
-                        
-                        <p className="mt-8 text-[10px] text-white/20 font-bold uppercase tracking-[0.2em]">
-                            Antigravity AI Stability Shield Active
-                        </p>
                     </div>
                 </div>
             );

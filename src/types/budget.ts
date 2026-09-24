@@ -59,3 +59,6 @@ export interface ExpenseDocumentData {
     totalAmount: number;        // 합계
     approvers: Approver[];      // 결제선 (최대 5명)
 }
+
+/** 지출품의서 설정(기관명·제목·목적·결재선). 지출 목록과 합계는 미리보기 시점에 채웁니다. */
+export type ExpenseDocumentSettings = Omit<ExpenseDocumentData, 'expenses' | 'totalAmount'>;

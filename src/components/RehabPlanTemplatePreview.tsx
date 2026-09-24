@@ -10,6 +10,8 @@ import { downloadRehabPlanAsDocx } from '../utils/rehabPlanDocx';
 import { getRehabPlanExportWarnings } from '../utils/rehabPlanReview';
 import { downloadElementAsPng, printElementAsPdf } from '../utils/localDocumentExport';
 import { savedLocationMessage } from '../utils/jjssFileService';
+import { localDateKey } from '../utils/date';
+import { useConfirm } from './common/ConfirmProvider';
 import './RehabPlanTemplatePreview.css';
 
 interface RehabPlanTemplatePreviewProps {
@@ -20,14 +22,6 @@ interface RehabPlanTemplatePreviewProps {
 
 type NestedSection = 'approval' | 'client' | 'background' | 'opinions' | 'caseMeeting' | 'footer';
 type ExportFormat = 'pdf' | 'png' | 'docx';
-
-function localDateForFileName() {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-}
 
 function PreviewValue({ value }: { value: string }) {
     return <div className={value.trim() ? 'rehab-plan-value' : 'rehab-plan-value is-missing'}>{value.trim() || '추가 입력 필요'}</div>;
@@ -224,6 +218,7 @@ export function RehabPlanTemplatePreview({ seeker, planText, meetingText }: Reha
     const [exportNotice, setExportNotice] = useState('');
     const previewRef = useRef<HTMLDivElement>(null);
     const mappedSourceRef = useRef('');
+    const confirm = useConfirm();
     const sourceSignature = `${seeker.id || seeker.seekerId || seeker.name}\u0000${planText}\u0000${meetingText}`;
 
     useEffect(() => {
@@ -231,7 +226,8 @@ export function RehabPlanTemplatePreview({ seeker, planText, meetingText }: Reha
         const previousOverflow = document.body.style.overflow;
         document.body.style.overflow = 'hidden';
         const onKeyDown = (event: KeyboardEvent) => {
-            if (event.key !== 'Escape' || exporting) return;
+            // 확인창이 먼저 Escape를 처리(preventDefault)한 경우 미리보기까지 닫지 않습니다.
+            if (event.key !== 'Escape' || exporting || event.defaultPrevented) return;
             if (pendingExport) setPendingExport(null);
             else setIsOpen(false);
         };
@@ -253,8 +249,13 @@ export function RehabPlanTemplatePreview({ seeker, planText, meetingText }: Reha
         setIsOpen(true);
     };
 
-    const remap = () => {
-        if (!window.confirm('현재 편집한 매핑값을 지우고 이용자 정보와 작성 본문에서 다시 자동 매핑할까요?')) return;
+    const remap = async () => {
+        const ok = await confirm({
+            title: '자동 매핑 다시 적용',
+            message: '현재 편집한 매핑값을 지우고 이용자 정보와 작성 본문에서 다시 자동 매핑할까요?',
+            confirmLabel: '다시 매핑', tone: 'danger',
+        });
+        if (!ok) return;
         setFormData(mapRehabPlanFormData(seeker, planText, meetingText));
         mappedSourceRef.current = sourceSignature;
         setExportError('');
@@ -293,7 +294,7 @@ export function RehabPlanTemplatePreview({ seeker, planText, meetingText }: Reha
         setExportError('');
         setExportNotice('');
         try {
-            const result = await printElementAsPdf(previewRef.current, `직업재활계획서_${localDateForFileName()}`);
+            const result = await printElementAsPdf(previewRef.current, `직업재활계획서_${localDateKey()}`);
             if (result?.canceled) return;
             setExportNotice(result ? savedLocationMessage(result) : '인쇄 창에서 프린터를 “PDF로 저장”으로 선택해 주세요.');
         } catch (error: any) {
@@ -309,7 +310,7 @@ export function RehabPlanTemplatePreview({ seeker, planText, meetingText }: Reha
         setExportError('');
         setExportNotice('');
         try {
-            const result = await downloadElementAsPng(previewRef.current, `직업재활계획서_${localDateForFileName()}.png`);
+            const result = await downloadElementAsPng(previewRef.current, `직업재활계획서_${localDateKey()}.png`);
             if (result.canceled) return;
             setExportNotice(savedLocationMessage(result, '현재 미리보기 전체 PNG 다운로드를 시작했습니다.'));
         } catch (error: any) {
@@ -325,7 +326,7 @@ export function RehabPlanTemplatePreview({ seeker, planText, meetingText }: Reha
         setExportError('');
         setExportNotice('');
         try {
-            const result = await downloadRehabPlanAsDocx(formData, `직업재활계획서_${localDateForFileName()}.docx`);
+            const result = await downloadRehabPlanAsDocx(formData, `직업재활계획서_${localDateKey()}.docx`);
             if (result.canceled) return;
             setExportNotice(savedLocationMessage(result, '현재 입력값의 Word 문서 다운로드를 시작했습니다.'));
         } catch (error: any) {
@@ -390,7 +391,7 @@ export function RehabPlanTemplatePreview({ seeker, planText, meetingText }: Reha
 
                         <div className="rehab-plan-toolbar">
                             <div className="flex flex-wrap gap-2">
-                                <button type="button" onClick={remap} disabled={!!exporting} className="btn-secondary !py-2 !px-3 text-xs flex items-center gap-2">
+                                <button type="button" onClick={() => { void remap(); }} disabled={!!exporting} className="btn-secondary !py-2 !px-3 text-xs flex items-center gap-2">
                                     <RotateCcw className="w-3.5 h-3.5" /> 자동 매핑 다시 적용
                                 </button>
                                 <button type="button" onClick={() => requestExport('pdf')} disabled={!!exporting} className="btn-primary !py-2 !px-3 text-xs flex items-center gap-2">

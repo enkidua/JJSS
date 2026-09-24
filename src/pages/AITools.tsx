@@ -1,13 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Wand2, ClipboardList,
-    Pen, Lightbulb, Copy, Loader2, Sparkles, ArrowLeft, Newspaper,
+    Pen, Lightbulb, Loader2, Sparkles, Newspaper,
     Megaphone, ScanText, CalendarDays, FileText, Smile, LayoutTemplate,
     Wrench, BarChart3, ExternalLink, MousePointer2, Briefcase, Home, Compass, PieChart, ShieldCheck, Layout, FileSearch, Presentation,
-    ShieldAlert, MessageSquare
+    ShieldAlert, MessageSquare, type LucideIcon
 } from 'lucide-react';
-import { generateText, generateImage, PromptType, BlogLength, BlogPurpose } from '../services/gemini';
+import { generateText, PromptType, BlogLength, BlogPurpose } from '../services/gemini';
 import { PromoDesignView } from '../components/PromoDesignView';
 import { MinutesView } from '../components/MinutesView';
 import { UtilitiesView } from '../components/UtilitiesView';
@@ -16,8 +16,11 @@ import { OCRView } from '../components/OCRView';
 import { ScheduleDesignView } from '../components/ScheduleDesignView';
 import { DocumentChatView } from '../components/DocumentChatView';
 import { MaskingView } from '../components/MaskingView';
+import { CopyButton } from '../components/common/CopyButton';
+import { ToolPageShell } from '../components/tools/ToolPageShell';
+import { AiTransmissionNotice } from '../components/tools/AiTransmissionNotice';
+import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 import CrisisManual from './CrisisManual';
-import { getAiDocumentValidationError } from '../utils/fileValidation';
 
 // ─── 업무도구 정의 ───
 type ToolCategory = 'core' | 'analysis' | 'visual' | 'planning';
@@ -26,7 +29,7 @@ interface Tool {
     id: PromptType | 'crisis';
     title: string;
     description: string;
-    icon: any;
+    icon: LucideIcon;
     color: string;
     gradient: string;
     fields: {
@@ -99,7 +102,7 @@ const TOOLS: Tool[] = [
         isBeta: true,
         category: 'visual',
         apiNote: 'Gemini 이미지 생성 권한 필요',
-        fallbackNote: '이미지 생성은 텍스트보다 비용과 quota 소모가 클 수 있습니다. 권한/quota 문제 시 홍보 문구 작성 또는 HTML/PDF 제작으로 대체하세요.',
+        fallbackNote: '이미지 생성은 텍스트보다 사용량(비용)이 클 수 있습니다. 권한이나 사용량 문제 시 홍보 문구 작성 또는 HTML/PDF 제작으로 대체하세요.',
     },
     {
         id: 'utilities',
@@ -154,15 +157,15 @@ const TOOLS: Tool[] = [
     },
     {
         id: 'masking',
-        title: '개인정보 비식별화 (Standalone)',
-        description: '이름, 주민번호, 연락처 등 민감한 개인정보를 AI가 찾아 자동으로 마스킹 처리합니다.',
+        title: '개인정보 비식별화',
+        description: '이름, 주민번호, 연락처 등 민감한 개인정보를 찾아 자동으로 가림 처리합니다.',
         icon: ShieldAlert,
         color: 'text-rose-400',
         gradient: 'from-rose-500 to-pink-600',
         fields: [],
         category: 'analysis',
-        apiNote: 'Gemini API 키 권장',
-        fallbackNote: '원문은 유지되고 비식별화 결과만 별도로 표시됩니다.',
+        apiNote: 'API 키 없이 사용 가능(AI 추가 점검은 선택)',
+        fallbackNote: '이 컴퓨터 안에서 먼저 가리고, 원문은 외부로 보내지 않습니다.',
     },
     {
         id: 'style_refiner',
@@ -248,9 +251,7 @@ const TOOLS: Tool[] = [
         icon: ScanText,
         color: 'text-blue-400',
         gradient: 'from-blue-400 to-cyan-500',
-        fields: [
-            { key: 'note', label: '안내', placeholder: '아래에서 추출할 파일을 첨부한 뒤 실행 버튼을 눌러주세요. (텍스트 입력은 필요하지 않습니다.)', type: 'input' },
-        ],
+        fields: [],
         isBeta: true,
         category: 'analysis',
         apiNote: 'Vision API 키 또는 Gemini API 키 필요',
@@ -258,18 +259,16 @@ const TOOLS: Tool[] = [
     },
     {
         id: 'schedule',
-        title: '나노바나나 디자인 스케줄러',
-        description: '일정이나 식단을 입력하면 나노바나나2 스타일로 아름답고 예쁜 디자인 결과물을 만들어 드립니다.',
+        title: 'AI 디자인 일정표·식단표',
+        description: '일정이나 식단을 입력하면 이미지 생성(Gemini)으로 보기 좋은 일정표·식단표 이미지를 만들어 드립니다.',
         icon: CalendarDays,
         color: 'text-green-400',
         gradient: 'from-green-500 to-emerald-600',
-        fields: [
-            { key: 'details', label: '일정/메뉴 세부 정보', placeholder: '기간, 시간, 장소, 활동내용 혹은 요일별 식단 정보를 자유롭게 입력하세요.', type: 'textarea' },
-        ],
+        fields: [],
         isBeta: true,
         category: 'visual',
         apiNote: 'Gemini 이미지 생성 권한 필요',
-        fallbackNote: '이미지 생성은 텍스트보다 비용과 quota 소모가 클 수 있습니다. 권한/quota 문제 시 텍스트 일정표로 먼저 정리하세요.',
+        fallbackNote: '이미지 생성은 텍스트보다 사용량(비용)이 클 수 있습니다. 권한이나 사용량 문제 시 텍스트 일정표로 먼저 정리하세요.',
     }
 ];
 
@@ -341,7 +340,7 @@ const EXTERNAL_TOOLS = [
     {
         title: 'PCP 대쉬보드',
         url: 'https://pct-dashboard-generator-1093928830670.us-west1.run.app/',
-        description: '개중심계획(PCP) 수립 및 관리를 위한 인터랙티브 대시보드',
+        description: '개인중심계획(PCP) 수립 및 관리를 위한 인터랙티브 대시보드',
         icon: Layout,
         color: 'text-cyan-400',
         gradient: 'from-cyan-500 to-blue-600'
@@ -349,13 +348,13 @@ const EXTERNAL_TOOLS = [
     {
         title: '공문서 인공지능 가독성 변환',
         url: 'https://lucid-doc-459909947241.us-west1.run.app/',
-        description: '복잡한 공문서를 누구나 이해하기 쉽운 문장으로 변환합니다.',
+        description: '복잡한 공문서를 누구나 이해하기 쉬운 문장으로 변환합니다.',
         icon: FileSearch,
         color: 'text-teal-400',
         gradient: 'from-teal-400 to-emerald-500'
     },
     {
-        title: '나노바나나 프리젠테이션 수정',
+        title: 'PDF → 파워포인트 변환·수정',
         url: 'https://iris-canvas-pdf-to-pptx-459909947241.us-west1.run.app/',
         description: 'PDF 문서를 편집 가능한 파워포인트(PPTX) 파일로 변환하고 수정합니다.',
         icon: Presentation,
@@ -364,114 +363,175 @@ const EXTERNAL_TOOLS = [
     }
 ];
 
+const LEAVE_TOOL_MESSAGE = '도구 목록으로 돌아가면 현재 입력과 결과가 사라집니다. 돌아갈까요?';
+
+function getDefaultForm(tool: Tool | null): Record<string, string> {
+    const defaults: Record<string, string> = {};
+    tool?.fields.forEach(field => {
+        if (field.type === 'select' && field.options?.length) defaults[field.key] = field.options[0].value;
+    });
+    return defaults;
+}
+
 export default function AITools() {
     const [activeTab, setActiveTab] = useState<'internal' | 'external'>('internal');
     const [activeTool, setActiveTool] = useState<Tool | null>(null);
     const [toolForm, setToolForm] = useState<Record<string, string>>({});
     const [toolResult, setToolResult] = useState('');
-    const [toolImage, setToolImage] = useState<string | null>(null);
     const [toolLoading, setToolLoading] = useState(false);
     const [toolError, setToolError] = useState('');
-    const [copied, setCopied] = useState(false);
-    const [fileData, setFileData] = useState<{ mimeType: string; data: string } | null>(null);
-    const [fileName, setFileName] = useState('');
+    // 하위 도구 화면이 알려 주는 "저장하지 않은 입력/결과" 여부(계약 C5).
+    const [childDirty, setChildDirty] = useState(false);
+    const handleChildDirtyChange = useCallback((dirty: boolean) => setChildDirty(dirty), []);
 
+    // 도구가 바뀔 때만 입력칸을 기본값으로 되돌립니다(선택 목록 기본값 포함).
     useEffect(() => {
-        const defaults: Record<string, string> = {};
-        activeTool?.fields.forEach(field => {
-            if (field.type === 'select' && field.options?.length) defaults[field.key] = field.options[0].value;
-        });
-        setToolForm(defaults);
+        setToolForm(getDefaultForm(activeTool));
         setToolResult('');
-        setToolImage(null);
         setToolError('');
-        setFileData(null);
-        setFileName('');
     }, [activeTool?.id]);
 
-    const handleCopy = async (text: string) => {
-        await navigator.clipboard.writeText(text);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-    };
+    // 도구를 열거나 목록으로 돌아오면 맨 위부터 보여 줍니다(아래쪽 카드를 눌렀을 때 빈 화면처럼 보이는 문제 방지).
+    useEffect(() => {
+        window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    }, [activeTool?.id]);
 
-    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
+    const hasOwnInput = Boolean(activeTool) && activeTool!.fields.some(field => {
+        const defaultValue = field.type === 'select' ? field.options?.[0]?.value || '' : '';
+        return (toolForm[field.key] ?? defaultValue).trim() !== defaultValue;
+    });
+    const ownDirty = hasOwnInput || Boolean(toolResult) || toolLoading;
+    const isDirty = Boolean(activeTool) && (childDirty || ownDirty);
+    const { confirmDiscard } = useUnsavedGuard(isDirty);
 
-        const validationError = getAiDocumentValidationError(file);
-        if (validationError) {
-            setToolError(validationError);
-            setFileData(null);
-            setFileName('');
-            e.target.value = '';
-            return;
-        }
-
-        setFileName(file.name);
-        const reader = new FileReader();
-        reader.onloadend = () => {
-            const base64String = (reader.result as string).split(',')[1];
-            setFileData({
-                mimeType: file.type || (file.name.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/png'),
-                data: base64String
-            });
-        };
-        reader.onerror = () => {
-            setToolError('파일을 읽지 못했습니다.');
-            setFileData(null);
-            setFileName('');
-        };
-        reader.readAsDataURL(file);
+    const backToToolList = async () => {
+        if (!(await confirmDiscard(LEAVE_TOOL_MESSAGE))) return;
+        setChildDirty(false);
+        setActiveTool(null);
     };
 
     const runTool = async () => {
         if (toolLoading) return;
-        if (!activeTool) return;
-        if (activeTool.id === 'crisis') return;
+        if (!activeTool || activeTool.id === 'crisis') return;
         setToolError('');
-        setToolResult('');
-        setToolImage(null);
         try {
-            if (activeTool.id === 'image_gen') {
-                const prompt = toolForm['prompt'] || '';
-                const style = toolForm['style'] || '일러스트';
-                const modelSelection = toolForm['model'] || 'nanobanana1';
-                if (!prompt.trim()) throw new Error('생성할 이미지에 대한 설명을 입력해주세요.');
-
-                setToolLoading(true);
-                const result = await generateImage(prompt, style, modelSelection);
-                setToolImage(`data:${result.mimeType};base64,${result.imageBase64}`);
-            } else {
-                const hasTextInput = activeTool.fields
-                    .filter(f => f.type !== 'select')
-                    .some(f => (toolForm[f.key] || '').trim().length > 0);
-                if (!hasTextInput && !fileData) {
-                    throw new Error('실행할 내용을 먼저 입력해 주세요.');
-                }
-
-                const promptStr = activeTool.fields
-                    .filter(f => !['blogLength', 'blogPurpose'].includes(f.key))
-                    .map(f => {
-                        const val = toolForm[f.key] !== undefined ? toolForm[f.key] : (f.options?.[0]?.value || '');
-                        return `[${f.label}]\n${val || '(미입력)'}`
-                    })
-                    .join('\n\n');
-
-                const blogLength = (toolForm['blogLength'] as BlogLength) || 'medium';
-                const blogPurpose = (toolForm['blogPurpose'] as BlogPurpose) || 'official';
-
-                setToolLoading(true);
-                const result = await generateText(activeTool.id, promptStr, fileData || undefined, { blogLength, blogPurpose });
-                setToolResult(result);
+            const hasTextInput = activeTool.fields
+                .filter(f => f.type !== 'select')
+                .some(f => (toolForm[f.key] || '').trim().length > 0);
+            if (!hasTextInput) {
+                throw new Error('실행할 내용을 먼저 입력해 주세요.');
             }
-        } catch (err: any) {
-            const message = err.message || '도구 실행 중 오류가 발생했습니다.';
-            setToolError(activeTool.id === 'image_gen'
-                ? `${message} 이미지 생성이 어려운 경우 홍보물 내용을 HTML/문서로 작성한 뒤 인쇄 또는 PDF 저장 방식으로 대체할 수 있습니다. 이미지 안의 한국어 글자는 모델 상태에 따라 깨질 수 있습니다.`
-                : message);
+
+            const promptStr = activeTool.fields
+                .filter(f => !['blogLength', 'blogPurpose'].includes(f.key))
+                .map(f => {
+                    const val = toolForm[f.key] !== undefined ? toolForm[f.key] : (f.options?.[0]?.value || '');
+                    return `[${f.label}]\n${val || '(미입력)'}`;
+                })
+                .join('\n\n');
+
+            const blogLength = (toolForm['blogLength'] as BlogLength) || 'medium';
+            const blogPurpose = (toolForm['blogPurpose'] as BlogPurpose) || 'official';
+
+            setToolLoading(true);
+            // 새 결과가 나오면 교체하고, 실패하면 이전 결과를 그대로 둡니다.
+            const result = await generateText(activeTool.id, promptStr, undefined, { blogLength, blogPurpose });
+            setToolResult(result);
+        } catch (err: unknown) {
+            setToolError(err instanceof Error && err.message ? err.message : '도구 실행 중 오류가 발생했습니다.');
         } finally {
             setToolLoading(false);
+        }
+    };
+
+    const renderActiveTool = (tool: Tool) => {
+        const onBack = () => { void backToToolList(); };
+        const onDirtyChange = handleChildDirtyChange;
+        switch (tool.id) {
+            case 'image_gen': return <PromoDesignView key="promo-design" onBack={onBack} onDirtyChange={onDirtyChange} />;
+            case 'minutes': return <MinutesView key="minutes" onBack={onBack} onDirtyChange={onDirtyChange} />;
+            case 'utilities': return <UtilitiesView key="utilities" onBack={onBack} onDirtyChange={onDirtyChange} />;
+            case 'dashboard': return <DashboardView key="dashboard" onBack={onBack} onDirtyChange={onDirtyChange} />;
+            case 'masking': return <MaskingView key="masking" onBack={onBack} onDirtyChange={onDirtyChange} />;
+            case 'summary': return <DocumentChatView key="document-chat" onBack={onBack} onDirtyChange={onDirtyChange} />;
+            case 'ocr': return <OCRView key="ocr" onBack={onBack} onDirtyChange={onDirtyChange} />;
+            case 'schedule': return <ScheduleDesignView key="schedule-design" onBack={onBack} onDirtyChange={onDirtyChange} />;
+            case 'crisis': return <CrisisManual key="crisis-manual" onBack={onBack} onDirtyChange={onDirtyChange} />;
+            default: {
+                const Icon = tool.icon;
+                return (
+                    <ToolPageShell key="tool" onBack={onBack} className="max-w-3xl mx-auto">
+                        <div className="glass-strong rounded-2xl p-6 border border-white/10">
+                            <div className="flex items-center gap-3 mb-6">
+                                <h2 className="text-2xl font-black text-white flex items-center gap-3">
+                                    <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${tool.gradient} flex items-center justify-center shadow-lg`}>
+                                        <Icon className="w-5 h-5 text-white" />
+                                    </div>
+                                    {tool.title}
+                                </h2>
+                            </div>
+
+                            <div className="space-y-4">
+                                {tool.fields.map(field => (
+                                    <div key={field.key}>
+                                        <label htmlFor={`tool-field-${field.key}`} className="block text-sm font-medium text-white/70 mb-1.5">{field.label}</label>
+                                        {field.type === 'select' ? (
+                                            <select
+                                                id={`tool-field-${field.key}`}
+                                                value={toolForm[field.key] || field.options?.[0]?.value}
+                                                onChange={e => setToolForm(prev => ({ ...prev, [field.key]: e.target.value }))}
+                                                className="input-field"
+                                            >
+                                                {field.options?.map(opt => <option key={opt.value} value={opt.value} className="bg-slate-900">{opt.label}</option>)}
+                                            </select>
+                                        ) : field.type === 'textarea' ? (
+                                            <textarea
+                                                id={`tool-field-${field.key}`}
+                                                placeholder={field.placeholder}
+                                                value={toolForm[field.key] || ''}
+                                                onChange={e => setToolForm(prev => ({ ...prev, [field.key]: e.target.value }))}
+                                                className="input-field min-h-[100px]"
+                                                rows={4}
+                                            />
+                                        ) : (
+                                            <input
+                                                id={`tool-field-${field.key}`}
+                                                type="text"
+                                                placeholder={field.placeholder}
+                                                value={toolForm[field.key] || ''}
+                                                onChange={e => setToolForm(prev => ({ ...prev, [field.key]: e.target.value }))}
+                                                className="input-field"
+                                            />
+                                        )}
+                                    </div>
+                                ))}
+
+                                <AiTransmissionNotice />
+
+                                <button type="button" onClick={() => void runTool()} disabled={toolLoading} className="btn-primary w-full flex items-center justify-center gap-2 !py-3.5 mt-6">
+                                    {toolLoading
+                                        ? <><Loader2 className="w-5 h-5 animate-spin" /> 생성 중...</>
+                                        : <><Sparkles className="w-5 h-5" /> {toolResult ? '다시 생성하기' : '생성하기'}</>}
+                                </button>
+                            </div>
+
+                            {toolError && <div role="alert" className="mt-4 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-sm">{toolError}{toolResult ? ' 이전 결과는 그대로 남아 있습니다.' : ''}</div>}
+
+                            {toolResult && (
+                                <div className="mt-6 border-t border-white/10 pt-6">
+                                    <div className="flex items-center justify-between mb-3">
+                                        <h4 className="text-white font-bold flex items-center gap-2">AI 생성 결과</h4>
+                                        <CopyButton text={toolResult} />
+                                    </div>
+                                    <div className="bg-white/5 rounded-xl p-4 max-h-96 overflow-y-auto">
+                                        <pre className="text-white/80 text-sm whitespace-pre-wrap leading-relaxed font-sans">{toolResult}</pre>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </ToolPageShell>
+                );
+            }
         }
     };
 
@@ -494,8 +554,11 @@ export default function AITools() {
                     {/* Tabs */}
                     {!activeTool && (
                         <div className="flex justify-center mb-10 w-full sm:w-auto">
-                            <div className="flex bg-[#1e293b]/70 p-[6px] rounded-[100px] shadow-inner backdrop-blur-md border border-white/5 mx-auto max-w-full overflow-x-auto custom-scrollbar">
+                            <div className="flex bg-[#1e293b]/70 p-[6px] rounded-[100px] shadow-inner backdrop-blur-md border border-white/5 mx-auto max-w-full overflow-x-auto custom-scrollbar" role="tablist" aria-label="도구 종류">
                                 <button
+                                    type="button"
+                                    role="tab"
+                                    aria-selected={activeTab === 'internal'}
                                     onClick={() => setActiveTab('internal')}
                                     className={`flex items-center justify-center gap-2 px-6 lg:px-8 py-3 rounded-[100px] font-bold transition-all whitespace-nowrap min-w-max ${activeTab === 'internal'
                                             ? 'bg-blue-500 text-white shadow-[0_4px_12px_rgba(59,130,246,0.3)]'
@@ -506,6 +569,9 @@ export default function AITools() {
                                     업무 지원 도구
                                 </button>
                                 <button
+                                    type="button"
+                                    role="tab"
+                                    aria-selected={activeTab === 'external'}
                                     onClick={() => setActiveTab('external')}
                                     className={`flex items-center justify-center gap-2 px-6 lg:px-8 py-3 rounded-[100px] font-bold transition-all whitespace-nowrap min-w-max ${activeTab === 'external'
                                             ? 'bg-blue-500 text-white shadow-[0_4px_12px_rgba(59,130,246,0.3)]'
@@ -553,14 +619,8 @@ export default function AITools() {
                                                                 animate={{ opacity: 1, y: 0 }}
                                                                 transition={{ delay: i * 0.035 }}
                                                                 onClick={() => {
-                                                                    const initialForm: Record<string, string> = {};
-                                                                    tool.fields.forEach(f => {
-                                                                        if (f.type === 'select' && f.options && f.options.length > 0) {
-                                                                            initialForm[f.key] = f.options[0].value;
-                                                                        }
-                                                                    });
+                                                                    setChildDirty(false);
                                                                     setActiveTool(tool);
-                                                                    setToolForm(initialForm);
                                                                 }}
                                                                 className="text-left glass-strong rounded-2xl p-6 border border-white/10 hover:border-white/20 cursor-pointer transition-all duration-300 hover:scale-[1.02] hover:shadow-lg group min-h-[260px] flex flex-col"
                                                             >
@@ -615,107 +675,7 @@ export default function AITools() {
                             )}
                         </motion.div>
                     ) : (
-                        <AnimatePresence mode="wait">
-                            {(() => {
-                                const onBack = () => {
-                                    const hasInput = activeTool.fields.some(field => (toolForm[field.key] || '') !== (field.type === 'select' ? field.options?.[0]?.value || '' : ''));
-                                    if ((hasInput || toolResult || toolImage || fileData || toolLoading) &&
-                                        !window.confirm('도구 목록으로 돌아가면 현재 입력과 결과가 사라집니다. 돌아가시겠습니까?')) return;
-                                    setActiveTool(null);
-                                };
-                                switch (activeTool.id) {
-                                    case 'image_gen': return <PromoDesignView key="promo-design" onBack={onBack} />;
-                                    case 'minutes': return <MinutesView key="minutes" onBack={onBack} />;
-                                    case 'utilities': return <UtilitiesView key="utilities" onBack={onBack} />;
-                                    case 'dashboard': return <DashboardView key="dashboard" onBack={onBack} />;
-                                    case 'masking': return <MaskingView key="masking" onBack={onBack} />;
-                                    case 'summary': return <DocumentChatView key="document-chat" onBack={onBack} />;
-                                    case 'ocr': return <OCRView key="ocr" onBack={onBack} />;
-                                    case 'schedule': return <ScheduleDesignView key="schedule-design" onBack={onBack} />;
-                                    case 'crisis': return <CrisisManual key="crisis-manual" onBack={onBack} />;
-                                    default: return (
-                                        <motion.div
-                                            key="tool"
-                                            initial={{ opacity: 0, y: 20 }}
-                                            animate={{ opacity: 1, y: 0 }}
-                                            exit={{ opacity: 0, y: -20 }}
-                                            className="max-w-3xl mx-auto"
-                                        >
-                                            <button onClick={onBack} className="btn-ghost flex items-center gap-2 mb-6 text-sm">
-                                                <ArrowLeft className="w-4 h-4" /> 도구 목록으로 돌아가기
-                                            </button>
-
-                                            <div className="glass-strong rounded-2xl p-6 border border-white/10">
-                                                <div className="flex items-center gap-3 mb-6">
-                                                    <h2 className="text-2xl font-black text-white flex items-center gap-3">
-                                                        <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${activeTool.gradient} flex items-center justify-center shadow-lg`}>
-                                                            {(() => { const Icon = activeTool.icon; return <Icon className="w-5 h-5 text-white" />; })()}
-                                                        </div>
-                                                        {activeTool.title}
-                                                    </h2>
-                                                </div>
-
-                                                <div className="space-y-4">
-                                                    {activeTool.fields.map(field => (
-                                                        <div key={field.key}>
-                                                            <label htmlFor={`tool-field-${field.key}`} className="block text-sm font-medium text-white/70 mb-1.5">{field.label}</label>
-                                                            {field.type === 'select' ? (
-                                                                <select
-                                                                    id={`tool-field-${field.key}`}
-                                                                    value={toolForm[field.key] || field.options?.[0]?.value}
-                                                                    onChange={e => setToolForm(prev => ({ ...prev, [field.key]: e.target.value }))}
-                                                                    className="input-field"
-                                                                >
-                                                                    {field.options?.map(opt => <option key={opt.value} value={opt.value} className="bg-slate-900">{opt.label}</option>)}
-                                                                </select>
-                                                            ) : field.type === 'textarea' ? (
-                                                                <textarea
-                                                                    id={`tool-field-${field.key}`}
-                                                                    placeholder={field.placeholder}
-                                                                    value={toolForm[field.key] || ''}
-                                                                    onChange={e => setToolForm(prev => ({ ...prev, [field.key]: e.target.value }))}
-                                                                    className="input-field min-h-[100px]"
-                                                                    rows={4}
-                                                                />
-                                                            ) : (
-                                                                <input
-                                                                    id={`tool-field-${field.key}`}
-                                                                    type="text"
-                                                                    placeholder={field.placeholder}
-                                                                    value={toolForm[field.key] || ''}
-                                                                    onChange={e => setToolForm(prev => ({ ...prev, [field.key]: e.target.value }))}
-                                                                    className="input-field"
-                                                                />
-                                                            )}
-                                                        </div>
-                                                    ))}
-
-                                                    <button onClick={runTool} disabled={toolLoading} className="btn-primary w-full flex items-center justify-center gap-2 !py-3.5 mt-6">
-                                                        {toolLoading ? <><Loader2 className="w-5 h-5 animate-spin" /> 실행 중...</> : <><Sparkles className="w-5 h-5" /> AI 실행</>}
-                                                    </button>
-                                                </div>
-
-                                                {toolError && <div className="mt-4 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-sm">{toolError}</div>}
-
-                                                {toolResult && (
-                                                    <div className="mt-6 border-t border-white/10 pt-6">
-                                                        <div className="flex items-center justify-between mb-3">
-                                                            <h4 className="text-white font-bold flex items-center gap-2">AI 생성 결과</h4>
-                                                            <button onClick={() => handleCopy(toolResult)} className="btn-ghost text-xs flex items-center gap-1.5">
-                                                                <Copy className="w-3.5 h-3.5" /> {copied ? '복사됨!' : '복사'}
-                                                            </button>
-                                                        </div>
-                                                        <div className="bg-white/5 rounded-xl p-4 max-h-96 overflow-y-auto">
-                                                            <pre className="text-white/80 text-sm whitespace-pre-wrap leading-relaxed font-sans">{toolResult}</pre>
-                                                        </div>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </motion.div>
-                                    );
-                                }
-                            })()}
-                        </AnimatePresence>
+                        renderActiveTool(activeTool)
                     )}
                 </AnimatePresence>
             </div>

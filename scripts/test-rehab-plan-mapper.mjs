@@ -1,3 +1,7 @@
+import { readFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
+import ts from 'typescript';
 import { mapRehabPlanFormData } from '../src/utils/rehabPlanMapper.ts';
 import { getRehabPlanExportWarnings } from '../src/utils/rehabPlanReview.ts';
 
@@ -151,3 +155,66 @@ if (!warnings.some(warning => warning.includes('생년월일')) || !warnings.som
     throw new Error(`출력 전 누락 경고가 예상과 다릅니다: ${JSON.stringify(warnings)}`);
 }
 console.log('PASS 출력 전 누락 경고');
+
+// ─── DOCX 출력: 사례회의 결론 포함(C-12), 치환 패턴·제어문자 안전(C-14) ───
+const require = createRequire(import.meta.url);
+const jszipUrl = pathToFileURL(require.resolve('jszip')).href;
+const JSZip = (await import(jszipUrl)).default;
+const fileServiceStubUrl = `data:text/javascript;base64,${Buffer.from('export async function saveJjssBlob() { throw new Error("테스트에서는 저장하지 않습니다."); }').toString('base64')}`;
+const docxSourceUrl = new URL('../src/utils/rehabPlanDocx.ts', import.meta.url);
+const docxCompiled = ts.transpileModule(await readFile(docxSourceUrl, 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+    fileName: docxSourceUrl.pathname,
+}).outputText
+    .replace(/from ['"]jszip['"]/g, `from ${JSON.stringify(jszipUrl)}`)
+    .replace(/from ['"]\.\/jjssFileService['"]/g, `from ${JSON.stringify(fileServiceStubUrl)}`);
+const { createRehabPlanDocxBlob, buildCaseMeetingContentForDocx } = await import(`data:text/javascript;base64,${Buffer.from(docxCompiled).toString('base64')}`);
+const template = await readFile(new URL('../public/templates/rehab-plan-template.docx', import.meta.url));
+
+async function renderDocumentXml(formData) {
+    const blob = await createRehabPlanDocxBlob(formData, template);
+    const zip = await JSZip.loadAsync(await blob.arrayBuffer());
+    return zip.file('word/document.xml').async('string');
+}
+
+function countOccurrences(text, needle) {
+    return text.split(needle).length - 1;
+}
+
+assertEqual(buildCaseMeetingContentForDocx({ content: '', conclusion: '훈련 진행' }), '결론: 훈련 진행', 'conclusion only');
+assertEqual(buildCaseMeetingContentForDocx({ content: '논의함', conclusion: '' }), '논의함', 'no conclusion');
+assertEqual(buildCaseMeetingContentForDocx({ content: '논의함', conclusion: '훈련 진행' }), '논의함\n\n결론: 훈련 진행', 'content + conclusion');
+
+const conclusionFixtures = [
+    { name: 'A', meeting: fixtures[0].meeting, plan: fixtures[0].plan, expected: '결론: 단계별 훈련을 진행함' },
+    { name: 'B', meeting: fixtures[1].meeting, plan: fixtures[1].plan, expected: '결론: 반복 실습을 지원함' },
+    { name: 'C', meeting: fixtures[2].meeting, plan: fixtures[2].plan, expected: '결론: 주 단위로 수행 결과를 점검하고 다음 목표를 조정하기로 함' },
+];
+for (const fixture of conclusionFixtures) {
+    const formData = mapRehabPlanFormData(seeker, fixture.plan, fixture.meeting);
+    const xml = await renderDocumentXml(formData);
+    assertEqual(countOccurrences(xml, fixture.expected), 1, `${fixture.name} DOCX 사례회의 결론 출력`);
+}
+console.log('PASS DOCX 사례회의 결론 출력 (A/B/C)');
+
+// 논의 내용 제목 없이 결론이 이미 내용에 들어 있는 회의록은 결론을 두 번 넣지 않는다.
+const inlineMeeting = `사례회의 일시: 2026.08.20 10:00
+장소: 검증용 상담실
+목적: 중복 방지 검증
+결론: 주 1회 현장 점검을 진행함`;
+const inlineData = mapRehabPlanFormData(seeker, fixtures[0].plan, inlineMeeting);
+assertEqual(inlineData.caseMeeting.conclusion, '주 1회 현장 점검을 진행함', 'inline conclusion extracted');
+const inlineXml = await renderDocumentXml(inlineData);
+assertEqual(countOccurrences(inlineXml, '주 1회 현장 점검을 진행함'), 1, '결론 중복 방지');
+console.log('PASS DOCX 결론 중복 방지');
+
+// 사용자 입력의 "$&", "$1"이 치환 패턴으로 해석되지 않고, XML에 넣을 수 없는 제어문자는 제거된다.
+const unsafeData = mapRehabPlanFormData(seeker, fixtures[0].plan, fixtures[0].meeting);
+unsafeData.caseMeeting.purpose = '비용 $& 확인 $1 $$ <검토> & 제어\u0001문자\u000B끝';
+const unsafeXml = await renderDocumentXml(unsafeData);
+if (!unsafeXml.includes('비용 $&amp; 확인 $1 $$ &lt;검토&gt; &amp; 제어문자끝')) {
+    throw new Error('치환 패턴 또는 XML 이스케이프가 예상과 다릅니다.');
+}
+if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(unsafeXml)) throw new Error('XML에 제어문자가 남아 있습니다.');
+if (unsafeXml.includes('{{')) throw new Error('치환되지 않은 필드가 남아 있습니다.');
+console.log('PASS DOCX 치환 패턴($&)·제어문자 안전 처리');

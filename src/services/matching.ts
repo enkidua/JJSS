@@ -52,11 +52,11 @@ function parseDetailedLocation(locationString: string | null | undefined): Array
             if (potentialProvince) {
                 province = potentialProvince;
                 if (parts.length > 1) {
-                    district = parts[1].replace(/시|군|구$/, '');
+                    district = parts[1].replace(/(시|군|구)$/, '');
                 }
             } else {
                 province = '서울';
-                district = parts[0].replace(/시|군|구$/, '');
+                district = parts[0].replace(/(시|군|구)$/, '');
             }
             parsed.push({ province, district });
         }

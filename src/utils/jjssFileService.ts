@@ -31,6 +31,25 @@ function announceSaved(result: JjssSaveResult, category: JjssFileCategory, fileN
     }));
 }
 
+const IPC_ERROR_PREFIX = /^Error invoking remote method '[^']*':\s*(?:\w*Error:\s*)?/;
+
+/** Electron IPC 오류의 "Error invoking remote method '…': Error:" 접두어를 떼어 사용자에게 보여 줄 문장만 남긴다. */
+export function cleanIpcErrorMessage(message: string): string {
+    return message.replace(IPC_ERROR_PREFIX, '').trim();
+}
+
+/** 파일 서비스(IPC) 호출을 감싸 오류 메시지를 정리한다. */
+async function callFileService<T>(invoke: () => Promise<T>, fallbackMessage: string): Promise<T> {
+    try {
+        return await invoke();
+    } catch (error) {
+        const raw = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+        const cleaned = cleanIpcErrorMessage(raw);
+        // 한국어 안내가 아닌 내부 오류 문구(영문 시스템 메시지 등)는 그대로 보여 주지 않는다.
+        throw new Error(/[가-힣]/.test(cleaned) ? cleaned : fallbackMessage);
+    }
+}
+
 function throwSaveError(error?: string): never {
     if (error === 'invalid-extension') throw new Error('선택한 파일 확장자가 올바르지 않습니다.');
     throw new Error('파일을 저장하지 못했습니다.');
@@ -40,7 +59,9 @@ export async function saveJjssBlob(category: JjssFileCategory, fileName: string,
     if (!blob.size) throw new Error('저장할 파일이 비어 있습니다.');
     let result: JjssSaveResult;
     if (window.jjssFiles) {
-        result = await window.jjssFiles.saveFile({ category, fileName, data: new Uint8Array(await blob.arrayBuffer()) });
+        const api = window.jjssFiles;
+        const data = new Uint8Array(await blob.arrayBuffer());
+        result = await callFileService(() => api.saveFile({ category, fileName, data }), '파일을 저장하지 못했습니다.');
         if (result.error) throwSaveError(result.error);
     } else {
         browserDownload(blob, fileName);
@@ -61,35 +82,42 @@ export async function saveJjssDataUrl(category: 'image', fileName: string, dataU
 }
 
 export async function saveJjssPdf(category: JjssFileCategory, fileName: string, html: string): Promise<JjssSaveResult | null> {
-    if (!window.jjssFiles) return null;
-    const result = await window.jjssFiles.savePdf({ category, fileName, html });
+    const api = window.jjssFiles;
+    if (!api) return null;
+    const result = await callFileService(() => api.savePdf({ category, fileName, html }), 'PDF 파일을 저장하지 못했습니다.');
     if (result.error) throwSaveError(result.error);
     announceSaved(result, category, fileName);
     return result;
 }
 
-export function getJjssPaths(): Promise<JjssPaths | null> {
-    return window.jjssFiles ? window.jjssFiles.getPaths() : Promise.resolve(null);
+export async function getJjssPaths(): Promise<JjssPaths | null> {
+    const api = window.jjssFiles;
+    if (!api) return null;
+    return callFileService(() => api.getPaths(), 'JJSS 문서 폴더를 준비하지 못했습니다.');
 }
 
-export function openJjssFolder(folderKey: JjssFolderKey) {
-    if (!window.jjssFiles) throw new Error('폴더 열기는 Windows 설치형 JJSS에서 사용할 수 있습니다.');
-    return window.jjssFiles.openFolder(folderKey);
+export async function openJjssFolder(folderKey: JjssFolderKey) {
+    const api = window.jjssFiles;
+    if (!api) throw new Error('폴더 열기는 Windows 설치형 JJSS에서 사용할 수 있습니다.');
+    return callFileService(() => api.openFolder(folderKey), '폴더를 열지 못했습니다.');
 }
 
-export function openSavedDirectory(openToken: string) {
-    if (!window.jjssFiles) throw new Error('저장 폴더 열기는 Windows 설치형 JJSS에서 사용할 수 있습니다.');
-    return window.jjssFiles.openSavedDirectory(openToken);
+export async function openSavedDirectory(openToken: string) {
+    const api = window.jjssFiles;
+    if (!api) throw new Error('저장 폴더 열기는 Windows 설치형 JJSS에서 사용할 수 있습니다.');
+    return callFileService(() => api.openSavedDirectory(openToken), '저장 폴더를 열지 못했습니다.');
 }
 
-export function chooseLegacyImportFolder(includeSubfolders = true): Promise<LegacyImportPreview> {
-    if (!window.jjssFiles) throw new Error('기존 문서 가져오기는 Windows 설치형 JJSS에서 사용할 수 있습니다.');
-    return window.jjssFiles.chooseImportFolder({ includeSubfolders });
+export async function chooseLegacyImportFolder(includeSubfolders = true): Promise<LegacyImportPreview> {
+    const api = window.jjssFiles;
+    if (!api) throw new Error('기존 문서 가져오기는 Windows 설치형 JJSS에서 사용할 수 있습니다.');
+    return callFileService(() => api.chooseImportFolder({ includeSubfolders }), '기존 JJSS 문서 폴더를 확인하지 못했습니다.');
 }
 
-export function importLegacyDocuments(token: string, mode: 'copy' | 'move'): Promise<LegacyImportResult> {
-    if (!window.jjssFiles) throw new Error('기존 문서 가져오기는 Windows 설치형 JJSS에서 사용할 수 있습니다.');
-    return window.jjssFiles.importLegacyDocuments({ token, mode });
+export async function importLegacyDocuments(token: string, mode: 'copy' | 'move'): Promise<LegacyImportResult> {
+    const api = window.jjssFiles;
+    if (!api) throw new Error('기존 문서 가져오기는 Windows 설치형 JJSS에서 사용할 수 있습니다.');
+    return callFileService(() => api.importLegacyDocuments({ token, mode }), '기존 JJSS 문서를 가져오지 못했습니다. 원본 파일은 유지됩니다.');
 }
 
 export function savedLocationMessage(result: JjssSaveResult, browserMessage = '브라우저 다운로드를 시작했습니다.') {

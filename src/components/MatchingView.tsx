@@ -1,28 +1,75 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-    Search, Users2, Briefcase, MapPin, DollarSign, Clock, 
-    ChevronRight, Sparkles, ArrowLeft, Loader2, X, CheckCircle2,
-    BarChart3, UserCheck, Trash2, Plus
+import {
+    Search, Users2, Briefcase, MapPin, DollarSign,
+    ChevronRight, Sparkles, Loader2
 } from 'lucide-react';
 import { useDataStore } from '../store/dataStore';
 import { matchCandidates } from '../services/matching';
-import { Seeker, JobOpening, MatchResult } from '../types/matching';
+import { JobOpening, MatchResult } from '../types/matching';
 import { generateText } from '../services/gemini';
 import { buildCurrentContentRegenerationPrompt } from '../services/documentRegenerationService';
 import { safeErrorMetadata } from '../utils/safeError';
+import { useToast } from './Toast';
+import { useConfirm } from './common/ConfirmProvider';
+import { ToolPageShell } from './tools/ToolPageShell';
+import { useReportDirty } from './tools/useReportDirty';
 
 interface MatchingViewProps {
+    /** WorkMate의 "사례관리 문서 연속작성" 탭으로 돌아갑니다. */
     onBack: () => void;
+    onDirtyChange?: (dirty: boolean) => void;
 }
 
-export function MatchingView({ onBack }: MatchingViewProps) {
+/** 예전 버전이 DB 저장 후 localStorage에 남기던 평문 사본의 키 접두어(P0-7 이관 대상). */
+const LEGACY_PROFILE_KEY_PREFIX = 'jjss-matching-profile:';
+/** 같은 사본을 동시에 두 번 이관하지 않도록 진행 중인 키를 기억합니다. */
+const migratingLegacyKeys = new Set<string>();
+
+function readLegacyProfile(storageKey: string): { content: string; updatedAt: string } | null {
+    try {
+        const saved = localStorage.getItem(storageKey);
+        if (!saved) return null;
+        const parsed = JSON.parse(saved);
+        const content = typeof parsed?.content === 'string' ? parsed.content : '';
+        return content.trim() ? { content, updatedAt: typeof parsed?.updatedAt === 'string' ? parsed.updatedAt : '' } : null;
+    } catch {
+        // 깨진 값은 이관하지 않고 그대로 둡니다.
+        return null;
+    }
+}
+
+/** DB에 저장된 것을 확인한 뒤에만 평문 사본을 지웁니다. */
+function removeLegacyProfile(storageKey: string) {
+    try {
+        localStorage.removeItem(storageKey);
+    } catch {
+        // 삭제 실패는 다음 진입 때 다시 시도합니다.
+    }
+}
+
+export function MatchingView({ onBack, onDirtyChange }: MatchingViewProps) {
+    const { showToast } = useToast();
+    const confirm = useConfirm();
     const { seekers, jobs, fetchData, loading } = useDataStore();
     const [matchSelJob, setMatchSelJob] = useState<JobOpening | null>(null);
     const [matchResults, setMatchResults] = useState<MatchResult[]>([]);
     const [isMatching, setIsMatching] = useState(false);
     const matchingTimerRef = useRef<number | null>(null);
     const [jobSearch, setJobSearch] = useState('');
+    const [dirtyItems, setDirtyItems] = useState<Set<string>>(() => new Set());
+
+    useReportDirty(dirtyItems.size > 0, onDirtyChange);
+
+    const handleItemDirtyChange = useCallback((itemKey: string, dirty: boolean) => {
+        setDirtyItems(prev => {
+            if (prev.has(itemKey) === dirty) return prev;
+            const next = new Set(prev);
+            if (dirty) next.add(itemKey);
+            else next.delete(itemKey);
+            return next;
+        });
+    }, []);
 
     useEffect(() => {
         fetchData();
@@ -40,40 +87,47 @@ export function MatchingView({ onBack }: MatchingViewProps) {
         return companyMatched || roleMatched;
     });
 
-    const handleRunMatch = (job: JobOpening) => {
+    const handleRunMatch = async (job: JobOpening) => {
         if (!job || !seekers) return;
+        if (dirtyItems.size > 0 && matchSelJob?.id !== job.id && !(await confirm({
+            title: '저장하지 않은 매칭 의견',
+            message: '저장하지 않은 매칭 의견이 있습니다.\n다른 구인처를 선택하면 작성한 내용이 사라집니다. 계속할까요?',
+            confirmLabel: '버리고 선택',
+            cancelLabel: '취소',
+            tone: 'danger',
+        }))) return;
+        // 이전 공고의 타이머를 먼저 정리해야 A 공고 결과가 B 공고 아래에 표시되지 않습니다.
+        if (matchingTimerRef.current !== null) {
+            window.clearTimeout(matchingTimerRef.current);
+            matchingTimerRef.current = null;
+        }
         setMatchSelJob(job);
+        setMatchResults([]);
         setIsMatching(true);
-        // 인위적인 딜レイ로 'AI 분석 중' 느낌 부여
-        matchingTimerRef.current = window.setTimeout(() => {
+        // 짧은 지연으로 분석 중 상태를 보여 줍니다.
+        const timer = window.setTimeout(() => {
+            if (matchingTimerRef.current !== timer) return;
+            matchingTimerRef.current = null;
             try {
                 const results = matchCandidates(job, seekers);
                 setMatchResults(results || []);
             } catch (error) {
                 console.error('Matching Error:', safeErrorMetadata(error, 'matching-analysis'));
-                alert('매칭 분석 중 오류가 발생했습니다.');
+                showToast('매칭 분석 중 오류가 발생했습니다.', 'error');
                 setMatchResults([]);
             } finally {
                 setIsMatching(false);
-                matchingTimerRef.current = null;
             }
         }, 800);
+        matchingTimerRef.current = timer;
     };
 
     return (
-        <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
+        <ToolPageShell
+            onBack={onBack}
+            backLabel="사례관리 문서 연속작성으로"
             className="w-full max-w-6xl mx-auto pb-20"
         >
-            <button
-                onClick={onBack}
-                className="btn-ghost flex items-center gap-2 mb-6 text-sm text-white/50 hover:text-white transition-colors"
-            >
-                <ArrowLeft className="w-4 h-4" /> 도구 목록으로 돌아가기
-            </button>
-
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
                 {/* 구인처 선택 (Job Openings) */}
                 <div className="lg:col-span-4 space-y-6">
@@ -81,7 +135,7 @@ export function MatchingView({ onBack }: MatchingViewProps) {
                         <div className="absolute top-0 right-0 p-8 opacity-5">
                             <Briefcase className="w-32 h-32" />
                         </div>
-                        
+
                         <div className="flex justify-between items-center mb-6 relative">
                             <h3 className="font-bold text-white text-lg flex items-center gap-2">
                                 <Briefcase className="w-5 h-5 text-emerald-400" />
@@ -92,9 +146,10 @@ export function MatchingView({ onBack }: MatchingViewProps) {
 
                         <div className="relative mb-6">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
-                            <input 
-                                className="input-field !pl-10 !py-2.5 text-sm !bg-white/5 border-white/10 focus:border-emerald-500/50" 
-                                placeholder="국내 사업체 명칭 검색..."
+                            <input
+                                aria-label="사업체 또는 직무 검색"
+                                className="input-field !pl-10 !py-2.5 text-sm !bg-white/5 border-white/10 focus:border-emerald-500/50"
+                                placeholder="사업체 이름 또는 직무 검색..."
                                 value={jobSearch}
                                 onChange={e => setJobSearch(e.target.value)}
                             />
@@ -107,12 +162,14 @@ export function MatchingView({ onBack }: MatchingViewProps) {
                                 <div className="text-center py-12 text-white/20 text-sm">등록된 구인 정보가 없습니다.</div>
                             ) : (
                                 filteredJobs.map(job => (
-                                    <motion.div 
-                                        key={job.id} 
+                                    <motion.button
+                                        type="button"
+                                        key={job.id}
                                         whileHover={{ x: 4 }}
-                                        onClick={() => handleRunMatch(job)}
-                                        className={`p-5 rounded-2xl border cursor-pointer transition-all ${matchSelJob?.id === job.id 
-                                            ? 'bg-emerald-500/20 border-emerald-500 shadow-xl shadow-emerald-500/10' 
+                                        onClick={() => void handleRunMatch(job)}
+                                        aria-pressed={matchSelJob?.id === job.id}
+                                        className={`w-full text-left p-5 rounded-2xl border cursor-pointer transition-all ${matchSelJob?.id === job.id
+                                            ? 'bg-emerald-500/20 border-emerald-500 shadow-xl shadow-emerald-500/10'
                                             : 'bg-white/5 border-white/10 hover:bg-white/10 hover:border-white/20'
                                         }`}
                                     >
@@ -127,7 +184,7 @@ export function MatchingView({ onBack }: MatchingViewProps) {
                                             <span className="text-[10px] px-2 py-0.5 rounded-md bg-white/10 text-white/60">{job.location}</span>
                                             <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-300 font-bold">{job.salary}</span>
                                         </div>
-                                    </motion.div>
+                                    </motion.button>
                                 ))
                             )}
                         </div>
@@ -150,8 +207,8 @@ export function MatchingView({ onBack }: MatchingViewProps) {
                     ) : (
                         <div className="space-y-6">
                             {/* 선택된 공고 요약 */}
-                            <motion.div 
-                                initial={{ opacity: 0, y: -10 }} 
+                            <motion.div
+                                initial={{ opacity: 0, y: -10 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 className="glass-strong rounded-3xl p-8 border border-emerald-500/30 bg-emerald-500/5 relative overflow-hidden"
                             >
@@ -176,16 +233,16 @@ export function MatchingView({ onBack }: MatchingViewProps) {
                                     AI 정밀 매칭 결과
                                     {isMatching && <Loader2 className="w-4 h-4 animate-spin ml-2 text-white/40" />}
                                 </h4>
-                                <span className="text-xs text-white/30">Total Candidates: {seekers.length}</span>
+                                <span className="text-xs text-white/30">전체 구직자: {seekers.length}명</span>
                             </div>
 
                             {isMatching ? (
                                 <div className="h-96 flex flex-col items-center justify-center gap-4">
-                                    <div className="w-16 h-1 w-40 bg-white/5 rounded-full overflow-hidden">
-                                        <motion.div 
-                                            className="h-full bg-emerald-500" 
-                                            initial={{ x: "-100%" }} 
-                                            animate={{ x: "100%" }} 
+                                    <div className="h-1 w-40 bg-white/5 rounded-full overflow-hidden">
+                                        <motion.div
+                                            className="h-full bg-emerald-500"
+                                            initial={{ x: "-100%" }}
+                                            animate={{ x: "100%" }}
                                             transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
                                         />
                                     </div>
@@ -199,7 +256,13 @@ export function MatchingView({ onBack }: MatchingViewProps) {
                                 <div className="grid gap-4 pb-12">
                                     <AnimatePresence mode="popLayout">
                                         {matchResults.map((res, idx) => (
-                                            <MatchItem key={res.seeker.id || idx} result={res} rank={idx + 1} />
+                                            <MatchItem
+                                                key={res.seeker.id || idx}
+                                                itemKey={String(res.seeker.id || res.seeker.seekerId || idx)}
+                                                result={res}
+                                                rank={idx + 1}
+                                                onDirtyChange={handleItemDirtyChange}
+                                            />
                                         ))}
                                     </AnimatePresence>
                                 </div>
@@ -208,40 +271,68 @@ export function MatchingView({ onBack }: MatchingViewProps) {
                     )}
                 </div>
             </div>
-        </motion.div>
+        </ToolPageShell>
     );
 }
 
-function MatchItem({ result, rank }: { result: MatchResult; rank: number }) {
+interface MatchItemProps {
+    itemKey: string;
+    result: MatchResult;
+    rank: number;
+    onDirtyChange: (itemKey: string, dirty: boolean) => void;
+}
+
+function MatchItem({ itemKey, result, rank, onDirtyChange }: MatchItemProps) {
+    const { showToast } = useToast();
+    const confirm = useConfirm();
     const { fetchCaseDocuments, saveMatchingOpinion } = useDataStore();
     const [isExpanded, setIsExpanded] = useState(false);
     const [profileText, setProfileText] = useState(() => buildMatchingProfile(result, rank));
+    /** 마지막으로 불러오거나 저장한 내용. profileText와 다르면 저장하지 않은 수정이 있습니다. */
+    const [baselineText, setBaselineText] = useState(() => buildMatchingProfile(result, rank));
     const [isRefining, setIsRefining] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [savedAt, setSavedAt] = useState('');
     const [savedSource, setSavedSource] = useState<'db' | 'local' | ''>('');
     const scoreColor = result.totalScore >= 1.5 ? 'text-emerald-400' : result.totalScore >= 1.0 ? 'text-yellow-400' : 'text-orange-400';
     const scoreBg = result.totalScore >= 1.5 ? 'bg-emerald-500/10' : result.totalScore >= 1.0 ? 'bg-yellow-500/10' : 'bg-orange-500/10';
+    // 기존 DB 문서·localStorage 사본과 같은 키를 쓰기 위해 계산 방식을 바꾸지 않습니다.
     const seekerKey = result.seeker.id || result.seeker.seekerId || result.seeker.name;
     const jobKey = result.job.id || [result.job.companyName, result.job.jobRole, result.job.location].filter(Boolean).join('|');
-    const storageKey = `jjss-matching-profile:${seekerKey}:${jobKey}`;
+    const storageKey = `${LEGACY_PROFILE_KEY_PREFIX}${seekerKey}:${jobKey}`;
+
+    const isDirty = isRefining || isSaving || profileText !== baselineText;
+    const onDirtyChangeRef = useRef(onDirtyChange);
+    onDirtyChangeRef.current = onDirtyChange;
+    useEffect(() => {
+        onDirtyChangeRef.current(itemKey, isDirty);
+    }, [itemKey, isDirty]);
+    useEffect(() => () => onDirtyChangeRef.current(itemKey, false), [itemKey]);
 
     useEffect(() => {
         let cancelled = false;
+        const applyLoaded = (content: string, timestamp: string, source: 'db' | 'local' | '') => {
+            if (cancelled) return;
+            setProfileText(content);
+            setBaselineText(content);
+            setSavedAt(timestamp);
+            setSavedSource(source);
+        };
         const loadSavedProfile = async () => {
             const fallback = buildMatchingProfile(result, rank);
+            let dbAvailable = false;
             try {
                 const docs = await fetchCaseDocuments(result.seeker);
+                dbAvailable = true;
                 const dbDoc = docs.find(doc =>
                     doc.source === 'matching'
                     && doc.type === 'matching_opinion'
                     && doc.jobId === jobKey
                 );
-                if (cancelled) return;
                 if (dbDoc) {
-                    setProfileText(dbDoc.content || fallback);
-                    setSavedAt(readTimestamp(dbDoc.updatedAt || dbDoc.createdAt));
-                    setSavedSource('db');
+                    // DB에 이미 저장되어 있으면 예전 평문 사본은 필요 없으므로 정리합니다.
+                    removeLegacyProfile(storageKey);
+                    applyLoaded(dbDoc.content || fallback, readTimestamp(dbDoc.updatedAt || dbDoc.createdAt), 'db');
                     return;
                 }
             } catch (error) {
@@ -249,67 +340,87 @@ function MatchItem({ result, rank }: { result: MatchResult; rank: number }) {
             }
 
             if (cancelled) return;
-            try {
-                const saved = localStorage.getItem(storageKey);
-                if (saved) {
-                    const parsed = JSON.parse(saved);
-                    setProfileText(parsed.content || fallback);
-                    setSavedAt(parsed.updatedAt || '');
-                    setSavedSource('local');
+            const legacy = readLegacyProfile(storageKey);
+            if (!legacy) {
+                applyLoaded(fallback, '', '');
+                return;
+            }
+
+            // P0-7: 예전 localStorage 평문 사본을 DB로 옮기고, DB 저장이 성공한 뒤에만 사본을 지웁니다.
+            if (dbAvailable && !migratingLegacyKeys.has(storageKey)) {
+                migratingLegacyKeys.add(storageKey);
+                let migratedAt: string | null = null;
+                try {
+                    const migrated = await saveMatchingOpinion({
+                        seekerId: seekerKey,
+                        seekerName: result.seeker.name,
+                        jobId: jobKey,
+                        companyName: result.job.companyName,
+                        jobRole: result.job.jobRole,
+                        content: legacy.content,
+                    });
+                    removeLegacyProfile(storageKey);
+                    migratedAt = readTimestamp(migrated.updatedAt || migrated.createdAt) || legacy.updatedAt;
+                } catch (error) {
+                    console.warn('[MatchingView] 이전 매칭 의견 이관 실패(원본 유지):', safeErrorMetadata(error, 'matching-opinion-migrate'));
+                } finally {
+                    migratingLegacyKeys.delete(storageKey);
+                }
+                if (migratedAt !== null) {
+                    applyLoaded(legacy.content, migratedAt, 'db');
                     return;
                 }
-            } catch {
-                // localStorage 호환 값이 깨져 있어도 기본 추천 문구로 계속 표시한다.
             }
-            setProfileText(fallback);
-            setSavedAt('');
-            setSavedSource('');
+            applyLoaded(legacy.content, legacy.updatedAt, 'local');
         };
-        loadSavedProfile();
+        void loadSavedProfile();
         return () => {
             cancelled = true;
         };
-    }, [storageKey, result, rank, fetchCaseDocuments, jobKey]);
+    }, [storageKey, result, rank, fetchCaseDocuments, saveMatchingOpinion, jobKey, seekerKey]);
 
     const saveProfile = async () => {
+        if (isSaving) return;
         if (!profileText.trim()) {
-            alert('저장할 매칭 의견을 작성해 주세요.');
+            showToast('저장할 매칭 의견을 작성해 주세요.', 'error');
             return;
         }
         setIsSaving(true);
+        const contentToSave = profileText;
         try {
-            const updatedAt = new Date().toISOString();
             const saved = await saveMatchingOpinion({
                 seekerId: seekerKey,
                 seekerName: result.seeker.name,
                 jobId: jobKey,
                 companyName: result.job.companyName,
                 jobRole: result.job.jobRole,
-                content: profileText,
+                content: contentToSave,
             });
-            try {
-                localStorage.setItem(storageKey, JSON.stringify({ content: profileText, updatedAt }));
-            } catch {
-                // DB 저장이 성공했다면 localStorage 실패는 치명적이지 않다.
-            }
-            setSavedAt(readTimestamp(saved.updatedAt || saved.createdAt) || updatedAt);
+            // 평문 사본은 더 이상 남기지 않고, 예전 사본이 있으면 정리합니다.
+            removeLegacyProfile(storageKey);
+            setBaselineText(contentToSave);
+            setSavedAt(readTimestamp(saved.updatedAt || saved.createdAt) || new Date().toISOString());
             setSavedSource('db');
-            alert('매칭 의견이 저장되었습니다.');
-        } catch (error: any) {
-            alert(error?.message || '매칭 의견 저장에 실패했습니다. 작성 내용은 유지됩니다.');
+            showToast('매칭 의견이 저장되었습니다.', 'success');
+        } catch (error: unknown) {
+            showToast(error instanceof Error && error.message ? error.message : '매칭 의견 저장에 실패했습니다. 작성 내용은 유지됩니다.', 'error');
         } finally {
             setIsSaving(false);
         }
     };
 
     const refineProfile = async () => {
+        if (isRefining) return;
         if (!profileText.trim()) {
-            alert('먼저 보완할 매칭 의견을 작성해 주세요.');
+            showToast('먼저 보완할 매칭 의견을 작성해 주세요.', 'error');
             return;
         }
-        if (!confirm('현재 매칭 의견을 기준으로 보완본을 생성합니다. 실패해도 기존 내용은 유지됩니다. 진행할까요?')) return;
+        if (!(await confirm({
+            title: '매칭 의견 보완',
+            message: '현재 매칭 의견을 기준으로 AI 보완본을 생성합니다.\n실패해도 기존 내용은 유지됩니다. 진행할까요?',
+            confirmLabel: '보완하기',
+        }))) return;
         setIsRefining(true);
-        const previous = profileText;
         try {
             const prompt = buildCurrentContentRegenerationPrompt({
                 documentTitle: '고용지원 매칭 의견',
@@ -319,22 +430,21 @@ function MatchItem({ result, rank }: { result: MatchResult; rank: number }) {
             });
             const refined = await generateText('summary', prompt);
             setProfileText(refined);
-        } catch (error: any) {
-            setProfileText(previous);
-            alert(error?.message || '매칭 의견 보완 중 오류가 발생했습니다. 기존 내용은 유지됩니다.');
+        } catch (error: unknown) {
+            showToast(error instanceof Error && error.message ? error.message : '매칭 의견 보완 중 오류가 발생했습니다. 기존 내용은 유지됩니다.', 'error');
         } finally {
             setIsRefining(false);
         }
     };
 
     return (
-        <motion.div 
+        <motion.div
             layout
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             className={`glass-strong rounded-3xl border transition-all overflow-hidden ${isExpanded ? 'border-white/20 ring-1 ring-white/10 bg-white/10' : 'border-white/5 hover:border-white/10'}`}
         >
-            <div className="p-6 cursor-pointer" onClick={() => setIsExpanded(!isExpanded)}>
+            <button type="button" className="w-full text-left p-6 cursor-pointer" aria-expanded={isExpanded} onClick={() => setIsExpanded(!isExpanded)}>
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-5">
                         <div className={`w-10 h-10 rounded-xl ${scoreBg} flex items-center justify-center font-black text-sm ${scoreColor} border border-white/5`}>
@@ -344,6 +454,7 @@ function MatchItem({ result, rank }: { result: MatchResult; rank: number }) {
                             <div className="flex items-center gap-3">
                                 <span className="text-xl font-black text-white">{result.seeker.name}</span>
                                 <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-white/10 text-white/50">{result.seeker.disabilityType} {result.seeker.severity}</span>
+                                {profileText !== baselineText && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-200">저장 안 됨</span>}
                             </div>
                             <div className="mt-1 flex gap-4 text-xs text-white/30">
                                 <span>{result.seeker.desiredJob1}</span>
@@ -361,11 +472,11 @@ function MatchItem({ result, rank }: { result: MatchResult; rank: number }) {
                         <ChevronRight className={`w-5 h-5 text-white/20 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
                     </div>
                 </div>
-            </div>
+            </button>
 
             <AnimatePresence>
                 {isExpanded && (
-                    <motion.div 
+                    <motion.div
                         initial={{ height: 0, opacity: 0 }}
                         animate={{ height: 'auto', opacity: 1 }}
                         exit={{ height: 0, opacity: 0 }}
@@ -377,7 +488,7 @@ function MatchItem({ result, rank }: { result: MatchResult; rank: number }) {
                                 <div className="space-y-4">
                                     <ScoreRow label="직무 적합성" score={result.details.jobRole.score} comment={result.details.jobRole.comment} />
                                     <ScoreRow label="장애 유형/정도" score={(result.details.disability.score + result.details.severity.score) / 2} comment={`${result.details.disability.comment} / ${result.details.severity.comment}`} />
-                                    <ScoreRow label="전근 지역" score={result.details.location.score} comment={result.details.location.comment} />
+                                    <ScoreRow label="통근 지역" score={result.details.location.score} comment={result.details.location.comment} />
                                     <ScoreRow label="임금 조건" score={result.details.salary.score} comment={result.details.salary.comment} />
                                     <ScoreRow label="근무 시간" score={result.details.workHours.score} comment={result.details.workHours.comment} />
                                 </div>
@@ -385,17 +496,19 @@ function MatchItem({ result, rank }: { result: MatchResult; rank: number }) {
                             <div className="space-y-6">
                                 <h5 className="text-[11px] font-black text-white/40 uppercase tracking-[0.2em]">AI Recommendation & Profile</h5>
                                 <textarea
+                                    aria-label={`${result.seeker.name} 매칭 의견`}
                                     value={profileText}
                                     onChange={e => setProfileText(e.target.value)}
+                                    disabled={isRefining}
                                     className="textarea-field !bg-white/5 border-white/10 !min-h-[260px] text-sm leading-relaxed text-white/75 font-sans resize-y"
                                 />
                                 <div className="flex gap-2 justify-end">
-                                    {savedAt && <span className="mr-auto text-[11px] text-white/25 self-center">{savedSource === 'db' ? 'DB 저장됨' : '이전 임시저장'}: {new Date(savedAt).toLocaleString('ko-KR')}</span>}
-                                    <button onClick={refineProfile} disabled={isRefining} className="btn-ghost !text-xs !bg-amber-500/10 !text-amber-300 border border-amber-500/20 font-bold px-4 py-2 rounded-xl flex items-center gap-2 disabled:opacity-50">
+                                    {savedAt && <span className="mr-auto text-[11px] text-white/25 self-center">{savedSource === 'db' ? '저장됨' : '이전 임시저장'}: {new Date(savedAt).toLocaleString('ko-KR')}</span>}
+                                    <button type="button" onClick={() => void refineProfile()} disabled={isRefining || isSaving} className="btn-ghost !text-xs !bg-amber-500/10 !text-amber-300 border border-amber-500/20 font-bold px-4 py-2 rounded-xl flex items-center gap-2 disabled:opacity-50">
                                         {isRefining ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
                                         현재 내용 기반 보완
                                     </button>
-                                    <button onClick={saveProfile} disabled={isSaving} className="btn-ghost !text-xs !bg-emerald-500/10 !text-emerald-400 border border-emerald-500/20 font-bold px-4 py-2 rounded-xl flex items-center gap-2 disabled:opacity-50">
+                                    <button type="button" onClick={() => void saveProfile()} disabled={isSaving || isRefining} className="btn-ghost !text-xs !bg-emerald-500/10 !text-emerald-400 border border-emerald-500/20 font-bold px-4 py-2 rounded-xl flex items-center gap-2 disabled:opacity-50">
                                         {isSaving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                                         저장
                                     </button>
@@ -409,11 +522,12 @@ function MatchItem({ result, rank }: { result: MatchResult; rank: number }) {
     );
 }
 
-function readTimestamp(value: any): string {
+function readTimestamp(value: unknown): string {
     if (!value) return '';
     if (typeof value === 'string') return value;
     if (typeof value === 'number') return new Date(value).toISOString();
-    if (value.seconds) return new Date(value.seconds * 1000).toISOString();
+    const seconds = (value as { seconds?: number }).seconds;
+    if (typeof seconds === 'number') return new Date(seconds * 1000).toISOString();
     return '';
 }
 

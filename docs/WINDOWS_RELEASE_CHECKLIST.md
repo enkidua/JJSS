@@ -13,9 +13,11 @@
 - [ ] `DB_VERSION`과 IndexedDB store 구성이 의도치 않게 변경되지 않았다.
 - [ ] PFX, 개인키, `.env`, API 키가 Git 추적 대상이나 배포 파일에 포함되지 않았다.
 - [ ] `release/`, `dist/`, `node_modules/` 변경이 Git 변경에 포함되지 않았다.
-- [ ] `npm run check:release`가 PASS다.
+- [ ] `npm run check:release`가 PASS다(Tailwind·PostCSS 설정 파일, 아이콘, `publish: null`, 런타임 의존성 0개 포함).
+- [ ] `npm run test:all`이 PASS다.
 - [ ] `npx tsc -b --pretty false`가 성공한다.
-- [ ] `npm run build`가 성공한다.
+- [ ] `npm run build`가 성공하고 `dist/assets/index-*.css`가 100KB 이상이다(Tailwind 적용 확인).
+- [ ] `build/icon.png`(512×512)가 Git에 포함되어 있다(`.gitignore`의 `build/` 규칙 예외 필요).
 - [ ] `git diff --check`가 성공한다.
 
 `check:release`는 실제 PC에 설치된 버전을 추측하지 않는다. 설치 버전은 아래 명령으로 직접 확인하고 신규 버전과 비교한다.
@@ -61,7 +63,23 @@ Select-Object DisplayName, DisplayVersion, InstallLocation, UninstallString
 - [ ] PDF, PNG, DOCX 출력을 합성 데이터로 각각 확인한다.
 - [ ] 문제가 있으면 새 데이터를 추가 입력하지 말고 설치 전 백업과 `RECOVERY_NOTES.md`를 사용해 복구한다.
 
-## 5. 자체서명 빌드
+## 5. 서명 빌드와 미서명 빌드
+
+| 구분 | 명령 | Authenticode | 사용자 PC에서 보이는 모습 | 용도 |
+|---|---|---|---|---|
+| 미서명 | `npm run electron:build` | `NotSigned` | SmartScreen "Windows의 PC 보호" 경고. 사용자가 [추가 정보] → [실행]을 눌러야 설치됨 | 개발 PC 확인, 구조 검증, 현재 공개 배포본 |
+| 자체서명(내부 테스트 인증서) | `npm run electron:build:win:signed` + 내부 PFX | 공개 CER를 신뢰 저장소에 넣은 PC에서만 `Valid`, 그 밖의 PC는 `UnknownError`/신뢰되지 않음 | 일반 PC에서는 미서명과 같이 경고가 뜸 | 내부 테스트 PC에서 서명 흐름 검증 |
+| 공인 코드서명 인증서(OV/EV) | `npm run electron:build:win:signed` + 공인 인증서 | `Valid` | 게시자 이름이 표시됨. 다운로드 평판이 쌓이기 전까지는 SmartScreen 경고가 보일 수 있음 | 공개 배포 |
+
+- 설치 파일 이름은 두 방식 모두 `release\JJSS Setup <버전>.exe`로 같다. GitHub Releases에 올리면 공백이 점으로 바뀌어 `JJSS.Setup.<버전>.exe`로 표시된다. 홈페이지·README의 파일명과 SHA-256을 함께 갱신한다.
+- `publish: null`이므로 `latest.yml`·`app-update.yml`이 만들어지지 않는다. 자동 업데이트는 없고, 사용자는 새 설치 파일을 기존 설치 위에 실행한다.
+- 미서명 배포 시에는 README의 SmartScreen 안내와 SHA-256 값을 반드시 함께 제공한다.
+
+```powershell
+Get-FileHash ".elease\JJSS Setup *.exe" -Algorithm SHA256
+```
+
+### 5-1. 자체서명 빌드 절차
 
 - [ ] PFX가 프로젝트 밖의 승인된 보관 위치에 있다.
 - [ ] 현재 PowerShell 세션에 `WIN_CSC_LINK`를 설정한다.
@@ -100,7 +118,11 @@ ForEach-Object {
 
 ## 8. JJSS 문서 저장 검증
 
-- [ ] 설정 화면에 runtime `Documents\JJSS`, 백업, 문서 경로가 표시된다.
+- [ ] 새 설치 PC: 설정 화면에 `문서\JJSS`, 백업, 문서 경로가 표시된다.
+- [ ] 기존 사용자 PC(`D:\JJSS` 안에 파일이 있음): 업그레이드 후에도 `D:\JJSS`가 계속 표시된다. 결정된 위치는 `%APPDATA%\JJSSile-save-preferences.json`의 `jjssRoot`에 저장되어 다음 실행에도 바뀌지 않는다.
+- [ ] 저장 위치 드라이브를 뺀 상태에서 저장하면 "저장 위치(…)를 찾을 수 없습니다. USB/드라이브 연결을 확인하세요" 안내와 [다시 확인]/[문서 폴더로 변경]/[취소]가 표시되고, 선택 없이 위치가 바뀌지 않는다.
+- [ ] 한글/Word에서 연 파일에 덮어쓰면 "다른 프로그램에서 열려 있습니다" 안내가 나온다.
+- [ ] 저장 후 [폴더 열기]를 누르면 탐색기에서 저장한 파일이 선택된 상태로 열린다.
 - [ ] 백업 JSON 기본 경로가 `JJSS\JJSS Pro\백업`이다.
 - [ ] 계획서 PDF/PNG/DOCX 기본 경로가 `JJSS\문서\직업재활계획서`다.
 - [ ] 직업평가 DOCX 기본 경로가 `JJSS\문서\직업평가`다.
@@ -108,7 +130,7 @@ ForEach-Object {
 - [ ] 회의록 TXT 기본 경로가 `JJSS\문서\회의록`이다.
 - [ ] 업무지원 TXT 기본 경로가 `JJSS\문서\업무지원`이다.
 - [ ] 생성 이미지는 `JJSS\문서\이미지`다.
-- [ ] 취소 시 파일이 생성되지 않고 JJSS root 밖 선택은 거부된다.
+- [ ] 취소 시 파일이 생성되지 않는다. JJSS 폴더 밖(바탕화면·OneDrive 등)도 저장 위치로 고를 수 있다.
 - [ ] 저장 성공 시 실제 경로와 폴더 열기 버튼이 표시된다.
 
 합성 가져오기 자동 테스트는 `npm run test:file-service`로 실행한다. 실제 개인정보·백업 DB는 테스트 폴더에 넣지 않는다.
@@ -119,4 +141,12 @@ ForEach-Object {
 - 현재 셸 서명 환경변수: 미설정
 - 일반 빌드: winCodeSign 캐시의 심볼릭 링크 생성 권한 부족으로 실패
 - 미서명 구조 검증 빌드: 성공, `release\JJSS Setup 2.3.0.exe`, Authenticode `NotSigned`
-- 전용 Windows `.ico`: 프로젝트에서 찾지 못함. 기본 Electron 아이콘 상태이므로 배포 전 자산 복구 필요
+- 앱 아이콘: `build/icon.png`(512×512, 홈페이지 `website/app/icon.png`와 같은 이미지)를 `win.icon`·`mac.icon`으로 지정. electron-builder가 Windows `.ico`로 변환한다.
+
+## 10. 앱 실행 안전장치 확인
+
+- [ ] JJSS를 두 번 실행하면 새 창이 뜨지 않고 기존 창이 앞으로 나온다(단일 실행).
+- [ ] 다른 Windows 계정에서 JJSS가 실행 중일 때 설치하면, 설치 프로그램이 "다른 Windows 계정에서 실행 중일 수 있음 → 컴퓨터 재시작" 안내를 표시한다.
+- [ ] 앱 하단 이메일 링크는 기본 메일 프로그램으로, `https` 외부 링크는 기본 브라우저로 열리고 앱 화면은 그대로 유지된다.
+- [ ] 메인 프로세스 오류는 `%APPDATA%\JJSS\logs\main.log`에 오류 이름·코드·호출 위치만 남고 이름·경로·문서 내용은 남지 않는다.
+- [ ] 배포 빌드 `dist/index.html`에 Content-Security-Policy 메타 태그가 있다. 새 외부 AI API를 추가했다면 `vite.config.ts`의 `CONNECT_SOURCES`에도 추가했다.

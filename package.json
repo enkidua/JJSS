@@ -1,7 +1,7 @@
 {
     "name": "jjss",
     "private": true,
-    "version": "3.0.0",
+    "version": "3.1.0",
     "description": "직업재활업무시스템(JJSS) 데스크톱 앱",
     "author": "Antigravity",
     "type": "module",
@@ -18,25 +18,34 @@
         "test:ai-settings": "node scripts/test-ai-settings.mjs",
         "test:ai-safety": "node scripts/test-ai-request-safety.mjs",
         "test:ai-api": "node scripts/test-ai-api-contracts.mjs",
+        "test:anonymizer": "node scripts/test-anonymizer.mjs",
+        "test:crypto": "node scripts/test-crypto-backup.mjs",
+        "test:usability": "node scripts/test-usability.cjs",
+        "test:budget-calc": "node scripts/test-budget-calc.mjs",
+        "test:supported-employment": "node scripts/test-supported-employment.mjs",
+        "test:all": "npm run test:rehab-plan-mapper && npm run test:rehab-workflow && npm run test:file-service && npm run test:runtime-safety && npm run test:ai-settings && npm run test:ai-safety && npm run test:ai-api && npm run test:anonymizer && npm run test:crypto && npm run test:budget-calc && npm run test:supported-employment && npm run check:release",
         "electron:dev": "vite build && electron .",
         "electron:build": "vite build && electron-builder --win --x64",
         "electron:build:win:signed": "node scripts/check-release-readiness.cjs && node scripts/check-win-signing.cjs && vite build && electron-builder --win --x64",
-        "electron:build:mac": "vite build && electron-builder --mac",
+        "electron:build:mac": "vite build && electron-builder --mac --arm64",
         "electron:build:mac-m1": "vite build && electron-builder --mac --arm64"
     },
     "build": {
         "appId": "com.jjss.desktop",
         "productName": "JJSS",
         "directories": {
-            "output": "release"
+            "output": "release",
+            "buildResources": "build"
         },
         "files": [
             "dist/**/*",
             "electron/**/*"
         ],
         "asar": true,
+        "publish": null,
         "win": {
             "executableName": "JJSS-Pro",
+            "icon": "build/icon.png",
             "target": [
                 {
                     "target": "nsis",
@@ -49,16 +58,25 @@
         "mac": {
             "category": "public.app-category.productivity",
             "target": [
-                "zip",
-                "dmg"
+                {
+                    "target": "dmg",
+                    "arch": [
+                        "arm64"
+                    ]
+                },
+                {
+                    "target": "zip",
+                    "arch": [
+                        "arm64"
+                    ]
+                }
             ],
-            "icon": "public/icon.png",
+            "icon": "build/icon.png",
             "hardenedRuntime": false,
             "gatekeeperAssess": false
         },
         "dmg": {
             "title": "JJSS",
-            "icon": "public/icon.png",
             "format": "UDZO",
             "contents": [
                 {
@@ -72,7 +90,8 @@
                     "y": 150,
                     "type": "file"
                 }
-            ]
+            ],
+            "artifactName": "JJSS-${version}-arm64.${ext}"
         },
         "nsis": {
             "oneClick": false,
@@ -86,30 +105,30 @@
             "createStartMenuShortcut": true
         }
     },
-    "dependencies": {
+    "devDependencies": {
+        "@fontsource-variable/noto-sans-kr": "^5.3.0",
         "@google/genai": "^1.0.0",
+        "@types/react": "^18.3.0",
+        "@types/react-dom": "^18.3.0",
+        "@vitejs/plugin-react": "^4.3.0",
+        "autoprefixer": "^10.4.0",
         "docx": "^9.6.1",
+        "electron": "^36.0.0",
+        "electron-builder": "^25.1.0",
         "file-saver": "^2.0.5",
         "framer-motion": "^11.0.0",
         "html2canvas": "^1.4.1",
         "jszip": "^3.10.1",
         "lucide-react": "^0.460.0",
+        "playwright": "^1.63.0",
+        "postcss": "^8.4.0",
         "react": "^18.3.0",
         "react-dom": "^18.3.0",
         "react-router-dom": "^6.28.0",
-        "zustand": "^5.0.0"
-    },
-    "devDependencies": {
-        "@types/react": "^18.3.0",
-        "@types/react-dom": "^18.3.0",
-        "@vitejs/plugin-react": "^4.3.0",
-        "autoprefixer": "^10.4.0",
-        "electron": "^36.0.0",
-        "electron-builder": "^25.1.0",
-        "postcss": "^8.4.0",
         "tailwindcss": "^3.4.0",
         "typescript": "^5.6.0",
-        "vite": "^6.0.0"
+        "vite": "^6.0.0",
+        "zustand": "^5.0.0"
     },
     "browserslist": [
         "last 2 Chrome versions"

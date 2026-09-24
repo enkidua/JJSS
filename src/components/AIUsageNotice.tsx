@@ -22,7 +22,7 @@ export default function AIUsageNotice() {
     if (!notice) return null;
 
     return (
-        <div className="fixed bottom-5 right-5 z-[105] w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-amber-300/20 bg-slate-900/95 p-4 shadow-2xl" role="status">
+        <div className="pointer-events-auto w-full max-w-sm rounded-xl border border-amber-300/20 bg-slate-900/95 p-4 shadow-2xl" role="status">
             <div className="flex items-start gap-3">
                 <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
                 <p className="text-sm leading-relaxed text-white/75">{notice.message}</p>

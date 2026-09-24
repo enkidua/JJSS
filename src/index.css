@@ -1,3 +1,6 @@
+/* 오프라인에서도 같은 글꼴이 보이도록 Noto Sans KR(가변 굵기 100~900)을 앱에 포함한다. */
+@import '@fontsource-variable/noto-sans-kr';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -9,7 +12,7 @@
 }
 
 body {
-  font-family: 'Noto Sans KR', 'Pretendard', 'Inter', system-ui, -apple-system, sans-serif;
+  font-family: 'Noto Sans KR Variable', 'Noto Sans KR', 'Malgun Gothic', 'Apple SD Gothic Neo', 'Pretendard', 'Inter', system-ui, -apple-system, sans-serif;
   background: #0a0a1a;
   color: #e2e8f0;
   min-height: 100vh;

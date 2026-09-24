@@ -9,7 +9,11 @@ export type CaseDocumentType =
     | 'interview_note'
     | 'employment_interview_note'
     | 'job_analysis'
-    | 'document_review';
+    | 'document_review'
+    /** 직업평가 화면의 결과분석·종합소견서 이력(이용자 연결은 선택. 연결하지 않으면 seekerId·seekerName은 빈 문자열) */
+    | 'vocational_evaluation'
+    /** 지원고용 회차 전체(JSON). src/features/supportedEmployment/storage.ts */
+    | 'supported_employment';
 export type CaseDocumentTab = 'case' | 'docs' | 'employment';
 
 export interface CaseDocument {
@@ -29,4 +33,9 @@ export interface CaseDocument {
     location?: string;
     photoFileNames?: string[];
     photoCount?: number;
+    /** 'vocational_evaluation' 문서의 제목과 종류(결과분석/종합소견서) */
+    title?: string;
+    evaluationKind?: 'analysis' | 'report';
+    /** localStorage 평가 이력에서 옮겨 온 경우 원래 항목 ID(중복 이관 방지용) */
+    legacyHistoryId?: string;
 }

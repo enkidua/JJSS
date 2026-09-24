@@ -13,3 +13,8 @@ contextBridge.exposeInMainWorld('jjssFiles', Object.freeze({
     chooseImportFolder: ({ includeSubfolders } = {}) => ipcRenderer.invoke('jjss-files:choose-import-folder', { includeSubfolders }),
     importLegacyDocuments: ({ token, mode }) => ipcRenderer.invoke('jjss-files:import-legacy-documents', { token, mode }),
 }));
+
+// 저장 데이터 암호화 키(Windows DPAPI로 보호). 사용할 수 없으면 null을 돌려준다.
+contextBridge.exposeInMainWorld('jjssSecure', Object.freeze({
+    getDataKey: () => ipcRenderer.invoke('jjss-secure:get-data-key'),
+}));

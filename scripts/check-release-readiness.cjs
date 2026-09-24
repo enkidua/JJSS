@@ -8,6 +8,9 @@ const EXPECTED_PRODUCT_NAME = 'JJSS';
 const EXPECTED_WINDOWS_EXECUTABLE = 'JJSS-Pro';
 const PRIVATE_CERT_EXTENSIONS = new Set(['.pfx', '.p12', '.pem', '.key']);
 const SKIP_SCAN_DIRECTORIES = new Set(['.git', 'node_modules']);
+// 이 두 파일이 없으면 빌드는 성공해도 Tailwind가 적용되지 않아 화면 스타일이 전부 깨진다.
+const REQUIRED_BUILD_FILES = ['tailwind.config.cjs', 'postcss.config.cjs', 'index.html', 'vite.config.ts'];
+const NODE_BUILTIN_MODULES = new Set(require('node:module').builtinModules);
 
 function readJson(relativePath) {
     return JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, relativePath), 'utf8'));
@@ -48,9 +51,33 @@ function isSensitiveTrackedPath(filePath) {
         || /(^|\/)service-account[^/]*\.json$/i.test(normalized);
 }
 
+function findElectronRuntimeRequires() {
+    const electronDirectory = path.join(PROJECT_ROOT, 'electron');
+    const required = new Set();
+    for (const entry of fs.readdirSync(electronDirectory, { withFileTypes: true })) {
+        if (!entry.isFile() || !/\.(c?js|mjs)$/.test(entry.name)) continue;
+        const source = fs.readFileSync(path.join(electronDirectory, entry.name), 'utf8');
+        for (const match of source.matchAll(/require\(\s*['"]([^'"]+)['"]\s*\)/g)) {
+            const specifier = match[1];
+            if (specifier.startsWith('.') || specifier.startsWith('node:') || specifier === 'electron') continue;
+            const packageName = specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0];
+            if (!NODE_BUILTIN_MODULES.has(packageName)) required.add(packageName);
+        }
+    }
+    return required;
+}
+
+function isGitIgnored(relativePath) {
+    const result = spawnSync('git', ['check-ignore', '-q', '--', relativePath], { cwd: PROJECT_ROOT, windowsHide: true });
+    return result.status === 0;
+}
+
 const checks = [];
 function check(label, passed, detail) {
     checks.push({ label, passed, detail });
+}
+function warn(label, detail) {
+    checks.push({ label, passed: true, warning: true, detail });
 }
 
 try {
@@ -73,6 +100,29 @@ try {
     check('앱 데이터 삭제 비활성', nsis.deleteAppDataOnUninstall !== true, `deleteAppDataOnUninstall=${String(nsis.deleteAppDataOnUninstall)}`);
     check('signed build 사전검사 연결', typeof scripts['electron:build:win:signed'] === 'string' && scripts['electron:build:win:signed'].includes('check-win-signing.cjs'), scripts['electron:build:win:signed'] ? '연결됨' : '없음');
 
+    const missingBuildFiles = REQUIRED_BUILD_FILES.filter(file => !fs.existsSync(path.join(PROJECT_ROOT, file)));
+    check('빌드 설정 파일 존재(Tailwind·PostCSS 포함)', missingBuildFiles.length === 0, missingBuildFiles.length ? `누락: ${missingBuildFiles.join(', ')}` : REQUIRED_BUILD_FILES.join(', '));
+
+    const iconReferences = [['win.icon', win.icon], ['mac.icon', build.mac?.icon], ['dmg.icon', build.dmg?.icon]]
+        .filter(([, value]) => typeof value === 'string');
+    const missingIcons = iconReferences.filter(([, value]) => !fs.existsSync(path.join(PROJECT_ROOT, value)));
+    check('Windows 앱 아이콘 지정', typeof win.icon === 'string', win.icon || '없음(기본 Electron 아이콘)');
+    check('아이콘 파일 존재', missingIcons.length === 0, missingIcons.length ? missingIcons.map(([key, value]) => `${key}=${value}`).join(', ') : iconReferences.map(([key, value]) => `${key}=${value}`).join(', ') || '지정 없음');
+    for (const iconPath of new Set(iconReferences.map(([, value]) => value))) {
+        if (isGitIgnored(iconPath)) {
+            warn('아이콘 파일이 .gitignore에 걸림', `${iconPath} — 새로 받은 저장소에서 빠지면 빌드가 실패합니다. .gitignore의 "build/"를 "build/*"로 바꾸고 "!${iconPath}"를 추가하세요`);
+        }
+    }
+
+    check('자동 업데이트 게시 설정 없음', build.publish === null, `publish=${JSON.stringify(build.publish)}`);
+
+    const electronRequires = findElectronRuntimeRequires();
+    const runtimeDependencies = Object.keys(packageJson.dependencies || {});
+    const bundledOnlyDependencies = runtimeDependencies.filter(name => !electronRequires.has(name));
+    const missingRuntimeDependencies = [...electronRequires].filter(name => !runtimeDependencies.includes(name));
+    check('설치 파일에 불필요한 node_modules 없음', bundledOnlyDependencies.length === 0, bundledOnlyDependencies.length ? `Vite가 번들하므로 devDependencies로 옮길 것: ${bundledOnlyDependencies.join(', ')}` : `dependencies=${runtimeDependencies.length}개`);
+    check('Electron 메인 프로세스 의존성 선언', missingRuntimeDependencies.length === 0, missingRuntimeDependencies.length ? `dependencies에 필요: ${missingRuntimeDependencies.join(', ')}` : 'Electron·Node 내장 모듈만 사용');
+
     const privateCertificates = findPrivateCertificates(PROJECT_ROOT);
     check('프로젝트 내부 개인 인증서 없음', privateCertificates.length === 0, privateCertificates.length ? privateCertificates.join(', ') : '없음');
 
@@ -91,7 +141,8 @@ try {
 }
 
 for (const item of checks) {
-    console.log(`${item.passed ? 'PASS' : 'FAIL'} ${item.label}: ${item.detail}`);
+    const status = item.warning ? 'WARN' : item.passed ? 'PASS' : 'FAIL';
+    console.log(`${status} ${item.label}: ${item.detail}`);
 }
 
 const failed = checks.filter(item => !item.passed);
