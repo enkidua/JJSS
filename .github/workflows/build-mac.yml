@@ -1,8 +1,11 @@
 name: Build macOS (Apple Silicon)
 
-# 수동 실행 전용. 릴리스를 자동 게시하지 않고, 빌드 결과를 Actions Artifacts로만 올립니다.
+# 수동 실행 또는 빌드 전용 브랜치 푸시 시 실행. 결과는 Actions Artifacts로만 올립니다.
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - codex/mac-installer-build
 
 permissions:
   contents: read
