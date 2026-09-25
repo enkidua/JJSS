@@ -12,7 +12,7 @@ interface BackupPasswordDialogProps {
     error?: string;
     fileName?: string;
     onSubmitPassword: (password: string) => void;
-    /** 내보내기에서 평문 경고를 확인한 뒤 비밀번호 없이 저장 */
+    /** 내보내기에서 고급 옵션을 열고 평문 경고를 확인한 뒤에만 암호화 없이 저장 */
     onSkipPassword?: () => void;
     onCancel: () => void;
 }
@@ -89,10 +89,11 @@ export default function BackupPasswordDialog({
                         <div className="flex items-start gap-3">
                             <AlertTriangle className="mt-0.5 h-6 w-6 shrink-0 text-amber-400" aria-hidden="true" />
                             <div>
-                                <h2 id={titleId} className="text-lg font-bold text-white">비밀번호 없이 저장할까요?</h2>
+                                <h2 id={titleId} className="text-lg font-bold text-white">암호화 없이 저장할까요?</h2>
                                 <div id={descId} className="mt-2 space-y-2 text-sm leading-relaxed text-white/75">
-                                    <p>비밀번호 없이 저장하면 <strong className="text-amber-200">이용자 이름, 연락처, 주소, 장애유형, 상담·사례 문서</strong> 같은 개인정보가 누구나 읽을 수 있는 형태(평문)로 파일에 그대로 저장됩니다.</p>
-                                    <p>USB·메일·메신저로 옮기다 파일이 유출되면 개인정보가 그대로 노출됩니다. 가능하면 비밀번호를 설정해 주세요.</p>
+                                    <p className="font-semibold text-amber-200">이 파일에는 개인정보가 평문으로 포함됩니다. 보안이 확보된 저장장소에서만 사용하세요.</p>
+                                    <p>암호화하지 않으면 <strong className="text-amber-200">이용자 이름, 연락처, 주소, 장애유형, 상담·사례 문서, 직업훈련 기록</strong> 같은 개인정보를 누구나 읽을 수 있습니다. USB·메일·메신저로 옮기다 파일이 유출되면 그대로 노출됩니다.</p>
+                                    <p>특별한 이유가 없다면 돌아가서 비밀번호로 암호화해 저장해 주세요.</p>
                                 </div>
                             </div>
                         </div>
@@ -104,11 +105,11 @@ export default function BackupPasswordDialog({
                                 onChange={event => setPlaintextAcknowledged(event.target.checked)}
                                 className="mt-0.5 h-4 w-4 accent-amber-500"
                             />
-                            <span>개인정보가 평문으로 저장된다는 것을 이해했으며, 비밀번호 없이 저장합니다.</span>
+                            <span>개인정보가 평문으로 저장된다는 것을 이해했으며, 보안이 확보된 저장장소에서만 사용하겠습니다.</span>
                         </label>
                         <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                             <button type="button" onClick={() => setStep('password')} className="rounded-lg border border-white/15 px-4 py-2 text-sm font-semibold text-white/80 hover:bg-white/10">
-                                돌아가서 비밀번호 설정
+                                돌아가서 암호화하여 저장
                             </button>
                             <button
                                 type="button"
@@ -116,7 +117,7 @@ export default function BackupPasswordDialog({
                                 onClick={() => onSkipPassword?.()}
                                 className="rounded-lg bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-40"
                             >
-                                비밀번호 없이 저장
+                                암호화 없이 저장
                             </button>
                         </div>
                     </div>
@@ -131,8 +132,8 @@ export default function BackupPasswordDialog({
                                 <div id={descId} className="mt-2 space-y-1.5 text-sm leading-relaxed text-white/70">
                                     {isExport ? (
                                         <>
-                                            <p>비밀번호를 설정하면 백업 파일이 암호화되어, 비밀번호를 모르는 사람은 내용을 볼 수 없습니다.</p>
-                                            <p className="text-amber-200/90">비밀번호를 잊으면 이 백업을 복원할 수 없습니다. 안전한 곳에 적어 두세요.</p>
+                                            <p>백업 파일은 기본으로 비밀번호로 암호화되어, 비밀번호를 모르는 사람은 내용을 볼 수 없습니다. API 키는 백업에 포함되지 않습니다.</p>
+                                            <p className="text-amber-200/90">비밀번호는 어디에도 저장되지 않습니다. 잊으면 복구할 수 없으니 안전한 곳에 적어 두세요.</p>
                                         </>
                                     ) : (
                                         <>
@@ -195,20 +196,24 @@ export default function BackupPasswordDialog({
                             <button type="button" disabled={busy} onClick={onCancel} className="rounded-lg border border-white/15 px-4 py-2 text-sm font-semibold text-white/80 hover:bg-white/10 disabled:opacity-40">
                                 취소
                             </button>
-                            {isExport && onSkipPassword && (
-                                <button
-                                    type="button"
-                                    disabled={busy}
-                                    onClick={() => { setValidationError(''); setPlaintextAcknowledged(false); setStep('plaintext-warning'); }}
-                                    className="rounded-lg border border-amber-400/30 px-4 py-2 text-sm font-semibold text-amber-100 hover:bg-amber-500/10 disabled:opacity-40"
-                                >
-                                    비밀번호 없이 저장…
-                                </button>
-                            )}
                             <button type="submit" disabled={busy} className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-bold text-white hover:bg-violet-500 disabled:cursor-wait disabled:opacity-60">
                                 {busy ? '확인 중…' : isExport ? '암호화하여 저장' : '확인'}
                             </button>
                         </div>
+                        {isExport && onSkipPassword && (
+                            <details className="mt-4 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/55">
+                                <summary className="cursor-pointer select-none font-semibold text-white/60">고급 옵션</summary>
+                                <p className="mt-2 leading-relaxed">암호화하지 않은 백업은 개인정보가 그대로 들어 있어 권장하지 않습니다.</p>
+                                <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() => { setValidationError(''); setPlaintextAcknowledged(false); setStep('plaintext-warning'); }}
+                                    className="mt-2 rounded-lg border border-amber-400/30 px-3 py-1.5 font-semibold text-amber-100 hover:bg-amber-500/10 disabled:opacity-40"
+                                >
+                                    고급: 암호화 없이 저장…
+                                </button>
+                            </details>
+                        )}
                     </form>
                 )}
             </div>

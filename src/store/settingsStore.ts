@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import * as localDB from '../config/localDB';
-import { encrypt, decryptWithStatus } from '../config/crypto';
+import { encrypt, decryptWithStatus, isSecureStorageUnavailableError } from '../config/crypto';
 import { safeErrorMetadata } from '../utils/safeError';
 import {
     AI_MODEL_OPTIONS,
@@ -217,7 +217,7 @@ function stableStringify(value: unknown): string {
 
 function keyRecoveryMessage(dataKeyUnavailable: boolean): string {
     return dataKeyUnavailable
-        ? '이 PC의 보안 키를 불러오지 못해 저장된 API 키를 읽을 수 없습니다. 다른 PC나 다른 Windows 사용자 계정으로 데이터를 옮긴 경우 생길 수 있습니다. 설정 화면에서 해당 API 키를 다시 입력해 주세요.'
+        ? '보안 키를 불러오지 못했습니다. 기존 데이터를 삭제하지 않았습니다. 다른 PC나 다른 사용자 계정으로 데이터 폴더를 옮긴 경우 생길 수 있습니다. 설정 화면에서 해당 API 키를 다시 입력해 주세요.'
         : '저장된 API 키 일부를 복호화하지 못했습니다. 앱은 계속 사용할 수 있지만, 설정 화면에서 해당 API 키를 다시 입력해 주세요.';
 }
 
@@ -287,8 +287,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
                     // 이전 키·형식으로 저장된 키가 있거나 모델명·자동 전환 설정 보정이 있을 때만 다시 저장한다.
                     // 평소 실행 때는 읽기만 한다. 복호화하지 못한 암호문은 지우지 않고 보존한다.
                     if (needsReEncrypt || modelMigrated || failoverMigrated) {
-                        const encrypted = await encryptSettings(decrypted);
-                        await localDB.addDoc<AppSettings>('settings', { ...encrypted, id: 'app-settings' });
+                        try {
+                            const encrypted = await encryptSettings(decrypted);
+                            await localDB.addDoc<AppSettings>('settings', { ...encrypted, id: 'app-settings' });
+                        } catch (migrationError) {
+                            // 보정 저장에 실패해도(보안 저장소 사용 불가 등) 기존 저장값은 그대로 두고, 읽은 설정으로 계속 사용한다.
+                            console.warn('[Settings] 설정 형식 보정 저장 실패(기존 값 유지):', safeErrorMetadata(migrationError, 'settings-migration'));
+                        }
                     }
                 } else {
                     unreadableKeySlots.clear();
@@ -329,7 +334,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
             }));
         } catch (err: any) {
             console.error('Settings save error:', safeErrorMetadata(err, 'settings-save'));
-            set({ error: '설정 저장에 실패했습니다. API 키가 저장되지 않았을 수 있습니다.' });
+            set({
+                error: isSecureStorageUnavailableError(err)
+                    ? `${err.message} API 키는 저장되지 않았습니다.`
+                    : '설정 저장에 실패했습니다. API 키가 저장되지 않았을 수 있습니다.',
+            });
             throw err;
         }
     },

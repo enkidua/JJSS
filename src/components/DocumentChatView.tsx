@@ -159,8 +159,9 @@ export function DocumentChatView({ onBack, onDirtyChange }: DocumentChatViewProp
             // 화면의 전체 대화는 유지하되, API에는 최근 5턴 또는 10,000자 이내만 전송합니다.
             const history = buildLimitedApiHistory(messages);
 
-            // 첨부 파일은 질문할 때마다 함께 다시 전송됩니다(화면에 안내).
-            const fileData = files.map(f => ({ mimeType: f.mimeType, data: f.data }));
+            // 첨부 파일은 질문할 때마다 다시 처리됩니다. 글자가 있는 PDF는 PC에서 추출한 글을 비식별화해 보내고,
+            // 스캔본·이미지는 질문마다 원본 전송 확인을 받습니다(파일 이름은 확인창에만 표시).
+            const fileData = files.map(f => ({ mimeType: f.mimeType, data: f.data, name: f.name }));
 
             const response = await generateText(
                 'summary',
@@ -252,9 +253,9 @@ export function DocumentChatView({ onBack, onDirtyChange }: DocumentChatViewProp
                     </div>
                 )}
                 <div className="mx-6 mt-4 rounded-xl border border-violet-400/20 bg-violet-500/10 px-4 py-3 text-xs leading-relaxed text-violet-100/80">
-                    <strong className="text-violet-50">사용량 안내:</strong> 질문할 때마다 첨부한 파일 전체가 AI로 다시 전송됩니다. 파일이 크거나 많을수록 질문 한 번마다 사용량(비용)이 늘어나니, 필요한 파일만 남겨 두세요.
+                    <strong className="text-violet-50">전송·사용량 안내:</strong> 질문할 때마다 첨부 파일 내용이 AI로 다시 전송됩니다. 글자가 들어 있는 PDF는 이 컴퓨터에서 글자만 추출해 이름·연락처 등을 가린 뒤 보내고, 스캔한 PDF나 이미지는 원본을 보내야 하므로 질문할 때마다 전송 여부를 따로 확인합니다. 파일이 크거나 많을수록 사용량(비용)이 늘어나니, 필요한 파일만 남겨 두세요.
                     {files.length > 0 && <span className="block mt-1">현재 첨부: {files.length}개, 약 {formatSize(totalFileBytes)} (질문마다 함께 전송)</span>}
-                    <span className="block mt-1 text-violet-100/60">대화 기록은 화면에 모두 남지만, AI에는 최근 5턴 또는 10,000자 이내의 대화만 함께 보냅니다. 문서 내용은 외부 AI 서비스(Gemini)로 전송됩니다.</span>
+                    <span className="block mt-1 text-violet-100/60">대화 기록은 화면에 모두 남지만, AI에는 최근 5턴 또는 10,000자 이내의 대화만 함께 보냅니다. 문서 내용은 외부 AI 서비스(Google Gemini)로 전송됩니다.</span>
                     {files.some(file => file.size > LARGE_DOCUMENT_BYTES) && (
                         <span className="block mt-1 text-amber-100">큰 파일이 첨부되어 있습니다. 부담되면 필요한 페이지만 이미지/PDF로 나누어 질문해 주세요.</span>
                     )}

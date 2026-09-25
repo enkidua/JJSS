@@ -50,6 +50,8 @@ export function EvaluationSection({ draft, onChange, onOpinionsChange, onBusyCha
         try {
             const text = await generateText('evaluation', buildOpinionPrompt(draft), undefined, {
                 featureKey: 'workmate', documentType: 'supported-employment-opinion',
+                // 이 회차와 관련 있는 이름(훈련생·직무지도원·담당자)만 비식별화 이름 사전에 더합니다.
+                knownNames: [draft.seekerName, draft.coach.name, draft.documentOptions?.staffName],
             });
             if (request !== requestRef.current) return;
             const parsed = parseOpinionDraft(text);

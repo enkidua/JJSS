@@ -1,6 +1,5 @@
 import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { useSettingsStore } from '../store/settingsStore';
-import { anonymizeText, deanonymizeText } from '../utils/anonymizer';
 import { safeErrorMetadata } from '../utils/safeError';
 import { fileToBase64 } from '../utils/file';
 import { AI_MODEL_LABELS, normalizeAIModel, type AIProvider } from '../config/aiModels';
@@ -24,7 +23,19 @@ import {
 import { attachProviderMessage, classifyAIFailoverReason, shouldCountTowardFailureBlock } from './aiErrorClassification';
 import { lockAttachmentRequestPlan, supportsAttachments } from './aiProviderCapabilities';
 import { readAnthropicText, readGeminiText, readOpenAIText } from './aiTextResponse';
-import { collectKnownNames } from './knownNames';
+import { isKnownNamesReady, KNOWN_NAMES_NOT_READY_MESSAGE } from './knownNames';
+import {
+  assertAttachmentApproved,
+  BASE64_ATTACHMENT_ACCESSOR,
+  FILE_ATTACHMENT_ACCESSOR,
+  formatDocumentSegment,
+  markAttachmentApproved,
+  prepareAIOutboundText,
+  prepareAttachmentsForAI,
+  prepareImagePrompt,
+  restoreAIResponse,
+  type ExtraKnownNames,
+} from './aiPrivacyGateway';
 import { claudeReasoningEffort, geminiThinkingLevel, openAIReasoningEffort, type AIReasoningLevel } from '../config/aiReasoning';
 
 // ──────────────────────────────────────────────
@@ -87,6 +98,12 @@ const DATA_SAFETY_PROMPT = `[자료 처리 원칙]
 /** 사용자·OCR·문서 자료를 <자료> 블록으로 감싼다(자료 안의 태그 흉내는 제거). */
 export function wrapAsData(content: string): string {
   return `<자료>\n${String(content ?? '').replace(/<\/?\s*자료\s*>/g, '')}\n</자료>`;
+}
+
+/** PC 안에서 추출·비식별화한 첨부 문서 글을 프롬프트 뒤에 붙인다(원본 파일은 보내지 않음). */
+function appendExtractedDocuments(prompt: string, maskedDocuments: string[]): string {
+  if (!maskedDocuments.length) return prompt;
+  return `${prompt}\n\n[첨부 문서에서 PC 안에서 추출한 글]\n${maskedDocuments.map(wrapAsData).join('\n\n')}`;
 }
 
 
@@ -723,6 +740,8 @@ export interface GenerateImageOptions {
   signal?: AbortSignal;
   /** 선택. 지원하지 않는 값이나 모델이면 조용히 무시하고 기존 프롬프트 방식만 사용한다. */
   aspectRatio?: GeminiImageAspectRatio;
+  /** 이 요청과 관련 있는 추가 이름. 프롬프트에서 가린 뒤 보내며 결과에 되돌려 넣지 않는다. */
+  knownNames?: ExtraKnownNames;
 }
 type GeminiTextModel = 'gemini-3.8-flash' | 'gemini-3.6-flash' | 'gemini-3.5-flash-lite';
 
@@ -985,6 +1004,8 @@ async function callGemini(apiKey: string, model: string, systemPrompt: string, u
   const currentParts: any[] = [];
   if (fileDataList && fileDataList.length > 0) {
     fileDataList.forEach(file => {
+      // 원본 전송 확인(동의 C)을 거친 첨부만 보낸다.
+      assertAttachmentApproved(file);
       currentParts.push({
         inlineData: {
           mimeType: file.mimeType,
@@ -1133,30 +1154,21 @@ export interface GenerateTextOptions {
   signal?: AbortSignal;
   /** true면 자동 전환 설정과 관계없이 다른 AI 제공업체로 넘기지 않는다(개인정보 점검 등). */
   disableCrossProviderFailover?: boolean;
+  /**
+   * 이 요청과 관련 있는 추가 이름(예: 선택한 훈련생·직무지도원·담당자). 기존 이름 사전(이용자·사업체 담당자)에 더해 가린다.
+   * 앱 전체 이름 목록을 넣지 않는다.
+   */
+  knownNames?: ExtraKnownNames;
+}
+
+/** generateText 첨부. name은 PC 화면의 확인창에만 쓰고 외부로 보내지 않는다. */
+export interface AIFileData {
+  mimeType: string;
+  data: string;
+  name?: string;
 }
 
 const AI_RESPONSE_ERROR_CODES = ['AI_EMPTY_RESPONSE', 'AI_TRUNCATED_RESPONSE', 'AI_REFUSED_RESPONSE'];
-const CONVERSATION_BOUNDARY = '\n⟦JJSS-MESSAGE-BOUNDARY⟧\n';
-
-/**
- * 현재 입력과 이전 대화를 한 번에 비식별화해 같은 사람에게 같은 토큰을 쓰게 한다.
- * 경계 표시는 토큰 모양이라 비식별화 과정에서 바뀌지 않는다.
- */
-function anonymizeConversation(userInput: string, history: ChatMessage[], knownNames: string[]) {
-  const contents = [...history.map(message => String(message.content ?? '')), userInput];
-  const { maskedText, mapping } = anonymizeText(contents.join(CONVERSATION_BOUNDARY), { knownNames });
-  const parts = maskedText.split(CONVERSATION_BOUNDARY);
-  if (parts.length !== contents.length) {
-    // 입력에 경계 문자열이 들어 있는 극히 드문 경우: 이전 대화 없이 현재 입력만 비식별화해 보낸다.
-    const single = anonymizeText(userInput, { knownNames });
-    return { maskedInput: single.maskedText, maskedHistory: [] as ChatMessage[], mapping: single.mapping };
-  }
-  return {
-    maskedInput: parts[parts.length - 1],
-    maskedHistory: history.map((message, index) => ({ ...message, content: parts[index] })),
-    mapping,
-  };
-}
 
 const PROVIDER_DISPLAY_NAMES: Record<AIProvider, string> = {
   gemini: 'Gemini',
@@ -1187,20 +1199,38 @@ function providerUserFacingError(provider: AIProvider, error: any): Error {
   return new Error(`AI 응답 생성 중 오류가 발생했습니다. ${statusHint}`);
 }
 
+/**
+ * 개인정보가 섞일 가능성이 **낮은** 요청 유형.
+ * 앱이 만든 문구나 일반 글쓰기 도구라 이용자 기록이 들어가지 않는다.
+ * 이 목록 밖의 요청은 이름 사전이 준비되기 전에 보내지 않는다(fail-closed).
+ */
+const NON_PERSONAL_PROMPT_TYPES: PromptType[] = ['blog', 'press_release', 'promo', 'namer', 'style_refiner', 'image_gen'];
+
+/** 이름 사전이 준비되지 않았는데 개인정보가 섞일 수 있는 요청이면 보내지 않는다. */
+export function assertKnownNamesReady(type: PromptType): void {
+  if (NON_PERSONAL_PROMPT_TYPES.includes(type)) return;
+  if (isKnownNamesReady()) return;
+  throw new Error(KNOWN_NAMES_NOT_READY_MESSAGE);
+}
+
 export async function generateText(
   type: PromptType,
   userInput: string,
-  fileData?: { mimeType: string; data: string } | { mimeType: string; data: string }[],
+  fileData?: AIFileData | AIFileData[],
   options?: GenerateTextOptions,
 ): Promise<string> {
+  // 이름 사전이 준비되기 전에 개인정보가 섞인 글이 나가지 않게 먼저 막는다.
+  assertKnownNamesReady(type);
   const { settings } = useSettingsStore.getState();
   const activeConfig = settings.llmConfigs.find(c => c.provider === settings.selectedProvider) || settings.llmConfigs[0];
   const savedFailover = normalizeAIFailover(settings.aiFailover);
   // 개인정보 점검(masking) 요청은 설정과 관계없이 선택한 제공업체 밖으로 보내지 않는다.
   const lockToSelectedProvider = type === 'masking' || options?.disableCrossProviderFailover === true;
   const failover = lockToSelectedProvider ? { ...savedFailover, allowCrossProvider: false } : savedFailover;
-  const fileList = Array.isArray(fileData) ? fileData : (fileData ? [fileData] : []);
-  if (fileList.length && !supportsAttachments(activeConfig.provider)) {
+  const attachedFiles = Array.isArray(fileData) ? fileData : (fileData ? [fileData] : []);
+  // 첨부가 있었던 요청은 PDF 글만 보내게 되더라도 선택한 제공업체에서만 처리한다(자동 전환 금지 유지).
+  const hasAttachments = attachedFiles.length > 0;
+  if (hasAttachments && !supportsAttachments(activeConfig.provider)) {
     throw new Error('첨부파일 분석은 현재 Gemini에서만 지원합니다. 설정에서 Gemini를 선택한 뒤 다시 시도해 주세요. 다른 AI 제공업체로 자동 전환하지 않았습니다.');
   }
   const requestPlan = lockAttachmentRequestPlan(buildAIRequestPlan({
@@ -1208,19 +1238,35 @@ export async function generateText(
     selectedModels: Object.fromEntries(settings.llmConfigs.map(config => [config.provider, config.model])),
     providersWithKeys: settings.llmConfigs.filter(config => config.apiKey.trim()).map(config => config.provider),
     failover,
-  }), activeConfig.provider, fileList.length > 0);
+  }), activeConfig.provider, hasAttachments);
 
   if (!requestPlan.length) {
     notifyApiKeyRequired(activeConfig.provider);
     throw new Error(apiKeyRequiredMessage(activeConfig.provider));
   }
 
-  // 비식별화: 모든 요청(개인정보 점검 포함)에서 입력과 이전 대화를 로컬 규칙 + 이름 사전으로 먼저 가린다.
-  const { maskedInput, maskedHistory, mapping: inputMapping } = anonymizeConversation(
-    userInput,
-    options?.history || [],
-    collectKnownNames(),
-  );
+  const featureScope = options?.featureKey || activeConfig.provider || 'tools';
+  const documentScope = options?.documentType || options?.requestLabel || type;
+  const featureKey = buildRequestKey(['text', featureScope, documentScope]);
+  assertFeatureAvailable(featureKey);
+
+  // 첨부: 텍스트 PDF는 PC 안에서 글만 추출하고, 이미지·스캔 PDF는 원본 전송 확인(동의 C)을 받은 것만 보낸다.
+  // 확인창은 작업 시간 제한이 시작되기 전에 띄우며, 취소하면 여기서 요청을 끝낸다(실패 횟수에 넣지 않음).
+  const attachments = hasAttachments
+    ? await prepareAttachmentsForAI(attachedFiles, 'gemini', BASE64_ATTACHMENT_ACCESSOR)
+    : { documentTexts: [], rawFiles: [] as AIFileData[] };
+  // 외부로는 형식과 내용만 보낸다(파일 이름 제외).
+  const fileList = attachments.rawFiles.map(file => markAttachmentApproved({ mimeType: file.mimeType, data: file.data }));
+
+  // 비식별화: 모든 요청(개인정보 점검 포함)에서 입력·이전 대화·추출한 문서 글을 같은 매핑으로 먼저 가린다.
+  const outbound = prepareAIOutboundText(userInput, {
+    history: options?.history || [],
+    knownNames: options?.knownNames,
+    extraSegments: attachments.documentTexts.map(formatDocumentSegment),
+  });
+  const maskedInput = appendExtractedDocuments(outbound.text, outbound.extraSegments);
+  const maskedHistory = outbound.history;
+  const inputMapping = outbound.mapping;
 
   // 블로그는 동적으로 프롬프트 생성
   const toolPrompt = type === 'blog'
@@ -1234,20 +1280,16 @@ export async function generateText(
     toolPrompt ? `[추가 지침]\n${toolPrompt}` : '',
     DATA_SAFETY_PROMPT,
   ].filter(Boolean).join('\n\n');
-  const featureScope = options?.featureKey || activeConfig.provider || 'tools';
-  const documentScope = options?.documentType || options?.requestLabel || type;
   const inputHash = hashForKey({
     input: maskedInput,
     files: fileList.map(file => ({ mimeType: file.mimeType, dataLength: file.data?.length || 0 })),
     history: maskedHistory.map(message => ({ role: message.role, hash: hashForKey(message.content) })),
   });
-  const featureKey = buildRequestKey(['text', featureScope, documentScope]);
-  assertFeatureAvailable(featureKey);
   const job = beginAIRequestJob({
     featureKey,
     requestFingerprint: createAIRequestFingerprint({ type, inputHash, candidates: requestPlan.map(candidate => [candidate.provider, candidate.model]) }),
     signal: options?.signal,
-    timeoutMs: fileList.length ? AI_FILE_TIMEOUT_MS : AI_TEXT_TIMEOUT_MS,
+    timeoutMs: hasAttachments ? AI_FILE_TIMEOUT_MS : AI_TEXT_TIMEOUT_MS,
   });
   const startedAt = Date.now();
 
@@ -1312,8 +1354,8 @@ export async function generateText(
     }
 
     recordFeatureSuccess(featureKey);
-    // 고유 토큰(⟦이름1⟧ 등)만 복원한다. 일반화한 나이·주소는 복원하지 않는다.
-    return stripMarkdown(deanonymizeText(rawText, inputMapping));
+    // 고유 토큰(⟦이름1⟧ 등)만 PC 안에서 복원한다. 일반화한 나이·주소는 복원하지 않는다.
+    return stripMarkdown(restoreAIResponse(rawText, inputMapping));
   } catch (error: any) {
     if (error?.code === 'AI_PREMIUM_CANCELED' || error?.code === 'AI_DUPLICATE_REQUEST') throw error;
     if (isAIRequestTimeout(error)) {
@@ -1323,7 +1365,7 @@ export async function generateText(
     if (isAIRequestAbort(error)) throw error;
     const userError: Error = AI_RESPONSE_ERROR_CODES.includes(error?.code)
       ? error
-      : fileList.length
+      : hasAttachments
         ? new Error(`${normalizeGeminiError(error, 'file').message}\n첨부파일이 포함된 작업은 선택한 Gemini에서만 처리하며 다른 AI 제공업체로 자동 전환하지 않습니다.`)
         : providerUserFacingError(error?.finalProvider || activeConfig.provider, error);
     recordFeatureFailure(featureKey, error, userError.message);
@@ -1369,9 +1411,11 @@ export async function generateImage(
     : undefined;
   const featureKey = 'image:generation';
   assertFeatureAvailable(featureKey);
+  // 이미지 프롬프트도 비식별화해 보낸다. 가린 자리는 "○○○" 같은 자리표시로 바꾸고, 결과에 실제 이름을 되돌려 넣지 않는다.
+  const safePrompt = prepareImagePrompt(prompt, options?.knownNames);
   const job = beginAIRequestJob({
     featureKey,
-    requestFingerprint: createAIRequestFingerprint({ targetModel, style, prompt, aspectRatio }),
+    requestFingerprint: createAIRequestFingerprint({ targetModel, style, prompt: safePrompt, aspectRatio }),
     signal: options?.signal,
     timeoutMs: AI_FILE_TIMEOUT_MS,
   });
@@ -1388,7 +1432,7 @@ export async function generateImage(
 
     const koreanTextEnforcement = 'CRITICAL REQUIREMENT: Any text written/visible inside the image MUST be exclusively in Korean (Hangul). Ensure all Korean characters are perfectly legible, accurately spelled, and strictly avoid any blurry, gibberish, or broken text artifacts.';
 
-    const finalPrompt = `Generate an image. ${prompt}. Style: ${styleDesc}. ${baseTuning} ${koreanTextEnforcement} The image should be suitable for a vocational rehabilitation organization's promotional material or presentation. High quality, professional.`;
+    const finalPrompt = `Generate an image. ${safePrompt}. Style: ${styleDesc}. ${baseTuning} ${koreanTextEnforcement} The image should be suitable for a vocational rehabilitation organization's promotional material or presentation. High quality, professional.`;
 
     // responseModalities에 TEXT와 IMAGE 모두 포함해야 이미지가 정상 생성됨
     const response = await ai.models.generateContent({
@@ -1473,7 +1517,8 @@ const INLINE_FILE_BUDGET_BYTES = 14 * 1024 * 1024;
 const MAX_ANALYSIS_FILE_BYTES = 20 * 1024 * 1024;
 
 /**
- * 분석용 파일 part를 만든다. 작은 파일은 inline(서버에 저장되지 않음)으로 보내고,
+ * 분석용 파일 part를 만든다. files는 prepareAttachmentsForAI로 원본 전송 확인을 받은 파일이어야 한다.
+ * 작은 파일은 inline(서버에 저장되지 않음)으로 보내고,
  * inline 한도를 넘는 파일만 Files API로 올린다. 올린 파일 이름은 uploadedFileNames에 담아
  * 호출한 쪽이 작업이 끝나면(성공·실패 모두) 바로 삭제하게 한다.
  */
@@ -1481,6 +1526,8 @@ export async function buildGeminiFileParts(ai: GoogleGenAI, files: File[], uploa
   const parts: any[] = [];
   let inlineBudget = INLINE_FILE_BUDGET_BYTES;
   for (const file of files) {
+    // 원본 전송 확인(동의 C)을 거친 파일만 올린다(prepareAttachmentsForAI를 거치지 않은 우회 경로 차단).
+    assertAttachmentApproved(file);
     const mimeType = getMimeType(file);
     if (file.size <= inlineBudget) {
       inlineBudget -= file.size;
@@ -1548,7 +1595,7 @@ async function generateDocumentText(ai: GoogleGenAI, model: string, prompt: stri
 /**
  * 기능 1: 검사 결과를 분석합니다.
  */
-export async function analyzeTestResults(files: File[] = [], directInput: string = '', options?: { signal?: AbortSignal }): Promise<string> {
+export async function analyzeTestResults(files: File[] = [], directInput: string = '', options?: { signal?: AbortSignal; knownNames?: ExtraKnownNames }): Promise<string> {
   const { settings } = useSettingsStore.getState();
   const geminiConfig = settings.llmConfigs.find(c => c.provider === 'gemini');
   if (!geminiConfig || !geminiConfig.apiKey) {
@@ -1559,11 +1606,28 @@ export async function analyzeTestResults(files: File[] = [], directInput: string
   const targetModel = getGeminiModelConfig(geminiConfig.model).textModel;
   const featureKey = 'file:vocational:result-analysis';
   assertFeatureAvailable(featureKey);
+  const trimmedInput = directInput.trim();
+  files.forEach(validateAnalysisFile);
+  if (files.length === 0 && !trimmedInput) {
+    throw inputError('파일을 업로드하거나 분석할 내용을 입력해 주세요.');
+  }
+  // 첨부: 텍스트 PDF는 PC 안에서 글만 추출하고, 이미지·스캔 PDF는 원본 전송 확인(동의 C)을 받은 것만 보낸다.
+  // 확인창은 작업 시간 제한이 시작되기 전에 띄우며, 취소하면 요청을 보내지 않는다.
+  const attachments = await prepareAttachmentsForAI(files, 'gemini', FILE_ATTACHMENT_ACCESSOR);
+  // 직접 입력한 검사 결과/관찰 메모와 추출한 문서 글을 같은 매핑으로 비식별화한다.
+  const outbound = prepareAIOutboundText(trimmedInput, {
+    knownNames: options?.knownNames,
+    extraSegments: attachments.documentTexts.map(formatDocumentSegment),
+  });
+  const maskedInput = outbound.text;
+  const inputMapping = outbound.mapping;
+
   const job = beginAIRequestJob({
     featureKey,
     requestFingerprint: createAIRequestFingerprint({
-      input: hashForKey(directInput),
-      files: files.map(file => ({ size: file.size, type: file.type, lastModified: file.lastModified })),
+      input: hashForKey(maskedInput),
+      documents: attachments.documentTexts.map(document => hashForKey(document.text)),
+      files: attachments.rawFiles.map(file => ({ size: file.size, type: file.type, lastModified: file.lastModified })),
       targetModel,
     }),
     signal: options?.signal,
@@ -1572,30 +1636,24 @@ export async function analyzeTestResults(files: File[] = [], directInput: string
 
   const ai = createGoogleAIClient(geminiConfig.apiKey);
   const uploadedFileNames: string[] = [];
-  const trimmedInput = directInput.trim();
-  // 직접 입력한 검사 결과/관찰 메모도 외부 AI로 보내기 전에 비식별화한다.
-  const { maskedText: maskedInput, mapping: inputMapping } = anonymizeText(trimmedInput, { knownNames: collectKnownNames() });
 
   try {
-    files.forEach(validateAnalysisFile);
-    const contentParts = await buildGeminiFileParts(ai, files, uploadedFileNames, job.signal);
+    const contentParts = await buildGeminiFileParts(ai, attachments.rawFiles, uploadedFileNames, job.signal);
+    const hasFileMaterial = contentParts.length > 0 || outbound.extraSegments.length > 0;
 
-    if (contentParts.length === 0 && !trimmedInput) {
-      throw inputError('파일을 업로드하거나 분석할 내용을 입력해 주세요.');
-    }
-
-    const sourceInstruction = contentParts.length > 0
+    const sourceInstruction = hasFileMaterial
     ? `첨부된 이미지/문서는 발달장애인의 직업평가 검사 결과지입니다.
 (MDS, 기초학습검사, 직업흥미검사, 작업표본검사, 사회적응검사 등이 포함될 수 있습니다.)
+PDF 문서는 PC에서 글자만 추출해 아래 [첨부 문서에서 PC 안에서 추출한 글]로 제공될 수 있습니다.
 
 첨부된 모든 파일(총 ${files.length}개)을 각각 분석`
     : `아래에 제공된 텍스트는 발달장애인의 직업평가 검사 결과 또는 관찰 기록입니다.
 직접 입력된 텍스트만을 바탕으로 검사 종류, 점수, 행동 특성, 관찰 내용을 분석`;
 
-  const inputBlock = trimmedInput ? `
+  const inputBlock = appendExtractedDocuments(trimmedInput ? `
 
 [직접 입력된 검사 결과/관찰 메모]
-${wrapAsData(maskedInput)}` : '';
+${wrapAsData(maskedInput)}` : '', outbound.extraSegments);
 
   const prompt = `당신은 발달장애인 직업재활 분야의 전문 직업평가사입니다.
 
@@ -1651,7 +1709,7 @@ ${sourceInstruction}하여 아래 지침에 따라 답변해 주세요.${inputBl
     job.assertActive();
     job.finish('completed');
     recordFeatureSuccess(featureKey);
-    return stripMarkdown(deanonymizeText(result, inputMapping));
+    return stripMarkdown(restoreAIResponse(result, inputMapping));
   } catch (error: any) {
     throw finishFileJobWithError(job, featureKey, error, 'analyzeTestResults');
   } finally {
@@ -1678,7 +1736,7 @@ function finishFileJobWithError(job: ReturnType<typeof beginAIRequestJob>, featu
 /**
  * 기능 2: 종합보고서를 작성합니다.
  */
-export async function generateReport(referenceContent: string, files: File[] = [], options?: { signal?: AbortSignal }): Promise<string> {
+export async function generateReport(referenceContent: string, files: File[] = [], options?: { signal?: AbortSignal; knownNames?: ExtraKnownNames }): Promise<string> {
   const { settings } = useSettingsStore.getState();
   const geminiConfig = settings.llmConfigs.find(c => c.provider === 'gemini');
   if (!geminiConfig || !geminiConfig.apiKey) {
@@ -1689,11 +1747,23 @@ export async function generateReport(referenceContent: string, files: File[] = [
   const targetModel = getGeminiModelConfig(geminiConfig.model).textModel;
   const featureKey = 'file:vocational:comprehensive-report';
   assertFeatureAvailable(featureKey);
+  // 빈 파일·20MB 초과 파일은 건너뛴다(기존 동작 유지).
+  const usableFiles = files.filter(file => file.size > 0 && file.size <= MAX_ANALYSIS_FILE_BYTES);
+  // 첨부: 텍스트 PDF는 PC 안에서 글만 추출하고, 이미지·스캔 PDF는 원본 전송 확인(동의 C)을 받은 것만 보낸다.
+  const attachments = await prepareAttachmentsForAI(usableFiles, 'gemini', FILE_ATTACHMENT_ACCESSOR);
+  const outbound = prepareAIOutboundText(referenceContent, {
+    knownNames: options?.knownNames,
+    extraSegments: attachments.documentTexts.map(formatDocumentSegment),
+  });
+  const maskedReference = outbound.text;
+  const referenceMapping = outbound.mapping;
+
   const job = beginAIRequestJob({
     featureKey,
     requestFingerprint: createAIRequestFingerprint({
-      reference: hashForKey(referenceContent),
-      files: files.map(file => ({ size: file.size, type: file.type, lastModified: file.lastModified })),
+      reference: hashForKey(maskedReference),
+      documents: attachments.documentTexts.map(document => hashForKey(document.text)),
+      files: attachments.rawFiles.map(file => ({ size: file.size, type: file.type, lastModified: file.lastModified })),
       targetModel,
     }),
     signal: options?.signal,
@@ -1704,17 +1774,13 @@ export async function generateReport(referenceContent: string, files: File[] = [
   const uploadedFileNames: string[] = [];
 
   try {
-    // 빈 파일·20MB 초과 파일은 건너뛴다(기존 동작 유지).
-    const usableFiles = files.filter(file => file.size > 0 && file.size <= MAX_ANALYSIS_FILE_BYTES);
-    const contentParts = await buildGeminiFileParts(ai, usableFiles, uploadedFileNames, job.signal);
-
-    const { maskedText: maskedReference, mapping: referenceMapping } = anonymizeText(referenceContent, { knownNames: collectKnownNames() });
+    const contentParts = await buildGeminiFileParts(ai, attachments.rawFiles, uploadedFileNames, job.signal);
 
     const prompt = `당신은 발달장애인 직업재활 분야에서 10년 이상 경력의 전문 직업평가사입니다.
 첨부된 파일과 아래 제공되는 참고 내용(검사 결과 분석, 관찰 기록, 면담 내용 등)을 바탕으로 직업평가 종합보고서를 작성해 주세요.
 
 [참고 내용]
-${wrapAsData(maskedReference)}
+${appendExtractedDocuments(wrapAsData(maskedReference), outbound.extraSegments)}
 
 [작성 지침]
 반드시 아래 8가지 항목을 순서대로 작성하되, 각 항목의 제목 앞에 번호를 붙여주세요.
@@ -1775,7 +1841,7 @@ ${wrapAsData(maskedReference)}
     job.assertActive();
     job.finish('completed');
     recordFeatureSuccess(featureKey);
-    return stripMarkdown(deanonymizeText(generatedText, referenceMapping));
+    return stripMarkdown(restoreAIResponse(generatedText, referenceMapping));
   } catch (error: any) {
     throw finishFileJobWithError(job, featureKey, error, 'generateReport');
   } finally {

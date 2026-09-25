@@ -126,6 +126,12 @@ export default function ApiKeyOnboarding() {
                             사용하고 싶은 AI 서비스의 API 키만 입력하면 되며, 이후 설정 화면에서 언제든 추가하거나 변경할 수 있습니다.
                         </p>
                         <p className="mt-2 text-xs text-amber-200/75">API 사용량에 따라 각 AI 서비스에서 비용이 발생할 수 있습니다.</p>
+                        <div className="mt-3 rounded-xl border border-sky-300/20 bg-sky-500/10 px-4 py-3 text-xs leading-relaxed text-sky-50/85">
+                            <p className="font-semibold text-sky-50">개인정보 전송 안내</p>
+                            <p className="mt-1">AI 기능을 실행하면 비식별화된 업무 내용이 선택한 AI 제공업체로 전송될 수 있습니다. 텍스트에 포함된 주요 직접식별정보(이름·연락처·주민등록번호·이메일·생년월일 등)를 이 컴퓨터에서 먼저 가린 뒤 전송하며, 자동 규칙이 모든 개인정보를 찾아내지는 못하므로 꼭 필요한 내용만 입력해 주세요.</p>
+                            <p className="mt-1">스캔한 PDF나 이미지처럼 원본 첨부파일을 그대로 보내야 하는 기능은 보내기 전에 별도로 확인을 받습니다.</p>
+                            <p className="mt-1 text-sky-50/65">사용하는 외부 AI 제공업체: Google Gemini, OpenAI, Anthropic Claude, Google Cloud Vision(글자 인식). AI 기능 사용 전 소속 기관의 개인정보 처리방침, 생성형 AI 사용 지침, 정보보안 지침을 확인해 주세요.</p>
+                        </div>
                         <p className="mt-2 text-xs leading-relaxed text-white/45">
                             AI 사용 방식은 설정에서 비용 절감 우선, 성능·비용 균형, 성능 우선·유료 사용 허용 중 선택할 수 있습니다. 초기값은 비용 절감 우선이며 자동 전환은 꺼져 있습니다.
                         </p>

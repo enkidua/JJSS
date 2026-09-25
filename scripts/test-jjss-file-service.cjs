@@ -266,16 +266,26 @@ async function main() {
         assert.equal(navigationBlocked, true);
         assert.deepEqual(printWindow.windowOpenHandler({ url: 'https://example.com' }), { action: 'deny' });
 
-        // 강제 종료로 남은 오래된 PDF 임시 폴더만 정리한다.
+        // 나이를 지정하면 그보다 오래된 PDF 임시 폴더만 정리한다.
         const staleTemp = path.join(mockApp.getPath('temp'), 'jjss-pdf-Stale1');
         const freshTemp = path.join(mockApp.getPath('temp'), 'jjss-pdf-Fresh1');
+        const otherTemp = path.join(mockApp.getPath('temp'), 'other-program-tmp');
         await fs.mkdir(staleTemp, { recursive: true });
         await fs.mkdir(freshTemp, { recursive: true });
+        await fs.mkdir(otherTemp, { recursive: true });
         const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
         await fs.utimes(staleTemp, twoHoursAgo, twoHoursAgo);
-        assert.equal(await cleanupStalePdfTempFiles(mockApp), 1);
+        assert.equal(await cleanupStalePdfTempFiles(mockApp, 60 * 60 * 1000), 1);
         await assert.rejects(fs.access(staleTemp));
         await fs.access(freshTemp);
+
+        // 앱 시작 시(기본값)에는 남아 있는 JJSS PDF 임시 폴더를 나이와 상관없이 모두 지운다.
+        // 개인정보가 담긴 임시 HTML을 필요 이상으로 오래 두지 않기 위해서다.
+        assert.equal(await cleanupStalePdfTempFiles(mockApp), 1);
+        await assert.rejects(fs.access(freshTemp));
+        // 다른 프로그램의 임시 폴더는 건드리지 않는다.
+        await fs.access(otherTemp);
+        await fs.rm(otherTemp, { recursive: true, force: true });
 
         await fs.rm(externalFolder, { recursive: true, force: true });
         let missingFolderFallback = '';

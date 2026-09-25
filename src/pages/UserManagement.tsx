@@ -16,7 +16,7 @@ type ViewMode = 'seekers' | 'jobs';
 
 export default function UserManagement() {
     const { fetchData, seekers, jobs, loading, deleteSeeker, deleteJob } = useDataStore();
-    const deleteCaseDocumentsForSeeker = useDataStore(state => state.deleteCaseDocumentsForSeeker);
+    const deleteSeekerWithDocuments = useDataStore(state => state.deleteSeekerWithDocuments);
     const confirm = useConfirm();
     const showToast = useAppToast();
     const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -72,9 +72,10 @@ export default function UserManagement() {
         let deletedDocuments: number | null = null;
         try {
             if (type === 'seeker') {
-                // 문서 삭제를 먼저 해야 이용자 정보(내부 ID·구직자 ID)로 문서를 정확히 찾을 수 있습니다.
-                if (alsoDeleteDocuments) deletedDocuments = await deleteCaseDocumentsForSeeker(id);
-                await deleteSeeker(id);
+                // 이용자와 사례문서를 한 트랜잭션에서 함께 지웁니다.
+                // 따로 지우면 중간에 실패했을 때 문서만 사라지고 되돌릴 수 없습니다.
+                if (alsoDeleteDocuments) deletedDocuments = await deleteSeekerWithDocuments(id);
+                else await deleteSeeker(id);
                 showToast(alsoDeleteDocuments
                     ? `"${label}" 정보와 사례문서 ${deletedDocuments}건을 삭제했습니다.`
                     : `"${label}" 정보를 삭제했습니다. 사례문서는 남겨 두었습니다.`, 'success');
@@ -85,9 +86,8 @@ export default function UserManagement() {
             if (expandedId === id) setExpandedId(null);
         } catch (error: any) {
             const message = error?.message || '삭제 중 오류가 발생했습니다.';
-            showToast(deletedDocuments !== null
-                ? `사례문서 ${deletedDocuments}건은 삭제했지만 이용자 정보는 삭제하지 못했습니다. ${message}`
-                : message, 'error');
+            // 한 트랜잭션이라 부분 삭제가 없습니다. 실패하면 아무것도 지워지지 않았습니다.
+            showToast(message, 'error');
         } finally {
             setDeletingId(null);
         }

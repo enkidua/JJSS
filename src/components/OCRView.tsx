@@ -82,7 +82,7 @@ export function OCRView({ onBack, onDirtyChange }: OCRViewProps) {
                     </div>
                 </div>
                 <div className="mb-6 rounded-xl border border-blue-400/20 bg-blue-500/10 px-4 py-3 text-xs leading-relaxed text-blue-100/80">
-                    선택한 파일은 글자 인식을 위해 외부 AI 서비스(Google Vision 또는 Gemini)로 전송됩니다. 이미지는 Vision을 먼저 시도하고, 실패하면 Gemini API 키가 있을 때 한 번 더 시도합니다. PDF는 Gemini로 처리합니다. 같은 파일을 연속 실행하면 중복 호출을 막습니다.
+                    글자가 들어 있는 PDF는 이 컴퓨터 안에서 바로 글자를 읽고 외부로 보내지 않습니다. 스캔한 PDF나 이미지는 원본을 외부 AI 서비스(이미지는 Google Cloud Vision 또는 Google Gemini, 스캔 PDF는 Google Gemini)로 보내야 하므로, 보내기 전에 따로 확인을 받습니다. Vision에서 읽지 못하면 Gemini로 다시 보낼지 한 번 더 묻습니다. 같은 파일을 연속 실행하면 중복 호출을 막습니다.
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">

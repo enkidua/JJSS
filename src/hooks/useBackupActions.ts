@@ -9,6 +9,7 @@ import {
     type EncryptedBackupEnvelope,
 } from '../config/crypto';
 import { createBackupJson, importAllData, parseBackupJson, type ParsedBackupData } from '../config/localDB';
+import { runLegacyMigration } from '../services/legacyMigration';
 import type { JjssSaveResult } from '../types/jjssFiles';
 import { localDateKey } from '../utils/date';
 import { saveJjssText } from '../utils/jjssFileService';
@@ -32,7 +33,8 @@ function errorMessage(error: unknown, fallback: string): string {
 
 /**
  * 데이터 백업(내보내기)·복원(불러오기) 공용 동작. 상단 메뉴와 설정 화면이 함께 사용한다.
- * - 내보내기: 비밀번호 암호화를 권장하고, 비밀번호 없이 저장할 때는 평문 경고를 확인받는다.
+ * - 내보내기: 기본은 비밀번호 암호화 백업. 암호화 없이 저장은 고급 옵션에서 평문 경고를 확인받은 경우에만 한다.
+ *   비밀번호는 저장하지 않으며, API 키(평문·암호문)는 createBackupJson에서 제외된다.
  * - 복원: 암호화된 백업이면 비밀번호를 묻고, 예전(평문) 백업도 그대로 복원한다.
  * 반환된 backupDialog를 컴포넌트 안 아무 곳에나 렌더링하면 된다(document.body에 그려짐).
  */
@@ -78,7 +80,7 @@ export function useBackupActions(options: UseBackupActionsOptions = {}) {
             showToast(
                 password
                     ? '비밀번호로 암호화한 백업 파일을 저장했습니다. 비밀번호를 잊지 않도록 보관해 주세요.'
-                    : '백업 파일을 저장했습니다. 개인정보가 들어 있으니 안전한 곳에 보관해 주세요.',
+                    : '암호화하지 않은 백업 파일을 저장했습니다. 이 파일에는 개인정보가 평문으로 포함됩니다. 보안이 확보된 저장장소에서만 사용하세요.',
                 'success',
                 5000,
             );
@@ -109,6 +111,11 @@ export function useBackupActions(options: UseBackupActionsOptions = {}) {
         if (!beginBusy()) return;
         try {
             await importAllData(data);
+            // 구형 백업에는 평문 직업평가 이력이 들어 있을 수 있다.
+            // 암호화 저장소로 옮기는 것까지 끝낸 뒤에 "완료"를 알린다.
+            await runLegacyMigration().catch(() => {
+                // 옮기지 못하면 원본을 남긴다. 다음 실행에서 다시 시도한다.
+            });
             showToast('데이터 복원이 완료되었습니다. 화면을 다시 불러옵니다.', 'success');
             window.setTimeout(() => window.location.reload(), 1200);
         } catch (error) {

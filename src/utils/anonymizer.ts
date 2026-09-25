@@ -3,6 +3,8 @@
  *
  * - 복원이 필요한 값(이름, 전화번호, 주민·외국인등록번호, 이메일, 생년월일)은 `⟦이름1⟧`처럼
  *   일반 글에 나오지 않는 고유 토큰으로 바꾸고, mapping에는 이 토큰만 담는다.
+ * - 의료기관 이름(예: "행복정신건강의학과"의 "행복")과 진단·입원일 같은 건강 관련 날짜도 토큰으로 가린다.
+ *   진료과·기관 종류(병원/의원/정신건강의학과)와 장애유형·장애 정도는 업무에 필요하므로 남긴다.
  * - 나이(32세 → 30대)와 상세 주소(→ 시·군·구까지)는 일반화만 하고 복원하지 않는다.
  *   AI가 쓴 "30대 이용자", "마포구 소재" 같은 일반 표현이 원문 값으로 바뀌는 일을 막기 위해서다.
  * - 이미 토큰으로 가린 부분(⟦…⟧)은 다시 건드리지 않는다. 같은 글을 두 번 가려도 안전하다.
@@ -13,7 +15,7 @@ export interface AnonymizeOptions {
   knownNames?: string[];
 }
 
-export type AnonymizedCategory = '이름' | '전화' | '주민번호' | '이메일' | '생년월일' | '나이' | '주소';
+export type AnonymizedCategory = '이름' | '전화' | '주민번호' | '이메일' | '생년월일' | '진단일' | '의료기관' | '나이' | '주소';
 
 export interface AnonymizedItem {
   category: AnonymizedCategory;
@@ -59,6 +61,9 @@ const NAME_STOPWORDS = new Set([
   '운영자', '작성자', '담당자', '부원장', '부회장', '고령자', '근로자', '참여자', '대상자', '내담자',
   '미정', '없음', '본인', '해당', '미기재', '미입력', '확인', '필요', '확인필요', '담당', '팀장', '직원',
   '어머니', '아버지', '부모', '보호', '이용', '대상', '기관', '센터', '복지관', '작성', '상담', '가족',
+  // 의료 관련 일반 낱말(의사 이름 탐지 오탐 방지)
+  '소견서', '진단서', '의견서', '처방전', '진료비', '정신과', '신경과', '소아과', '재활과', '한의사', '전문의',
+  '주치의', '담당의', '진료의', '수련의', '전공의', '간호사', '치료사', '상담의', '의사', '소견', '진료',
 ]);
 
 // "김선생님", "박팀장님"처럼 성+직함은 사람 이름으로 보지 않는다.
@@ -69,14 +74,47 @@ const TITLE_SUFFIXES = new Set([
   '군수', '시장', '구청', '의원', '변호', '세무', '노무', '원생', '학생', '센터', '복지',
 ]);
 
-const NAME_LABEL_PATTERN = /(?:이\s?름|성\s?명|성함|이용자명|대상자명|내담자명|참여자명|훈련생명|보호자\s?성명|보호자명|담당자명|작성자|상담자|상담사|담당자|보호자|사례관리자|이용자|대상자|내담자|참여자|훈련생|구직자|당사자)\s*[:：]\s*([가-힣]{2,8})/g;
+const NAME_LABEL_PATTERN = /(?:이\s?름|성\s?명|성함|이용자명|대상자명|내담자명|참여자명|훈련생명|보호자\s?성명|보호자명|담당자명|작성자|상담자|상담사|담당자|보호자|사례관리자|이용자|대상자|내담자|참여자|훈련생|구직자|당사자|주치의|담당의|담당\s?의사|진료의|의사명|의사|전문의)\s*[:：]\s*([가-힣]{2,8})/g;
+/**
+ * 쌍점 없이 칸만 띄우는 서식용 이름 칸("이 름   홍길동  성 별  남성").
+ * 공단 작업표본검사 결과지처럼 표를 글로 옮기면 쌍점이 사라져 위 패턴이 놓친다.
+ *
+ * 쌍점이 없으면 뒤에 오는 말이 값인지 확신할 수 없으므로 두 가지로 범위를 좁힌다.
+ *  - 이름 칸임이 분명한 머리말만 쓴다("담당자", "보호자"처럼 문장에도 흔히 쓰는 말은 넣지 않는다).
+ *  - 성씨로 시작하는 값만 이름으로 본다(아래 detectedNames 수집부에서 확인).
+ * 한글 세 글자를 무조건 이름으로 보지 않는다.
+ */
+const NAME_FIELD_LABEL_PATTERN =
+  /(?:이\s?름|성\s?명|성함|이용자명|대상자명|내담자명|참여자명|훈련생명|보호자\s?성명|보호자명|담당자명|의사명|평가사|평가자|검사자)(?:\s*[:：]\s*|\s+)([가-힣]{2,8})/g;
 const HONORIFIC_NAME_PATTERN = /(?<![가-힣])([가-힣]{3})\s?(?:님|씨)/g;
 const ROLE_NAME_PATTERN = /(?<![가-힣])([가-힣]{3})\s(?:이용자|보호자|당사자|훈련생|참여자|구직자|근로자|팀장|과장|대리|주임|선생님|사원|직원|원장|실장|부장|사장|대표|사회복지사|직업재활사|상담사|복지사)/g;
+// 의사 이름: "홍길동 전문의", "홍길동 의사", "홍길동 주치의", "홍길동 교수님"
+const DOCTOR_NAME_PATTERN = /(?<![가-힣])([가-힣]{3})\s?(?:전문의|주치의|담당의|의사(?!소통|결정|표현|표시)|교수|원장)/g;
 
 const EMAIL_PATTERN = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 // 주민등록번호·외국인등록번호: 앞 6자리는 날짜로 검증, 뒷자리 첫 숫자 1~8, 하이픈 선택, 일부 * 가림 허용
 const RRN_PATTERN = /(?<![\d*])(\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01]))\s*-?\s*([1-8][\d*]{6})(?![\d*])/g;
 const BIRTH_DATE_PATTERN = /((?:생년월일|생일|출생일)\s*[:：]?\s*)(\d{4}\s*[.\-/년]\s*\d{1,2}\s*[.\-/월]\s*\d{1,2}\s*일?|\d{2}\s*[.\-/]\s*\d{1,2}\s*[.\-/]\s*\d{1,2}|\d{8}(?!\d)|\d{6}(?!\d))/g;
+// 진단·확진·발병·수술·입원·퇴원 날짜: "진단일: 2020.03.02", "2020년 3월 진단"
+const HEALTH_DATE_VALUE = String.raw`\d{4}\s*[.\-/년]\s*\d{1,2}(?:\s*[.\-/월]\s*(?:\d{1,2}\s*일?)?)?|\d{4}\s*년`;
+const HEALTH_EVENT = '(?:진단|확진|발병|수술|입원|퇴원)';
+const LABELED_HEALTH_DATE_PATTERN = new RegExp(String.raw`(${HEALTH_EVENT}\s?(?:일자|일|날짜|시기|연월일)\s*[:：]?\s*)(${HEALTH_DATE_VALUE})`, 'g');
+const DATED_HEALTH_EVENT_PATTERN = new RegExp(String.raw`(?<![\d])(${HEALTH_DATE_VALUE})(?=\s*(?:에|경|쯤)?\s*${HEALTH_EVENT})`, 'g');
+
+// 의료기관 이름: 고유한 앞부분만 가리고 기관 종류(병원·의원·정신건강의학과 등)는 남긴다.
+const MEDICAL_SUFFIX = '(?:대학교병원|대학병원|종합병원|요양병원|재활병원|정신병원|어린이병원|한방병원|병원|한의원|치과의원|치과병원|정신건강의학과의원|정신건강의학과|신경정신과의원|신경정신과|정신과의원|재활의학과의원|소아청소년과의원|의원|클리닉|보건소|정신건강복지센터)';
+const MEDICAL_INSTITUTION_PATTERN = new RegExp(`(?<![가-힣A-Za-z0-9])([가-힣A-Za-z0-9]{2,15})(${MEDICAL_SUFFIX})`, 'g');
+// 기관 이름이 아닌 일반 표현(예: "대학병원", "요양병원", "동네 의원", "국회의원")은 그대로 둔다.
+const GENERIC_MEDICAL_PREFIXES = new Set([
+  '대학', '대학교', '종합', '요양', '재활', '정신', '개인', '동네', '인근', '근처', '해당', '지역', '다른', '같은',
+  '담당', '협력', '지정', '전문', '대형', '일반', '소아', '한방', '치과', '동물', '주변', '가까운', '이전', '기존',
+  '현재', '상급', '국립', '시립', '도립', '구립', '공공', '민간', '거점', '관할', '여러', '어느', '협약', '연계',
+  '입원', '외래', '주치', '부속', '대학부속', '정신건강', '국회', '지방', '광역', '기초', '다니는', '다니던', '큰',
+  '작은', '대형종합', '상급종합', '1차', '2차', '3차', '각', '타', '본', '모', '의료', '치료', '진료', '방문',
+]);
+
+const MEDICAL_DEPARTMENT_TAIL = /(?:정신건강의학과|신경정신과|정신과|재활의학과|소아청소년과|가정의학과|신경과|내과|정형외과|신경외과|외과|이비인후과|안과|피부과|비뇨의학과|산부인과)$/;
+
 const PHONE_PATTERN = /(?<![\d-])\(?(?:\+82[-.\s]?0?|0)(?:1[016789]|2|[3-6][1-5]|70|50\d?|80)\)?[-.\s]?\d{3,4}[-.\s]?\d{4}(?![\d-])/g;
 
 // 나이: "32세", "35세 남성", "나이: 32세", "만 32세", "32살". "3세대", "21세기", "65세 이상" 같은 표현은 제외.
@@ -100,6 +138,10 @@ function mapOutsideTokens(text: string, transform: (segment: string) => string):
     .split(TOKEN_SPLIT_PATTERN)
     .map((part, index) => (index % 2 === 1 ? part : transform(part)))
     .join('');
+}
+
+function trailingSpace(value: string): string {
+  return value.match(/\s*$/)?.[0] || '';
 }
 
 function ageBand(value: string): string {
@@ -192,6 +234,11 @@ export function anonymizeText(text: string, options: AnonymizeOptions = {}): Ano
     `${label}${tokenFor('생년월일', value.trim())}`
   )));
 
+  // 3-1. 진단·입원 등 건강 관련 날짜
+  maskedText = mapOutsideTokens(maskedText, segment => segment
+    .replace(LABELED_HEALTH_DATE_PATTERN, (_match, label: string, value: string) => `${label}${tokenFor('진단일', value.trim())}${trailingSpace(value)}`)
+    .replace(DATED_HEALTH_EVENT_PATTERN, (match: string) => `${tokenFor('진단일', match.trim())}${trailingSpace(match)}`));
+
   // 4. 전화번호
   maskedText = mapOutsideTokens(maskedText, segment => segment.replace(PHONE_PATTERN, match => tokenFor('전화', match)));
 
@@ -206,6 +253,19 @@ export function anonymizeText(text: string, options: AnonymizeOptions = {}): Ano
       recordGeneralized('주소', match.trim(), district);
       return district;
     }));
+
+  // 5-1. 의료기관 이름(고유한 앞부분만 토큰으로)
+  maskedText = mapOutsideTokens(maskedText, segment => segment.replace(
+    MEDICAL_INSTITUTION_PATTERN,
+    (match: string, prefix: string, suffix: string) => {
+      // "행복정신건강의학과의원"처럼 앞부분에 진료과가 붙어 있으면 진료과는 남기고 고유한 이름만 가린다.
+      const department = prefix.match(MEDICAL_DEPARTMENT_TAIL);
+      const namePart = department ? prefix.slice(0, -department[0].length) : prefix;
+      const kept = department ? department[0] : '';
+      if (!namePart || GENERIC_MEDICAL_PREFIXES.has(namePart) || /^\d+$/.test(namePart)) return match;
+      return `${tokenFor('의료기관', namePart)}${kept}${suffix}`;
+    },
+  ));
 
   // 6. 나이: 10년 단위로 일반화(복원하지 않음).
   maskedText = mapOutsideTokens(maskedText, segment => segment
@@ -227,7 +287,13 @@ export function anonymizeText(text: string, options: AnonymizeOptions = {}): Ano
       const name = cleanLabeledName(match[1]);
       if (name) detectedNames.add(name);
     }
-    for (const pattern of [HONORIFIC_NAME_PATTERN, ROLE_NAME_PATTERN]) {
+    for (const match of segment.matchAll(NAME_FIELD_LABEL_PATTERN)) {
+      const name = cleanLabeledName(match[1]);
+      // 쌍점이 있으면 값이 분명하다. 없으면 성씨로 시작하는 값만 이름으로 본다.
+      if (!name) continue;
+      if (/[:：]/.test(match[0]) || COMMON_SURNAMES.has(name[0])) detectedNames.add(name);
+    }
+    for (const pattern of [HONORIFIC_NAME_PATTERN, ROLE_NAME_PATTERN, DOCTOR_NAME_PATTERN]) {
       for (const match of segment.matchAll(pattern)) {
         if (looksLikePersonName(match[1])) detectedNames.add(match[1]);
       }
@@ -246,7 +312,7 @@ export function anonymizeText(text: string, options: AnonymizeOptions = {}): Ano
     maskedText = mapOutsideTokens(maskedText, segment => segment.replace(namePattern, (name: string) => tokenFor('이름', name)));
   }
 
-  // 장애유형(예: 지적장애, 자폐성장애)과 장애 정도는 업무에 필요하므로 변환하지 않는다.
+  // 장애유형(예: 지적장애, 자폐성장애)과 장애 정도, 진료과·기관 종류는 업무에 필요하므로 변환하지 않는다.
   return { maskedText, mapping, items };
 }
 

@@ -38,7 +38,7 @@ async function transpile(sourcePath) {
 }
 
 await rm(outDir, { recursive: true, force: true });
-for (const file of [...await collect(featureDir), path.join(root, 'src', 'utils', 'date.ts')]) await transpile(file);
+for (const file of [...await collect(featureDir), path.join(root, 'src', 'utils', 'date.ts'), path.join(root, 'src', 'features', 'docx', 'blocks.ts')]) await transpile(file);
 
 const load = relative => import(pathToFileURL(path.join(outDir, 'features', 'supportedEmployment', relative)).href);
 const model = await load('model.mjs');

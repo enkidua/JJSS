@@ -466,7 +466,7 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
                                     <Camera className="w-4 h-4" />
                                     상담기록지 OCR 자동 인식
                                 </p>
-                                <p className="text-green-200/70">상담기록지나 접수서류를 스캔/촬영하여 업로드하면 Google Vision AI가 텍스트를 자동 인식하여 이용자 정보를 채워줍니다. 분석 버튼을 누르면 이미지가 외부 AI 서비스로 전송됩니다.</p>
+                                <p className="text-green-200/70">상담기록지나 접수서류를 스캔/촬영하여 업로드하면 글자를 인식하여 이용자 정보를 채워줍니다. 분석 버튼을 누르면 원본 이미지를 외부 AI 서비스(Google Cloud Vision 또는 Google Gemini)로 보낼지 먼저 확인합니다. 글자가 들어 있는 PDF는 이 컴퓨터 안에서 읽습니다.</p>
                             </div>
 
                             {/* 파일 업로드 영역 */}
@@ -481,7 +481,7 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
                                 {ocrLoading ? (
                                     <div className="flex flex-col items-center gap-3">
                                         <Loader2 className="w-12 h-12 text-primary-400 animate-spin" />
-                                        <p className="text-white/60">Google Vision AI로 텍스트 추출 중...</p>
+                                        <p className="text-white/60">글자 인식 중...</p>
                                     </div>
                                 ) : ocrDone ? (
                                     <div className="flex flex-col items-center gap-3">

@@ -38,6 +38,10 @@ export default function JjssFileSaveNotice() {
                 <div className="min-w-0 flex-1">
                     <p className="font-bold text-white">{saved.browserFallback ? '다운로드 시작' : '저장 완료'}</p>
                     <p className="mt-1 break-all text-xs leading-relaxed text-white/60">{saved.filePath || saved.fileName}</p>
+                    {saved.category !== 'backup' && (
+                        // 내보낸 문서(PDF·DOCX·PNG·CSV 등)는 암호화되지 않은 일반 파일이다.
+                        <p className="mt-2 text-xs leading-relaxed text-amber-200/90">내보낸 문서에는 개인정보가 포함될 수 있습니다. 기관의 보안 폴더 또는 암호화된 저장장소에 보관해 주세요.</p>
+                    )}
                     {saved.filePath && saved.openToken && (
                         <button
                             type="button"

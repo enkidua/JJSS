@@ -5,7 +5,7 @@
  */
 import type { Document } from 'docx';
 import type { SupportedEmploymentCase } from '../model';
-import { packDocument, renderDocx, renderHtml } from './blocks';
+import { packDocument, renderDocx, renderHtml } from '../../docx/blocks';
 import {
     buildDocumentFileName,
     coachTimesheetModel,

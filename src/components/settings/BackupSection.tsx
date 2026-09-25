@@ -122,7 +122,8 @@ export default function BackupSection() {
             <div className="mb-4 rounded-xl border border-amber-400/20 bg-amber-500/10 p-4 text-xs leading-relaxed text-amber-100/80">
                 <p className="font-bold text-amber-100 mb-2">백업 파일 보안 안내</p>
                 <p>백업 파일에는 이용자명, 연락처, 상담 내용, 사례 문서, 직업훈련 기록 등 개인정보가 포함됩니다.</p>
-                <p>백업할 때 비밀번호를 설정하면 파일이 암호화되어 비밀번호 없이는 내용을 볼 수 없습니다. 비밀번호를 잊으면 복원할 수 없으니 안전한 곳에 적어 두세요.</p>
+                <p>새 백업은 기본으로 비밀번호로 암호화됩니다(PBKDF2-SHA256 + AES-GCM). 비밀번호는 저장되지 않으며, 잊으면 복구할 수 없으니 안전한 곳에 적어 두세요.</p>
+                <p>암호화하지 않은 백업은 고급 옵션에서만 만들 수 있으며, 개인정보가 평문으로 포함됩니다.</p>
                 <p>API 키는 백업 파일에서 제외되며, 복원 후 필요한 API 키는 설정 화면에서 다시 확인해 주세요.</p>
                 <p>백업 파일은 외부에 공유하지 말고 안전한 위치에 보관해 주세요.</p>
                 <p>데이터 복원은 기존 데이터를 덮어쓸 수 있으므로 실행 전 현재 데이터 백업을 먼저 만들어 두는 것을 권장합니다.</p>
@@ -133,7 +134,7 @@ export default function BackupSection() {
                 <p>JJSS 데이터는 기본적으로 현재 PC의 앱 저장소(IndexedDB/localStorage)에 저장됩니다. 개발/브라우저 모드에서는 브라우저 IndexedDB/localStorage에 저장됩니다.</p>
                 <p className="mt-2">Windows: 기존 버전을 삭제하거나 새 버전으로 교체하기 전에는 반드시 데이터 백업을 먼저 실행해 주세요. 현재 Windows 설치 파일의 언인스톨 동작이 환경에 따라 완전하지 않을 수 있으므로, 백업 파일을 별도 폴더에 보관해 주세요.</p>
                 <p className="mt-2">macOS: 앱 파일을 삭제하거나 새 dmg로 교체하기 전에도 데이터 백업을 권장합니다. 로컬 저장소가 유지될 수 있으나 사용 환경에 따라 데이터가 사라질 수 있으므로, Apple Silicon용 dmg 설치 전 데이터 내보내기를 실행해 주세요.</p>
-                <p className="mt-2">다른 PC나 다른 Windows 사용자 계정으로 옮길 때는 데이터 폴더를 복사하지 말고 백업 파일로 옮겨 주세요. 암호화된 개인정보는 원래 PC의 보안 키로만 읽을 수 있습니다.</p>
+                <p className="mt-2">다른 PC나 다른 사용자 계정으로 옮길 때는 데이터 폴더를 복사하지 마세요. 암호화된 개인정보는 원래 PC·계정의 운영체제 보안 저장소 키로만 읽을 수 있습니다. [모든 데이터 내보내기]로 암호화 백업 파일을 만든 뒤, 새 PC에서 [데이터 불러오기]로 비밀번호를 입력해 복원해 주세요.</p>
                 <p className="mt-2">파일이 실제로 저장되는 경로는 아래에 표시됩니다.</p>
             </div>
 
@@ -241,7 +242,7 @@ export default function BackupSection() {
                             이용자, 사업체, 사례 문서, 지출, 직업훈련 기록을 백업합니다. API 키는 제외됩니다. (.json 형식)
                         </p>
                         <p className="mt-2 inline-flex items-center gap-1 text-xs text-emerald-300/80">
-                            <Lock className="h-3.5 w-3.5" aria-hidden="true" /> 비밀번호 암호화 권장
+                            <Lock className="h-3.5 w-3.5" aria-hidden="true" /> 기본: 비밀번호로 암호화
                         </p>
                     </div>
                 </button>

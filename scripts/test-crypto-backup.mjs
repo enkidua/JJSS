@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import ts from 'typescript';
+import { createFakeIndexedDB } from './fakeIndexedDB.mjs';
 
 // ─── 브라우저 전역 흉내 (crypto.ts가 쓰는 localStorage / navigator / screen / window) ───
 const storage = new Map();
@@ -41,15 +42,20 @@ async function loadCryptoModule() {
     return { url, mod: await import(url) };
 }
 
-function setDataKeyProvider(provider) {
+/** provider가 없으면 브라우저 개발 모드. status는 Electron main이 알려 주는 상태(기본: 패키징하지 않은 개발 실행). */
+function setDataKeyProvider(provider, status = { available: true, packaged: false, platform: 'win32' }) {
     if (provider === undefined) {
         delete globalThis.window;
         return;
     }
-    globalThis.window = { jjssSecure: { getDataKey: provider } };
+    globalThis.window = {
+        jjssSecure: { getDataKey: provider, getStatus: async () => status },
+        dispatchEvent: () => true,
+    };
 }
 
 const APP_SEED = 'JJSS-Desktop-Secure-2026';
+const BACKUP_ITERATIONS_EXPECTED = 310_000;
 const INSTALLATION_ID = 'inst-test-0123456789abcdef-1700000000000';
 localStorage.setItem('jjss-installation-id', INSTALLATION_ID);
 
@@ -135,7 +141,7 @@ console.log('PASS 복호화 실패 시 빈 값 + 실패 표시');
 const dataKey = randomDataKey();
 setDataKeyProvider(async () => dataKey);
 const { mod: withKey } = await loadCryptoModule();
-assert.equal(await withKey.getEncryptionKeyKind(), 'data-key');
+assert.equal((await withKey.getEncryptionKeyInfo()).kind, 'data-key');
 const v2Cipher = await withKey.encrypt('지적장애 · 중증');
 assert.ok(v2Cipher.startsWith('enc:v2:'), 'DPAPI 키가 있으면 enc:v2: 형식');
 result = await withKey.decryptWithStatus(v2Cipher);
@@ -158,7 +164,11 @@ setDataKeyProvider(async () => null);
 const { mod: keyMissing } = await loadCryptoModule();
 result = await keyMissing.decryptWithStatus(v2Cipher);
 assert.deepEqual({ ok: result.ok, value: result.value, dataKeyUnavailable: result.dataKeyUnavailable }, { ok: false, value: '', dataKeyUnavailable: true });
-assert.ok((await keyMissing.encrypt('새 값')).startsWith('enc:v1:'), '데이터 키가 없으면 새 값은 v1으로 저장');
+assert.ok((await keyMissing.encrypt('새 값')).startsWith('enc:v1:'), '개발 실행(패키징 안 됨)에서 데이터 키가 없으면 새 값은 v1으로 저장');
+setDataKeyProvider(async () => null, { available: false, packaged: true, platform: 'win32' });
+const { mod: packagedMissing } = await loadCryptoModule();
+await assert.rejects(() => packagedMissing.encrypt('새 값'), /운영체제 보안 저장소를 사용할 수 없어/, '배포용 앱은 v1으로 저장하지 않음');
+assert.equal((await packagedMissing.decryptWithStatus(v1Cipher)).value, '서울특별시 마포구 테스트로 1', '배포용 앱에서도 기존 v1은 읽힘');
 assert.equal((await keyMissing.decryptWithStatus(legacyCipher)).value, legacyPlain, '데이터 키가 없어도 이전 형식은 읽힘');
 
 setDataKeyProvider(async () => randomDataKey());
@@ -210,5 +220,99 @@ assert.throws(() => parseBackupJson('{}'), /복원할 수 있는 JJSS 데이터�
 assert.throws(() => parseBackupJson(JSON.stringify({ vocationalEvaluationHistory: [{ id: '', type: 'report' }] })), /vocationalEvaluationHistory/);
 assert.throws(() => parseBackupJson(envelopeText), /복원할 수 있는 JJSS 데이터가 없습니다/, '봉투를 평문 백업으로 복원하지 않음');
 console.log('PASS 예전 평문 백업 파싱과 엄격 검증');
+
+// ─── 7. 백업 JSON: API 키(평문·암호문) 제외, 복원 시 현재 키 유지 ───
+const fakeDb = createFakeIndexedDB();
+globalThis.indexedDB = fakeDb.indexedDB;
+const backupDb = await import(await compileTsModule('../src/config/localDB.ts', [
+    [/from ['"]\.\/crypto['"]/g, `from ${JSON.stringify(cryptoUrlNoKey)}`],
+]));
+const apiKeyCipher = await noKey.encrypt('AIzaSy-synthetic-key-0000');
+await backupDb.addDoc('settings', {
+    id: 'app-settings',
+    selectedProvider: 'gemini',
+    llmConfigs: [{ provider: 'gemini', label: 'Google Gemini', apiKey: 'sk-plain-synthetic', apiKeyEncrypted: apiKeyCipher, model: 'm' }],
+    visionApiKey: 'vision-plain-synthetic',
+    visionApiKeyEncrypted: apiKeyCipher,
+});
+await backupDb.addDoc('seekers', { id: 'seeker-b', name: '홍가람', phone: '010-1234-5678', organization: '기관' });
+const { json: backupText } = await backupDb.createBackupJson();
+for (const secret of ['AIzaSy-synthetic', 'sk-plain-synthetic', 'vision-plain-synthetic', apiKeyCipher]) {
+    assert.equal(backupText.includes(secret), false, `백업에 API 키(평문·암호문)가 없어야 함: ${secret.slice(0, 12)}`);
+}
+assert.equal(JSON.parse(backupText).seekers[0].name, '홍가람', '백업 JSON 안에서는 복호화된 값(파일 저장 시 비밀번호 암호화)');
+const backupEnvelope = await noKey.encryptBackupPayload(backupText, '안전한비밀번호2026');
+assert.equal(backupEnvelope.includes('홍가람'), false);
+await backupDb.importAllData(backupText);
+const settingsAfterRestore = fakeDb.rawRecords('JJSS_LOCAL_DB', 'settings')[0];
+assert.equal(settingsAfterRestore.llmConfigs[0].apiKeyEncrypted, apiKeyCipher, '복원해도 현재 PC의 API 키는 유지');
+assert.equal(settingsAfterRestore.visionApiKeyEncrypted, apiKeyCipher);
+assert.equal(JSON.stringify(fakeDb.rawRecords('JJSS_LOCAL_DB', 'seekers')).includes('홍가람'), false, '복원한 이용자 정보는 다시 암호화되어 저장');
+console.log('PASS 백업 JSON에서 API 키 제외, 복원 시 현재 키 유지, 복원 데이터 재암호화');
+
+// ─── 8. 백업 화면: 암호화 백업이 기본, 평문은 고급 옵션 + 경고 + 확인 체크 ───
+const dialogSource = await readFile(new URL('../src/components/BackupPasswordDialog.tsx', import.meta.url), 'utf8');
+const backupHookSource = await readFile(new URL('../src/hooks/useBackupActions.ts', import.meta.url), 'utf8');
+assert.match(dialogSource, /type="submit"[\s\S]*?'암호화하여 저장'/, '기본 동작(Enter·주 버튼)은 암호화 저장');
+assert.match(dialogSource, /<details[\s\S]*?고급: 암호화 없이 저장/, '평문 저장은 고급 옵션 안에만');
+assert.ok(dialogSource.includes('이 파일에는 개인정보가 평문으로 포함됩니다. 보안이 확보된 저장장소에서만 사용하세요.'));
+assert.match(dialogSource, /disabled=\{!plaintextAcknowledged \|\| busy\}/, '경고 확인 체크 전에는 평문 저장 불가');
+assert.ok(dialogSource.includes('잊으면 복구할 수 없'), '비밀번호 분실 시 복구 불가 안내');
+assert.match(backupHookSource, /onSkipPassword: \(\) => void runExport\(null\)/);
+assert.doesNotMatch(backupHookSource, /localStorage|setItem\(/, '백업 비밀번호를 저장하지 않음');
+assert.equal(BACKUP_ITERATIONS_EXPECTED, noKey.BACKUP_PBKDF2_ITERATIONS, 'PBKDF2 반복 횟수 유지');
+console.log('PASS 백업 기본값 암호화, 평문 백업은 고급 옵션·경고·확인 체크 필요, 비밀번호 비저장');
+
+
+// ── 백업 파일 구조 방어 ────────────────────────────────────────────────
+{
+    const { MAX_BACKUP_BYTES, MAX_BACKUP_ITEMS_PER_STORE } = await import(localDbUrl);
+
+    assert.throws(() => parseBackupJson(''), /비어 있습니다/);
+
+    // 지나치게 큰 파일은 JSON.parse 전에 막는다(화면이 멈추는 것을 방지).
+    const huge = 'x'.repeat(MAX_BACKUP_BYTES + 1);
+    assert.throws(() => parseBackupJson(huge), /너무 큽니다/);
+
+    // 프로토타입 오염에 쓰이는 키는 거부한다.
+    assert.throws(
+        () => parseBackupJson('{"seekers":[{"id":"a","__proto__":{"polluted":true}}]}'),
+        /허용되지 않은 항목 이름/,
+    );
+    assert.equal(({}).polluted, undefined, '프로토타입이 오염되지 않음');
+
+    // 너무 깊게 중첩된 구조도 막는다.
+    let deep = '1';
+    for (let index = 0; index < 60; index += 1) deep = `{"a":${deep}}`;
+    assert.throws(() => parseBackupJson(`{"seekers":[${deep}]}`), /구조가 너무 깊습니다/);
+
+    // 항목 수 한계는 정상 백업을 막지 않을 만큼 크다.
+    assert.ok(MAX_BACKUP_ITEMS_PER_STORE >= 100000, '정상 백업을 막지 않는 한계값');
+    console.log('PASS 백업 파일 크기·깊이·프로토타입 오염 방어');
+}
+
+// ── 복원 표지(journal) ────────────────────────────────────────────────
+{
+    const { readRestoreJournal, clearRestoreJournal, RESTORE_JOURNAL_KEY } = await import(localDbUrl);
+
+    clearRestoreJournal();
+    assert.equal(readRestoreJournal(), null, '표지가 없으면 null');
+
+    localStorage.setItem(
+        RESTORE_JOURNAL_KEY,
+        JSON.stringify({ restoreId: 'r1', startedAt: '2026-09-25T00:00:00.000Z', stores: ['seekers'] }),
+    );
+    const journal = readRestoreJournal();
+    assert.equal(journal.restoreId, 'r1');
+    assert.deepEqual(journal.stores, ['seekers']);
+
+    // 깨진 표지는 없는 것으로 본다(앱이 시작하지 못하면 안 된다).
+    localStorage.setItem(RESTORE_JOURNAL_KEY, '{not json');
+    assert.equal(readRestoreJournal(), null);
+
+    clearRestoreJournal();
+    assert.equal(localStorage.getItem(RESTORE_JOURNAL_KEY), null);
+    console.log('PASS 복원 표지 기록·판독·정리');
+}
 
 console.log('PASS test-crypto-backup 전체');

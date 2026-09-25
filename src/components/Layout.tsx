@@ -1,10 +1,23 @@
 import { useEffect, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import Navbar from './Navbar';
-import { useDataStore } from '../store/dataStore';
+import { startAtRestMigration, useDataStore } from '../store/dataStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { safeErrorMetadata } from '../utils/safeError';
-import { DATA_RECOVERY_EVENT, getDataRecoveryStatus, type DataRecoveryStatus } from '../config/localDB';
+import {
+    clearRestoreJournal,
+    DATA_RECOVERY_EVENT,
+    getDataRecoveryStatus,
+    readRestoreJournal,
+    type DataRecoveryStatus,
+    type RestoreJournal,
+} from '../config/localDB';
+import {
+    DECRYPT_FAILURE_MESSAGE,
+    SECURE_STORAGE_UNAVAILABLE_EVENT,
+    SECURE_STORAGE_UNAVAILABLE_MESSAGE,
+    getEncryptionKeyInfo,
+} from '../config/crypto';
 import JjssFileSaveNotice from './JjssFileSaveNotice';
 import ApiKeyOnboarding from './ApiKeyOnboarding';
 import ApiKeyRequiredNotice from './ApiKeyRequiredNotice';
@@ -27,8 +40,8 @@ const PAGE_TITLES: Record<string, string> = {
 
 function dataRecoveryMessage(status: DataRecoveryStatus): string {
     return status.dataKeyUnavailable
-        ? '이 PC의 보안 키를 불러오지 못해 암호화된 이용자 정보 일부를 표시할 수 없습니다. 다른 PC나 다른 Windows 사용자 계정으로 데이터를 옮긴 경우 생길 수 있습니다. 저장된 원본은 지우지 않았습니다. 설정 > 파일·백업에서 백업 파일로 복원해 주세요.'
-        : '암호화된 이용자 정보 일부를 읽지 못해 빈 칸으로 표시했습니다. 저장된 원본은 지우지 않았습니다. 내용이 비어 있다면 설정 > 파일·백업에서 최근 백업 파일로 복원해 주세요.';
+        ? `${DECRYPT_FAILURE_MESSAGE} 암호화된 이용자 정보 일부를 표시할 수 없습니다. 데이터 폴더를 다른 PC나 다른 사용자 계정으로 복사한 경우 생길 수 있습니다. 설정 > 파일·백업에서 암호화 백업 파일로 복원해 주세요.`
+        : `${DECRYPT_FAILURE_MESSAGE} 암호화된 이용자 정보 일부를 읽지 못해 빈 칸으로 표시했습니다. 내용이 비어 있다면 설정 > 파일·백업에서 최근 백업 파일로 복원해 주세요.`;
 }
 
 function getInitialLoadIssues() {
@@ -48,6 +61,21 @@ export default function Layout() {
     const [loadIssues, setLoadIssues] = useState<string[]>([]);
     const [dataRecovery, setDataRecovery] = useState<DataRecoveryStatus | null>(null);
     const [dataRecoveryDismissed, setDataRecoveryDismissed] = useState(false);
+    const [secureStorageBlocked, setSecureStorageBlocked] = useState(false);
+
+    useEffect(() => {
+        // 배포용 앱에서 운영체제 보안 저장소를 쓸 수 없으면 새 개인정보 저장이 막히므로 미리 알린다.
+        let active = true;
+        const showBlocked = () => setSecureStorageBlocked(true);
+        window.addEventListener(SECURE_STORAGE_UNAVAILABLE_EVENT, showBlocked);
+        void getEncryptionKeyInfo()
+            .then(info => { if (active && info.kind === 'unavailable') setSecureStorageBlocked(true); })
+            .catch(() => undefined);
+        return () => {
+            active = false;
+            window.removeEventListener(SECURE_STORAGE_UNAVAILABLE_EVENT, showBlocked);
+        };
+    }, []);
 
     useEffect(() => {
         // 암호화된 개인정보를 읽지 못했을 때(보안 키 없음 등) 복구 안내를 띄운다.
@@ -60,6 +88,12 @@ export default function Layout() {
         if (current.unreadableCount > 0) setDataRecovery(current);
         return () => window.removeEventListener(DATA_RECOVERY_EVENT, showRecovery);
     }, []);
+    // 지난 실행에서 복원이 끝나지 않았는지(강제 종료·전원 차단) 확인한다.
+    const [unfinishedRestore, setUnfinishedRestore] = useState<RestoreJournal | null>(null);
+    useEffect(() => {
+        setUnfinishedRestore(readRestoreJournal());
+    }, []);
+
     const [retrying, setRetrying] = useState(false);
     const [initialLoading, setInitialLoading] = useState(true);
 
@@ -79,6 +113,8 @@ export default function Layout() {
             } finally {
                 setInitialLoading(false);
             }
+            // 초기 화면을 띄운 뒤 백그라운드에서 오래된 평문·이전 형식 레코드를 현재 형식으로 다시 암호화한다(한 번만 실행).
+            void startAtRestMigration();
         };
         void init();
     }, [fetchData, loadSettings]); // 앱 생명주기 동안 한 번만 실행
@@ -167,6 +203,49 @@ export default function Layout() {
                         </button>
                     </section>
                 )}
+                {secureStorageBlocked && (
+                    <section
+                        role="alert"
+                        className="mx-auto mt-4 w-[min(92%,80rem)] rounded-xl border border-red-400/40 bg-red-950/80 px-4 py-3 text-sm text-red-50 shadow-lg"
+                    >
+                        <p className="font-bold">개인정보를 저장할 수 없습니다.</p>
+                        <p className="mt-1 text-xs leading-relaxed text-red-100/90">{SECURE_STORAGE_UNAVAILABLE_MESSAGE} 기존 데이터는 삭제하지 않았으며, 백업 내보내기는 계속 사용할 수 있습니다.</p>
+                    </section>
+                )}
+                {unfinishedRestore && (
+                    <section
+                        role="alert"
+                        className="mx-auto mt-4 flex w-[min(92%,80rem)] flex-col gap-3 rounded-xl border border-rose-400/40 bg-rose-950/80 px-4 py-3 text-sm text-rose-50 shadow-lg sm:flex-row sm:items-center sm:justify-between"
+                    >
+                        <div>
+                            <p className="font-bold">지난 복원이 끝나지 않았습니다.</p>
+                            <p className="mt-1 text-xs leading-relaxed text-rose-100/90">
+                                백업 복원 중에 앱이 종료된 것으로 보입니다({unfinishedRestore.startedAt.slice(0, 16).replace('T', ' ')}).
+                                일부 자료만 바뀌었을 수 있으니 <strong>같은 백업 파일로 복원을 한 번 더</strong> 실행해 주세요.
+                            </p>
+                        </div>
+                        <div className="flex shrink-0 gap-2">
+                            <button
+                                type="button"
+                                onClick={() => navigate('/settings#files-backup')}
+                                className="rounded-lg border border-rose-200/40 bg-rose-300/15 px-4 py-2 font-bold text-rose-50 hover:bg-rose-300/25"
+                            >
+                                백업·복원 설정으로
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    clearRestoreJournal();
+                                    setUnfinishedRestore(null);
+                                }}
+                                className="rounded-lg px-3 py-2 text-rose-100/80 hover:text-rose-50"
+                            >
+                                확인함
+                            </button>
+                        </div>
+                    </section>
+                )}
+
                 {dataRecovery && !dataRecoveryDismissed && (
                     <section
                         role="alert"

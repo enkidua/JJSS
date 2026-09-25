@@ -1,7 +1,17 @@
 import * as localDB from '../config/localDB';
-import { CaseDocument } from '../types/caseDocument';
+import { CaseDocument, CaseDocumentType } from '../types/caseDocument';
 import { Seeker } from '../types/matching';
 import { wrapAsData } from './gemini';
+
+/** AI 참고자료로 보내지 않는 사례문서 종류. 내부 JSON이거나 민감한 식별정보가 든 문서들입니다. */
+const AI_CONTEXT_EXCLUDED_TYPES = new Set<CaseDocumentType>([
+  'workflow',
+  'supported_employment',
+  've_episode',
+  've_session',
+  've_source_document',
+  've_report',
+]);
 
 interface TrainingRecord {
   plan?: string;
@@ -138,8 +148,9 @@ function buildSynthesis(seeker: Seeker, caseDocs: CaseDocument[], trainingText: 
 
 export async function buildClientContextSummary(seeker: Seeker, allSeekers: Seeker[] = []) {
   const caseDocs = (await localDB.getAll<CaseDocument>('caseDocuments'))
-    // 현황판 기록(workflow)과 지원고용 회차(계좌·연락처가 든 JSON)는 AI 참고자료에 넣지 않습니다.
-    .filter(doc => doc.type !== 'workflow' && doc.type !== 'supported_employment' && sameSeeker(doc, seeker, allSeekers))
+    // 현황판 기록(workflow)·지원고용 회차(계좌·연락처가 든 JSON)·직업평가 워크벤치 JSON은 AI 참고자료에 넣지 않습니다.
+    // 직업평가 자료는 해석 단계에서 별도 근거 패키지로만 전송합니다.
+    .filter(doc => !AI_CONTEXT_EXCLUDED_TYPES.has(doc.type) && sameSeeker(doc, seeker, allSeekers))
     .sort((a, b) => dateValue(b) - dateValue(a));
 
   const trainingState = await localDB.getById<TrainingState>('trainingState', 'work-training').catch(() => undefined);

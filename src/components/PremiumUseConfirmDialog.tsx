@@ -6,6 +6,7 @@ import {
     type PremiumUseDecision,
 } from '../utils/aiUsagePrompt';
 import { useDialogFocus } from '../hooks/useDialogFocus';
+import AttachmentSendConsentDialog from './privacy/AttachmentSendConsentDialog';
 
 interface PendingRequest extends PremiumUseConfirmDetail {
     id: number;
@@ -52,10 +53,12 @@ export default function PremiumUseConfirmDialog() {
 
     const dialogRef = useDialogFocus(Boolean(current), () => finish('cancel'));
 
-    if (!current) return null;
-
+    // 원본 파일 전송 확인창(동의 C)도 AI 확인창과 같은 자리에 함께 둔다(레이아웃 파일 변경 없이 앱 전체에서 동작).
+    // 항상 같은 위치에 그려 고성능 확인창이 열리고 닫혀도 전송 확인 대기열이 초기화되지 않게 한다.
     return (
-        <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/70 p-4">
+        <>
+        <AttachmentSendConsentDialog />
+        {current && <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/70 p-4">
             <div
                 key={current.id}
                 ref={dialogRef}
@@ -87,6 +90,7 @@ export default function PremiumUseConfirmDialog() {
                     <button type="button" className="btn-primary !px-4 !py-2" onClick={() => finish('use')}>사용</button>
                 </div>
             </div>
-        </div>
+        </div>}
+        </>
     );
 }

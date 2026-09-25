@@ -16,6 +16,7 @@ import {
   Trash2,
   Edit3,
   UserRound,
+  ClipboardCheck,
 } from 'lucide-react';
 import { analyzeTestResults, generateReport } from '../services/gemini';
 import { regenerateDocumentFromCurrent } from '../services/documentRegenerationService';
@@ -31,14 +32,14 @@ import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 import { useDataStore } from '../store/dataStore';
 import type { Seeker } from '../types/matching';
 import { getSeekerKey, isSameSeeker } from '../utils/seeker';
+import { runLegacyMigration } from '../services/legacyMigration';
+import { WorkbenchTab } from './evaluation/WorkbenchTab';
 
-/** 예전 버전이 평문으로 쓰던 localStorage 키. 화면 진입 시 사례문서 저장소(암호화)로 옮긴 뒤 지웁니다. */
-const LEGACY_HISTORY_KEY = 'jjss:vocational-evaluation-history';
 const HISTORY_DOC_TYPE = 'vocational_evaluation' as const;
 const ORGANIZATION = '직업재활기관';
 
 type EvaluationKind = 'analysis' | 'report';
-type EvaluationTab = 'analyzer' | 'report' | 'history';
+type EvaluationTab = 'workbench' | 'analyzer' | 'report' | 'history';
 
 interface EvaluationHistoryDoc {
   id: string;
@@ -61,7 +62,7 @@ interface EvaluationNavigationState {
 }
 
 function isEvaluationTab(value: unknown): value is EvaluationTab {
-  return value === 'analyzer' || value === 'report' || value === 'history';
+  return value === 'workbench' || value === 'analyzer' || value === 'report' || value === 'history';
 }
 
 function findSeekerByKey(seekers: Seeker[], key: string): Seeker | null {
@@ -109,21 +110,6 @@ const KIND_TITLES: Record<EvaluationKind, string> = {
 
 // ─── 저장 이력(사례문서 저장소) 도우미 ───
 
-function hashText(text: string): string {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < text.length; index += 1) {
-    hash ^= text.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return hash.toString(36);
-}
-
-function secondsFromDateText(value: unknown): number | null {
-  if (typeof value !== 'string' || !value) return null;
-  const time = Date.parse(value);
-  return Number.isNaN(time) ? null : Math.floor(time / 1000);
-}
-
 function timestampToIso(value: unknown): string | undefined {
   if (value && typeof value === 'object' && typeof (value as { seconds?: unknown }).seconds === 'number') {
     return new Date((value as { seconds: number }).seconds * 1000).toISOString();
@@ -161,140 +147,7 @@ async function loadHistoryDocs(): Promise<EvaluationHistoryDoc[]> {
     .sort((a, b) => b.savedAt.localeCompare(a.savedAt));
 }
 
-interface LegacyHistoryItem {
-  legacyId: string;
-  type: EvaluationKind;
-  title: string;
-  content: string;
-  savedAt?: string;
-  updatedAt?: string;
-}
 
-type LegacyReadResult =
-  | { status: 'absent' }
-  | { status: 'unreadable' }
-  | { status: 'ok'; raw: string; items: LegacyHistoryItem[]; skipped: number };
-
-function readLegacyHistory(): LegacyReadResult {
-  let raw: string | null;
-  try {
-    raw = localStorage.getItem(LEGACY_HISTORY_KEY);
-  } catch {
-    return { status: 'absent' };
-  }
-  if (raw === null) return { status: 'absent' };
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return { status: 'unreadable' };
-  }
-  if (!Array.isArray(parsed)) return { status: 'unreadable' };
-
-  const items: LegacyHistoryItem[] = [];
-  let skipped = 0;
-  for (const entry of parsed) {
-    if (!entry || typeof entry !== 'object' || typeof (entry as { content?: unknown }).content !== 'string') {
-      skipped += 1;
-      continue;
-    }
-    const record = entry as Record<string, unknown>;
-    const content = record.content as string;
-    const type: EvaluationKind = record.type === 'report' ? 'report' : 'analysis';
-    const savedAt = typeof record.savedAt === 'string' ? record.savedAt : undefined;
-    const rawId = typeof record.id === 'string' || typeof record.id === 'number' ? String(record.id).trim() : '';
-    items.push({
-      legacyId: rawId || `h${hashText(`${savedAt || ''}\u0000${content}`)}`,
-      type,
-      title: typeof record.title === 'string' && record.title.trim() ? record.title : KIND_TITLES[type],
-      content,
-      savedAt,
-      updatedAt: typeof record.updatedAt === 'string' ? record.updatedAt : undefined,
-    });
-  }
-  return { status: 'ok', raw, items, skipped };
-}
-
-interface MigrationResult {
-  migrated: number;
-  failed: number;
-  /** 원본 localStorage 키를 남겨 두었는지(실패·읽을 수 없는 항목이 있을 때) */
-  keptLegacy: boolean;
-  reason?: 'unreadable' | 'failed' | 'partial';
-}
-
-/**
- * localStorage 평가 이력을 사례문서 저장소로 옮깁니다.
- * - 항목마다 고정 ID(`vocational-eval-<원래 ID>`)를 써서 다시 시도해도 중복으로 들어가지 않습니다.
- * - 같은 ID가 이미 있는데 내용이 다르면(부분 백업 복원 등) 내용 해시를 붙인 ID로 따로 보관합니다.
- * - 모든 항목을 옮긴 경우에만 원본 키를 지웁니다. 하나라도 실패하면 원본을 그대로 둡니다.
- */
-async function migrateLegacyHistory(): Promise<MigrationResult> {
-  const legacy = readLegacyHistory();
-  if (legacy.status === 'absent') return { migrated: 0, failed: 0, keptLegacy: false };
-  if (legacy.status === 'unreadable') return { migrated: 0, failed: 0, keptLegacy: true, reason: 'unreadable' };
-
-  const existing = await localDB.query<CaseDocument>('caseDocuments', doc => doc.type === HISTORY_DOC_TYPE);
-  const contentById = new Map<string, string>();
-  existing.forEach(doc => { if (doc.id) contentById.set(doc.id, doc.content); });
-
-  let migrated = 0;
-  let failed = 0;
-  for (const item of legacy.items) {
-    const baseId = `vocational-eval-${item.legacyId}`;
-    let targetId = baseId;
-    if (contentById.has(baseId)) {
-      if (contentById.get(baseId) === item.content) continue;
-      targetId = `${baseId}-${hashText(item.content)}`;
-      if (contentById.has(targetId)) continue;
-    }
-    const createdSeconds = secondsFromDateText(item.savedAt) ?? Math.floor(Date.now() / 1000);
-    const updatedSeconds = secondsFromDateText(item.updatedAt);
-    try {
-      await localDB.addDoc<CaseDocument>('caseDocuments', {
-        id: targetId,
-        seekerId: '',
-        seekerName: '',
-        type: HISTORY_DOC_TYPE,
-        tab: 'docs',
-        source: 'evaluation',
-        organization: ORGANIZATION,
-        content: item.content,
-        title: item.title,
-        evaluationKind: item.type,
-        legacyHistoryId: item.legacyId,
-        createdAt: { seconds: createdSeconds },
-        ...(updatedSeconds !== null ? { updatedAt: { seconds: updatedSeconds } } : {}),
-      });
-      contentById.set(targetId, item.content);
-      migrated += 1;
-    } catch {
-      failed += 1;
-    }
-  }
-
-  if (failed > 0) return { migrated, failed, keptLegacy: true, reason: 'failed' };
-  if (legacy.skipped > 0) return { migrated, failed, keptLegacy: true, reason: 'partial' };
-
-  try {
-    // 옮기는 동안 백업 복원 등으로 값이 바뀌었다면 지우지 않고 다음 진입 때 다시 옮깁니다.
-    if (localStorage.getItem(LEGACY_HISTORY_KEY) === legacy.raw) localStorage.removeItem(LEGACY_HISTORY_KEY);
-  } catch {
-    // 원본을 지우지 못해도 다음 진입 때 고정 ID로 중복 없이 다시 확인합니다.
-  }
-  return { migrated, failed: 0, keptLegacy: false };
-}
-
-let migrationInFlight: Promise<MigrationResult> | null = null;
-
-/** 개발 모드(StrictMode)처럼 화면이 두 번 마운트되어도 이관은 한 번만 실행합니다. */
-function runLegacyMigration(): Promise<MigrationResult> {
-  if (!migrationInFlight) {
-    migrationInFlight = migrateLegacyHistory().finally(() => { migrationInFlight = null; });
-  }
-  return migrationInFlight;
-}
 
 function SelectedFileList({ files, onRemove, className }: { files: File[]; onRemove: (index: number) => void; className: string }) {
   if (files.length === 0) return null;
@@ -335,7 +188,7 @@ export default function VocationalEvaluation() {
   const showToastRef = useRef(showToast);
   showToastRef.current = showToast;
 
-  const [activeTab, setActiveTab] = useState<EvaluationTab>('analyzer');
+  const [activeTab, setActiveTab] = useState<EvaluationTab>('workbench');
   // 결과분석·종합소견서를 저장할 때 연결할 이용자(선택). 두 탭이 함께 씁니다.
   const [linkedSeekerKey, setLinkedSeekerKey] = useState('');
   const [linkingDocId, setLinkingDocId] = useState<string | null>(null);
@@ -843,6 +696,19 @@ export default function VocationalEvaluation() {
       <div role="group" aria-label="직업평가 메뉴" className="flex space-x-2 bg-white/5 p-1 rounded-2xl glass-strong w-fit max-w-full overflow-x-auto border border-white/10 [&>button]:shrink-0 [&>button]:whitespace-nowrap">
         <button
           type="button"
+          aria-pressed={activeTab === 'workbench'}
+          onClick={() => setActiveTab('workbench')}
+          className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold transition-all ${
+            activeTab === 'workbench'
+              ? 'bg-gradient-to-r from-violet-500 to-purple-600 text-white shadow-lg'
+              : 'text-white/60 hover:text-white hover:bg-white/5'
+          }`}
+        >
+          <ClipboardCheck className="w-5 h-5" />
+          평가 진행
+        </button>
+        <button
+          type="button"
           aria-pressed={activeTab === 'analyzer'}
           onClick={() => setActiveTab('analyzer')}
           className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold transition-all ${
@@ -883,6 +749,19 @@ export default function VocationalEvaluation() {
       </div>
 
       <AnimatePresence mode="wait" initial={false}>
+        {/* === Workbench Tab (평가 진행) === */}
+        {activeTab === 'workbench' && (
+          <motion.div
+            key="workbench"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.18 }}
+          >
+            <WorkbenchTab seekerKey={linkedSeekerKey} onSeekerChange={setLinkedSeekerKey} />
+          </motion.div>
+        )}
+
         {/* === Analyzer Tab === */}
         {activeTab === 'analyzer' && (
           <motion.div
@@ -899,7 +778,7 @@ export default function VocationalEvaluation() {
                 <UploadCloud className="w-5 h-5 text-blue-400" />
                 검사 결과 업로드
               </h2>
-              <p className="text-sm text-white/40 mb-6">PDF/이미지 파일과 직접 입력 텍스트를 함께 참고해서 분석할 수 있습니다.</p>
+              <p className="text-sm text-white/40 mb-6">PDF/이미지 파일과 직접 입력 텍스트를 함께 참고해서 분석할 수 있습니다. 글자가 들어 있는 PDF는 이 컴퓨터에서 글자만 추출해 비식별화한 뒤 보내고, 스캔본·이미지는 원본 전송 여부를 분석 버튼을 누를 때 따로 확인합니다.</p>
 
               <div className="space-y-6">
                 <div>

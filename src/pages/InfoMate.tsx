@@ -30,11 +30,19 @@ const categories = [
     { id: 'blog', label: '블로그', icon: Pen, color: 'from-amber-500 to-orange-600' },
 ];
 
+/**
+ * 저장·표시를 허용하는 링크.
+ * 설치형 앱은 외부 링크를 https만 열기 때문에(electron/externalUrl.cjs) 여기서도 https만 받는다.
+ * http를 받아 두면 저장은 되는데 클릭해도 열리지 않아 사용자가 원인을 알 수 없다.
+ */
 function getAllowedResourceUrl(value: string): string | null {
     if (!value.trim()) return null;
     try {
         const parsed = new URL(value.trim());
-        return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? parsed.href : null;
+        if (parsed.protocol !== 'https:') return null;
+        // 주소에 아이디·비밀번호가 들어간 링크는 받지 않는다.
+        if (parsed.username || parsed.password) return null;
+        return parsed.href;
     } catch {
         return null;
     }
@@ -130,7 +138,7 @@ export default function InfoMate() {
         if (!formTitle.trim()) { showToast('자료 제목을 입력해 주세요.', 'error'); return; }
         const safeLink = formLink.trim() ? getAllowedResourceUrl(formLink) : '';
         if (formLink.trim() && !safeLink) {
-            showToast('링크는 http:// 또는 https:// 주소만 입력할 수 있습니다.', 'error');
+            showToast('링크는 https:// 주소만 입력할 수 있습니다. 설치형 앱은 안전한 주소만 열 수 있습니다.', 'error');
             return;
         }
         const fields = {

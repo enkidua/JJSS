@@ -22,7 +22,6 @@ import { getAiDocumentValidationError } from '../utils/fileValidation';
 import { fileToBase64 } from '../utils/file';
 import { toAmount } from '../utils/currency';
 import { safeErrorMetadata } from '../utils/safeError';
-import { anonymizeText, deanonymizeText } from '../utils/anonymizer';
 import { apiKeyRequiredMessage, notifyApiKeyRequired } from '../utils/apiKeyPrompt';
 import {
     AI_FILE_TIMEOUT_MS,
@@ -37,7 +36,21 @@ import {
 } from './aiRequestSafety';
 import { attachProviderMessage, shouldCountTowardFailureBlock } from './aiErrorClassification';
 import { readGeminiText } from './aiTextResponse';
-import { collectKnownNames } from './knownNames';
+import {
+    assertAttachmentApproved,
+    extractLocalDocumentText,
+    FILE_ATTACHMENT_ACCESSOR,
+    isPdfAttachment,
+    markAttachmentApproved,
+    prepareAIOutboundText,
+    restoreAIResponse,
+} from './aiPrivacyGateway';
+import {
+    ATTACHMENT_CONSENT_DENIED_CODE,
+    createAttachmentConsentDeniedError,
+    requestAttachmentSendConsent,
+    type AttachmentUploadProvider,
+} from './attachmentConsent';
 
 const OCR_FAILURE_BLOCK_THRESHOLD = 3;
 const OCR_FAILURE_BLOCK_MS = 30_000;
@@ -115,6 +128,8 @@ async function extractTextWithGemini(file: File, geminiApiKey: string, signal?: 
 }
 
 async function extractTextWithVision(file: File, visionApiKey: string, signal: AbortSignal): Promise<string> {
+    // 원본 전송 확인(동의 C)을 거친 파일만 보낸다.
+    assertAttachmentApproved(file);
     const requestBody = {
         requests: [
             {
@@ -177,7 +192,13 @@ function finishOcrJobWithError(job: AIRequestJob, error: any): Error {
     return error;
 }
 
-// Vision API를 통한 OCR 실행 + Gemini Fallback
+/**
+ * 문서·이미지 OCR.
+ * - 텍스트 PDF: PC 안에서 글자를 추출해 바로 돌려준다(외부 전송 없음).
+ * - 스캔 PDF·이미지: 원본 전송 확인(동의 C)을 받은 뒤에만 Vision(이미지) 또는 Gemini로 보낸다.
+ * - Vision이 실패해도 Gemini로 자동 전환하지 않는다. Gemini 키가 있으면 "Gemini로 원본을 다시 보낼지"를 따로 묻고,
+ *   승인한 경우에만 새 요청 1회를 보낸다(첨부 원본의 제공업체 자동 전환 금지).
+ */
 export async function performOCR(file: File, options?: { signal?: AbortSignal }): Promise<string> {
     const validationError = getAiDocumentValidationError(file);
     if (validationError) throw new Error(validationError);
@@ -185,6 +206,13 @@ export async function performOCR(file: File, options?: { signal?: AbortSignal })
     const visionApiKey = settings.visionApiKey?.trim();
     const geminiConfig = settings.llmConfigs.find(c => c.provider === 'gemini');
     const geminiApiKey = geminiConfig?.apiKey?.trim();
+    const isPDF = isPdfAttachment(file.type, file.name);
+
+    // 텍스트 PDF는 API 키 없이도 PC 안에서 바로 읽는다.
+    if (isPDF) {
+        const localText = await extractLocalDocumentText(file, 0, FILE_ATTACHMENT_ACCESSOR);
+        if (localText) return localText.text;
+    }
 
     // 두 API 키 모두 없는 경우 에러 처리
     if (!visionApiKey && !geminiApiKey) {
@@ -197,76 +225,106 @@ export async function performOCR(file: File, options?: { signal?: AbortSignal })
 
     assertOcrAvailable();
     const model = normalizeGeminiTextModel(geminiConfig?.model);
+
+    // PDF인 경우 Vision API가 직접 지원하지 않으므로 Gemini만 사용합니다(스캔 PDF — 원본 전송 확인 필요).
+    if (isPDF) {
+        if (!geminiApiKey) {
+            notifyApiKeyRequired('gemini');
+            throw ocrInputError(`스캔한 PDF 문서 분석에는 ${apiKeyRequiredMessage('gemini')}`);
+        }
+        await confirmOriginalUpload(file, 'gemini');
+        return runGeminiOcrJob(file, geminiApiKey, model, 'ocr:document', options?.signal);
+    }
+
+    // 이미지: Vision API 키가 있으면 Vision, 없으면 Gemini. 보내기 전에 원본 전송 확인을 받는다.
+    if (!visionApiKey) {
+        await confirmOriginalUpload(file, 'gemini');
+        return runGeminiOcrJob(file, geminiApiKey as string, model, 'ocr:document', options?.signal);
+    }
+
+    await confirmOriginalUpload(file, 'vision');
     const job = beginAIRequestJob({
         featureKey: 'ocr:document',
         requestFingerprint: createAIRequestFingerprint({ size: file.size, type: file.type, lastModified: file.lastModified }),
         signal: options?.signal,
         timeoutMs: AI_FILE_TIMEOUT_MS,
     });
-
+    let visionError: any = null;
+    let visionFailureMessage = '';
     try {
-        const isPDF = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
-
-        // PDF인 경우 Vision API가 직접 지원하지 않으므로 즉시 Gemini로 전환합니다.
-        if (isPDF) {
-            if (!geminiApiKey) {
-                notifyApiKeyRequired('gemini');
-                throw ocrInputError(`PDF 문서 분석에는 ${apiKeyRequiredMessage('gemini')}`);
-            }
-            job.beginAttempt('gemini', model);
-            const text = await extractTextWithGemini(file, geminiApiKey, job.signal).catch(error => {
-                if (isAIRequestAbort(error) || isAIRequestTimeout(error)) throw error;
-                throw normalizeGeminiError(error, 'file');
-            });
+        job.beginAttempt('vision', 'text-detection');
+        const text = await extractTextWithVision(file, visionApiKey, job.signal);
+        if (text.trim()) {
             job.assertActive();
             job.finish('completed');
             recordOcrSuccess();
             return text;
         }
+        visionFailureMessage = '이미지에서 글자를 찾지 못했습니다.';
+    } catch (error: any) {
+        if (job.cancelled || isAIRequestAbort(error) || isAIRequestTimeout(error)) throw finishOcrJobWithError(job, error);
+        console.warn('Vision API 실패:', safeOcrErrorMetadata(error));
+        visionError = error;
+        visionFailureMessage = visionUserMessage(error);
+    }
 
-        // 이미지 OCR 호출 순서: Vision API 키가 있으면 Vision API를 먼저 시도하고, 실패 시 Gemini API 키가 있을 때만 fallback합니다.
-        let visionFailureMessage = '';
-        if (visionApiKey) {
-            try {
-                job.beginAttempt('vision', 'text-detection');
-                const text = await extractTextWithVision(file, visionApiKey, job.signal);
-                if (text.trim()) {
-                    job.assertActive();
-                    job.finish('completed');
-                    recordOcrSuccess();
-                    return text;
-                }
-                visionFailureMessage = '이미지에서 글자를 찾지 못했습니다.';
-            } catch (error: any) {
-                if (job.cancelled || isAIRequestAbort(error) || isAIRequestTimeout(error)) throw error;
-                console.warn('Vision API 실패, Gemini fallback을 1회 시도합니다:', safeOcrErrorMetadata(error));
-                visionFailureMessage = visionUserMessage(error);
-                if (!geminiApiKey) {
-                    throw Object.assign(new Error(visionFailureMessage), {
-                        status: error?.status,
-                        providerCode: error?.providerCode,
-                    });
-                }
-            }
-        }
+    const visionFailure = Object.assign(new Error(visionFailureMessage), {
+        status: visionError?.status,
+        providerCode: visionError?.providerCode,
+        code: visionError ? undefined : 'AI_INPUT_ERROR',
+    });
+    if (!geminiApiKey) throw finishOcrJobWithError(job, visionFailure);
+    // Vision 작업은 여기서 끝낸다. Gemini로 원본을 다시 보낼지는 사용자에게 따로 묻는다(자동 전환 없음).
+    job.finish('failed');
+    const approved = await requestAttachmentSendConsent({
+        provider: 'gemini',
+        fileNames: [file.name],
+        note: `${visionFailureMessage} 같은 파일을 Google Gemini로 보내 한 번 더 읽을 수 있습니다.`,
+    });
+    if (!approved) {
+        recordOcrFailure(visionFailure, visionFailureMessage);
+        throw Object.assign(new Error(`${visionFailureMessage}\n원본 파일을 Google Gemini로 보내지 않았습니다.`), {
+            code: ATTACHMENT_CONSENT_DENIED_CODE,
+        });
+    }
+    markAttachmentApproved(file);
+    try {
+        return await runGeminiOcrJob(file, geminiApiKey, model, 'ocr:document:gemini', options?.signal);
+    } catch (error: any) {
+        if (isAIRequestAbort(error) || isAIRequestTimeout(error)) throw error;
+        throw Object.assign(new Error(`${visionFailureMessage}\nGemini로 다시 시도했지만 실패했습니다: ${error?.message || ''}`.trim()), {
+            status: error?.status,
+            reason: error?.reason,
+            code: error?.code,
+        });
+    }
+}
 
-        // Vision API가 없었거나 실패했을 경우 Gemini를 최대 1회 호출합니다.
-        if (geminiApiKey) {
-            job.beginAttempt('gemini', model);
-            const text = await extractTextWithGemini(file, geminiApiKey, job.signal).catch(error => {
-                if (isAIRequestAbort(error) || isAIRequestTimeout(error)) throw error;
-                const normalized = normalizeGeminiError(error, 'file');
-                throw Object.assign(new Error(visionFailureMessage
-                    ? `${visionFailureMessage}\nGemini로 다시 시도했지만 실패했습니다: ${normalized.message}`
-                    : normalized.message), { status: (normalized as any).status, reason: (normalized as any).reason });
-            });
-            job.assertActive();
-            job.finish('completed');
-            recordOcrSuccess();
-            return text;
-        }
+/** 원본 전송 확인(동의 C). 취소하면 요청하지 않고 오류로 끝낸다. */
+async function confirmOriginalUpload(file: File, provider: AttachmentUploadProvider): Promise<void> {
+    const approved = await requestAttachmentSendConsent({ provider, fileNames: [file.name] });
+    if (!approved) throw createAttachmentConsentDeniedError();
+    markAttachmentApproved(file);
+}
 
-        throw ocrInputError(visionFailureMessage || '문서에서 글자를 찾지 못했습니다. 더 선명한 이미지로 다시 시도해 주세요.');
+/** Gemini OCR 요청 1회(작업 단위 안전장치 포함). */
+async function runGeminiOcrJob(file: File, geminiApiKey: string, model: string, featureKey: string, signal?: AbortSignal): Promise<string> {
+    const job = beginAIRequestJob({
+        featureKey,
+        requestFingerprint: createAIRequestFingerprint({ size: file.size, type: file.type, lastModified: file.lastModified }),
+        signal,
+        timeoutMs: AI_FILE_TIMEOUT_MS,
+    });
+    try {
+        job.beginAttempt('gemini', model);
+        const text = await extractTextWithGemini(file, geminiApiKey, job.signal).catch(error => {
+            if (isAIRequestAbort(error) || isAIRequestTimeout(error)) throw error;
+            throw normalizeGeminiError(error, 'file');
+        });
+        job.assertActive();
+        job.finish('completed');
+        recordOcrSuccess();
+        return text;
     } catch (error) {
         throw finishOcrJobWithError(job, error);
     }
@@ -707,7 +765,7 @@ function optionalAmount(value: unknown): number | undefined {
 
 function optionalText(value: unknown, mapping: Record<string, string>, maxLength = 200): string | undefined {
     if (typeof value !== 'string') return undefined;
-    const text = deanonymizeText(value, mapping).trim();
+    const text = restoreAIResponse(value, mapping).trim();
     return text ? text.slice(0, maxLength) : undefined;
 }
 
@@ -785,8 +843,8 @@ export async function smartParseItemizedReceiptWithAI(ocrText: string, options?:
         timeoutMs: AI_TEXT_TIMEOUT_MS,
     });
 
-    // 영수증에 적힌 이름·전화번호 등은 외부 AI로 보내기 전에 가리고, 결과의 글자 항목만 복원한다.
-    const { maskedText, mapping } = anonymizeText(ocrText, { knownNames: collectKnownNames() });
+    // 영수증에 적힌 이름·전화번호 등은 외부 AI로 보내기 전에 가리고, 결과의 글자 항목만 PC 안에서 복원한다.
+    const { text: maskedText, mapping } = prepareAIOutboundText(ocrText);
 
     try {
         const prompt = `다음은 영수증 OCR 텍스트입니다. 영수증 전체 정보와 영수증에 기재된 개별 상품 내역(items)을 모두 추출해 JSON으로만 응답해 주세요.

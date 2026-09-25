@@ -141,6 +141,8 @@ export function TrainingPlanTab({
     };
 
     const seekerContext = buildSeekerContext(selectedTrainee, selectedSeeker, room);
+    // 이 요청과 관련 있는 이름(현재 훈련생·담당자)만 비식별화 이름 사전에 더합니다.
+    const requestKnownNames = [selectedTrainee?.name, manager];
 
     /** AI 작업 시작. 이미 다른 작업이 실행 중이면 호출하지 않습니다(각 핸들러 첫 줄에서 확인). */
     const beginGeneration = (kind: GeneratingKind) => {
@@ -164,7 +166,7 @@ export function TrainingPlanTab({
         if (!traineeId) return;
         try {
             const prompt = buildPlanPrompt({ seekerContext, record: currentRecord, manager, contextSummary: clientContextSummary });
-            const generated = await generateText('rehab_plan', prompt, undefined, { featureKey: 'training', documentType: 'training-plan' });
+            const generated = await generateText('rehab_plan', prompt, undefined, { featureKey: 'training', documentType: 'training-plan', knownNames: requestKnownNames });
             updateRecordFor(traineeId, { plan: generated });
             showToast('훈련계획서가 생성되었습니다.', 'success');
         } catch (error: any) {
@@ -180,7 +182,7 @@ export function TrainingPlanTab({
         if (!traineeId) return;
         try {
             const prompt = buildCounselingPrompt({ seekerContext, record: currentRecord, manager, contextSummary: clientContextSummary });
-            const generated = await generateText('counseling', prompt, undefined, { featureKey: 'training', documentType: 'training-counseling' });
+            const generated = await generateText('counseling', prompt, undefined, { featureKey: 'training', documentType: 'training-counseling', knownNames: requestKnownNames });
             updateRecordFor(traineeId, { counselingDraft: generated });
             showToast('훈련 상담일지가 생성되었습니다.', 'success');
         } catch (error: any) {
@@ -211,7 +213,7 @@ export function TrainingPlanTab({
         if (!traineeId) return;
         try {
             const prompt = buildEvaluationPrompt({ seekerContext, record: currentRecord, manager, contextSummary: clientContextSummary });
-            const generated = await generateText('evaluation', prompt, undefined, { featureKey: 'training', documentType: 'training-evaluation' });
+            const generated = await generateText('evaluation', prompt, undefined, { featureKey: 'training', documentType: 'training-evaluation', knownNames: requestKnownNames });
             updateRecordFor(traineeId, { evaluation: generated });
             showToast('훈련 정기평가서가 생성되었습니다.', 'success');
         } catch (error: any) {
@@ -234,7 +236,7 @@ export function TrainingPlanTab({
                 progressYear,
                 progressEntry,
             });
-            const generated = await generateText(mode === 'share' ? 'summary' : 'evaluation', prompt, undefined, { featureKey: 'training', documentType: `training-${mode}` });
+            const generated = await generateText(mode === 'share' ? 'summary' : 'evaluation', prompt, undefined, { featureKey: 'training', documentType: `training-${mode}`, knownNames: requestKnownNames });
             if (mode === 'checklist') updateRecordFor(traineeId, { checklist: generated });
             if (mode === 'field') updateRecordFor(traineeId, { fieldNote: generated });
             if (mode === 'share') updateRecordFor(traineeId, { shareSummary: generated });

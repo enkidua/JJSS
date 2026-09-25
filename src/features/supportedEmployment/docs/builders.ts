@@ -7,7 +7,7 @@ import { calculatePayments, formatWon, type PaymentCalculation } from '../calc';
 import { weekdayOf } from '../holidays';
 import { EVALUATION_GROUPS, evaluationTotals, normalizeCase, type SupportedEmploymentCase } from '../model';
 import { groupDatesByWeek, timeRangeHours } from '../schedule';
-import type { Cell, DocBlock, DocModel } from './blocks';
+import type { Cell, DocBlock, DocModel } from '../../docx/blocks';
 
 export type SupportedEmploymentDocumentKind =
     | 'resultReport'

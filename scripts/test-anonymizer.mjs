@@ -142,6 +142,30 @@ test('호칭·역할 탐지: "김철수 님", "이도훈 이용자"; 직함·일
     for (const word of ['김선생님', '박팀장님', '선생님', '고객님', '장애인 이용자']) assert.ok(maskedText.includes(word), word);
 });
 
+test('쌍점 없이 칸만 띄운 이름 칸(공단 결과지 서식)도 가리고, 본문 반복 등장까지 함께 가린다', () => {
+    // 공단 작업표본검사 결과지를 글로 옮기면 "이 름: 홍길동"이 아니라 "이 름 홍길동"이 된다.
+    const sheet = [
+        '이 름 서하람 성 별 남성 생년월일 1988.01.02 나 이 만 38세',
+        '소 속 장애인복지관 장애유형 지체장애 우세손 왼손 검사일 2026.09.06',
+        '평가사 도경한 담당기관',
+        '( 서하람 )님은 1분 30초동안 ( 20 )개를 조립하였고',
+    ].join(String.fromCharCode(10));
+    const { maskedText } = anonymizeText(sheet);
+    assert.equal(maskedText.includes('서하람'), false, '이름 칸 값이 남았다');
+    assert.equal(maskedText.includes('도경한'), false, '평가사 이름이 남았다');
+    // 괄호 안에 다시 나오는 이름도 같이 가려야 한다(본문 반복 등장).
+    assert.equal((maskedText.match(/⟦이름\d+⟧/g) || []).length >= 3, true, '본문 반복 등장 이름이 남았다');
+    // 검사에 필요한 값은 그대로 둔다.
+    for (const keep of ['남성', '지체장애', '왼손', '2026.09.06', '1분 30초', '20']) {
+        assert.ok(maskedText.includes(keep), keep);
+    }
+});
+
+test('쌍점 없는 이름 칸 오탐 방지: 값이 아닌 일반 낱말은 가리지 않는다', () => {
+    const text = '이름 확인이 필요합니다. 성명 미상으로 접수됨. 평가사 소견 작성 예정. 이름표시 방식 협의.';
+    assert.equal(anonymizeText(text).maskedText, text);
+});
+
 test('이미 가린 토큰은 다시 가리지 않고, 기존 토큰 번호와 충돌하지 않음', () => {
     const first = anonymizeText('이름: 문가온 010-2222-3333');
     const second = anonymizeText(first.maskedText, { knownNames: ['문가온'] });
@@ -158,6 +182,23 @@ test('이미 가린 토큰은 다시 가리지 않고, 기존 토큰 번호와 �
 test('장애유형·일반 업무 문장은 그대로 유지', () => {
     const text = '지적장애 중증, 바리스타 직무 희망. 출퇴근 지원 필요.';
     assert.equal(anonymizeText(text).maskedText, text);
+});
+
+test('건강정보 최소화: 의료기관 고유 이름·의사 이름·진단/입원일은 토큰, 진료과·장애유형은 유지, 복원 가능', () => {
+    const text = '행복정신건강의학과의원에서 김민준 전문의에게 2020년 3월 진단받음. 진단일: 2020.03.02, 2021.05.01 입원. 지적장애 중증.';
+    const { maskedText, mapping } = anonymizeText(text);
+    for (const value of ['행복', '김민준', '2020년 3월', '2020.03.02', '2021.05.01']) assert.equal(maskedText.includes(value), false, value);
+    for (const kept of ['정신건강의학과의원', '전문의', '진단받음', '입원', '지적장애 중증']) assert.ok(maskedText.includes(kept), kept);
+    assert.ok(Object.keys(mapping).some(token => token.startsWith('⟦의료기관')));
+    assert.ok(Object.keys(mapping).some(token => token.startsWith('⟦진단일')));
+    assert.equal(deanonymizeText(maskedText, mapping), text);
+    assert.match(anonymizeText('주치의: 박서연').maskedText, /^주치의: ⟦이름\d+⟧$/);
+});
+
+test('건강정보 오탐 방지: 일반 의료 표현과 진료과 이름은 그대로', () => {
+    for (const text of ['요양병원 입원 경험 있음', '대학병원 외래 진료', '동네 의원 방문', '정신건강의학과 진료 중', '정신과 전문의 소견서 참고', '국회의원 선거', '의사소통 지원 필요', '2022년 입사']) {
+        assert.equal(anonymizeText(text).maskedText, text, text);
+    }
 });
 
 console.log(`anonymizer tests passed (${passed}) — synthetic data only, no network.`);

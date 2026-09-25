@@ -13,7 +13,15 @@ export type CaseDocumentType =
     /** 직업평가 화면의 결과분석·종합소견서 이력(이용자 연결은 선택. 연결하지 않으면 seekerId·seekerName은 빈 문자열) */
     | 'vocational_evaluation'
     /** 지원고용 회차 전체(JSON). src/features/supportedEmployment/storage.ts */
-    | 'supported_employment';
+    | 'supported_employment'
+    /** 직업평가 워크벤치 — 평가 회차(JSON). src/features/vocationalEvaluation/storage.ts */
+    | 've_episode'
+    /** 직업평가 워크벤치 — 검사 세션(JSON) */
+    | 've_session'
+    /** 직업평가 워크벤치 — 공단 공식 결과지에서 확인한 값(JSON). PDF 원본은 저장하지 않는다 */
+    | 've_source_document'
+    /** 직업평가 워크벤치 — 직업평가보고서 한 버전(JSON) */
+    | 've_report';
 export type CaseDocumentTab = 'case' | 'docs' | 'employment';
 
 export interface CaseDocument {

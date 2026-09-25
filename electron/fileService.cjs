@@ -509,8 +509,16 @@ async function savePdf({ app, dialog, BrowserWindow, category, fileName, html, b
     }
 }
 
-// 앱이 PDF 생성 도중 강제 종료되면 개인정보가 담긴 임시 HTML이 남을 수 있어 시작할 때 정리한다.
-async function cleanupStalePdfTempFiles(app, maxAgeMs = 60 * 60 * 1000) {
+/**
+ * 앱이 PDF 생성 도중 강제 종료되면 개인정보가 담긴 임시 HTML이 남는다.
+ *
+ * 시작 시점에는 **나이를 따지지 않고 전부 지운다**(maxAgeMs = 0). 이 시점에 살아 있는
+ * `jjss-pdf-xxxxxx` 폴더는 모두 지난 실행이 남긴 것이고, 지금 실행에는 아직 만든 것이 없기 때문이다.
+ * 이름 형식이 정확히 맞는 폴더만 지우므로 다른 프로그램의 임시 파일은 건드리지 않는다.
+ *
+ * maxAgeMs를 주면 그보다 오래된 것만 지운다(앱이 도는 중에 청소할 때 쓴다).
+ */
+async function cleanupStalePdfTempFiles(app, maxAgeMs = 0) {
     const tempParent = app.getPath('temp');
     let entries;
     try {
@@ -524,8 +532,10 @@ async function cleanupStalePdfTempFiles(app, maxAgeMs = 60 * 60 * 1000) {
         if (!entry.isDirectory() || !/^jjss-pdf-[A-Za-z0-9]{6}$/.test(entry.name)) continue;
         const directory = path.join(tempParent, entry.name);
         try {
-            const info = await fsp.stat(directory);
-            if (now - info.mtimeMs < maxAgeMs) continue;
+            if (maxAgeMs > 0) {
+                const info = await fsp.stat(directory);
+                if (now - info.mtimeMs < maxAgeMs) continue;
+            }
             await fsp.rm(directory, { recursive: true, force: true });
             removed += 1;
         } catch {

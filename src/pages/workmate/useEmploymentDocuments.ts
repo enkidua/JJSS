@@ -72,7 +72,7 @@ export function useEmploymentDocuments() {
     }, []);
 
     const currentInterviewPrompt = () => buildInterviewPrompt(selectedEmploymentSeeker, interviewForm, employmentContextSummary);
-    const currentJobAnalysisPrompt = () => buildJobAnalysisPrompt(selectedJobAnalysisJob, jobAnalysisForm, jobAnalysisPhotos.map(photo => photo.file.name));
+    const currentJobAnalysisPrompt = () => buildJobAnalysisPrompt(selectedJobAnalysisJob, jobAnalysisForm, jobAnalysisPhotos.length);
 
     const handleSelectJobAnalysisJob = async (jobId: string) => {
         if (employmentBusyRef.current) { showToast('진행 중인 문서 작업이 끝난 뒤 사업체를 변경해 주세요.', 'info'); return; }
@@ -138,6 +138,8 @@ export function useEmploymentDocuments() {
         return Promise.all(jobAnalysisPhotos.map(async photo => ({
             mimeType: photo.file.type || 'image/png',
             data: await fileToBase64(photo.file),
+            // 파일 이름은 원본 전송 확인창에만 표시하고 외부로 보내지 않습니다.
+            name: photo.file.name,
         })));
     };
 

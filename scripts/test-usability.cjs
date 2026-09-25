@@ -356,6 +356,62 @@ async function main() {
         await page.getByRole('cell', { name: '1,250,100', exact: true }).waitFor();
         console.log('PASS supported employment round: training days skip the substitute holiday, payment card 1,250,100원, DOCX button, save and list');
 
+        // 직업평가 워크벤치: 회차 생성 → 우세손 판정 → 손기능 1시행 확정 → 2차 미실시 → 다차원 분모(판 /1)
+        await page.evaluate(async () => {
+            const { useDataStore } = await import('/src/store/dataStore.ts');
+            useDataStore.setState(state => ({
+                seekers: [...state.seekers, { id: 'ux-ve-seeker', name: '합성 평가 이용자', seekerId: 'UX-VE' }],
+            }));
+        });
+        await page.evaluate(() => { location.hash = '/evaluation'; });
+        await page.getByRole('button', { name: '평가 진행', exact: true }).click();
+        await page.locator('#ve-seeker').selectOption('ux-ve-seeker');
+        await page.getByRole('button', { name: '새 평가 회차', exact: true }).click();
+        await page.getByRole('heading', { name: '우세손 판정' }).waitFor();
+        for (const question of ['글씨를 쓸 때 어느 손을 사용합니까?', '공을 던질 때 어느 손을 사용합니까?', '젓가락질을 할 때 어느 손을 사용합니까?']) {
+            await page.getByRole('group', { name: question }).getByRole('button', { name: '오른손' }).click();
+        }
+        await page.locator('.badge', { hasText: '오른손' }).first().waitFor();
+        await page.getByRole('button', { name: '② 검사 실시', exact: true }).click();
+        await page.getByRole('button', { name: /KEAD 손기능 작업표본검사/ }).click();
+        await page.getByText('실시요강 기준 조건당 30초').first().waitFor();
+        await page.getByRole('button', { name: /검사 시작/ }).click();
+        await page.getByRole('button', { name: /측정 종료/ }).click();
+        await page.getByRole('spinbutton', { name: '수행량' }).fill('12');
+        await page.getByRole('button', { name: /이 시행 확정/ }).click();
+        await page.getByText('평균 12').first().waitFor();
+        await page.getByRole('button', { name: '미실시로 두기' }).click();
+        await page.locator('#ve-skip-reason').fill('검증용 미실시 사유');
+        await page.getByRole('button', { name: '미실시로 저장', exact: true }).click();
+        await page.getByText('(1회 실시)').first().waitFor();
+        assert.equal(await page.getByRole('button', { name: '검사 기록 확정', exact: true }).isDisabled(), true, 'unfinished trials block confirmation');
+        await page.getByRole('button', { name: '목록으로', exact: true }).click();
+        await page.getByRole('button', { name: /KEAD 다차원 양손협응 작업표본검사/ }).click();
+        await page.getByText('실시요강 기준 제한시간 1분 30초, 1회 실시').first().waitFor();
+        await page.getByRole('button', { name: /측정 시작/ }).click();
+        await page.getByRole('button', { name: /측정 종료/ }).click();
+        await page.getByText('총합 0 / 25').first().waitFor();
+        const plate = page.getByRole('spinbutton', { name: '판' });
+        await plate.fill('5');
+        assert.equal(await plate.inputValue(), '1', 'plate is capped at the 실시요강 denominator of 1');
+        await page.getByText('총합 1 / 25').first().waitFor();
+        await page.getByRole('button', { name: '목록으로', exact: true }).click();
+        await page.getByRole('button', { name: '④ 원자료 요약', exact: true }).click();
+        await page.getByText('소형핀 · 우세손: 12 / 미실시 / 미실시 → 평균 12 (1회 실시 평균)').waitFor();
+        await page.getByRole('button', { name: '⑦ 보고서', exact: true }).click();
+        await page.getByRole('button', { name: '보고서 만들기', exact: true }).click();
+        await page.getByRole('heading', { name: '종합소견 및 직업재활방향' }).waitFor();
+        await page.getByText('KEAD 손기능 작업표본검사을(를) 실시요강 기준 조건당 30초 기준으로 실시했다.', { exact: false }).first().waitFor();
+        await page.getByText('총합', { exact: false }).first().waitFor();
+        assert.equal(await page.getByRole('button', { name: 'DOCX', exact: true }).count(), 1, 'DOCX export button exists');
+        await page.getByLabel('평가목적').fill('검증용 평가목적');
+        await page.getByRole('button', { name: '확정', exact: true }).click();
+        await answerConfirm(page, true);
+        await page.getByText('확정된 보고서입니다', { exact: false }).waitFor();
+        assert.equal(await page.getByRole('button', { name: '새 버전', exact: true }).count(), 1, 'a confirmed report can only be changed as a new version');
+        assert.equal(await page.getByLabel('평가목적').isDisabled(), true, 'confirmed report fields are locked');
+        console.log('PASS vocational evaluation workbench: dominant hand, hand-function trial, skipped trial average, bimanual /25 denominators, report compose and confirm lock');
+
         await page.setViewportSize({ width: 390, height: 600 });
         await page.getByRole('button', { name: '모바일 메뉴 열기' }).click();
         await page.locator('#mobile-navigation').waitFor();

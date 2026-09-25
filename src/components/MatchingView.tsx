@@ -5,6 +5,7 @@ import {
     ChevronRight, Sparkles, Loader2
 } from 'lucide-react';
 import { useDataStore } from '../store/dataStore';
+import { verifyEncryptedField } from '../config/localDB';
 import { matchCandidates } from '../services/matching';
 import { JobOpening, MatchResult } from '../types/matching';
 import { generateText } from '../services/gemini';
@@ -359,8 +360,11 @@ function MatchItem({ itemKey, result, rank, onDirtyChange }: MatchItemProps) {
                         jobRole: result.job.jobRole,
                         content: legacy.content,
                     });
-                    removeLegacyProfile(storageKey);
-                    migratedAt = readTimestamp(migrated.updatedAt || migrated.createdAt) || legacy.updatedAt;
+                    // 암호화 저장을 다시 읽어 내용이 같을 때만 평문 사본을 지웁니다(아니면 다음 진입 때 다시 시도).
+                    if (migrated.id && await verifyEncryptedField('caseDocuments', migrated.id, 'content', legacy.content)) {
+                        removeLegacyProfile(storageKey);
+                        migratedAt = readTimestamp(migrated.updatedAt || migrated.createdAt) || legacy.updatedAt;
+                    }
                 } catch (error) {
                     console.warn('[MatchingView] 이전 매칭 의견 이관 실패(원본 유지):', safeErrorMetadata(error, 'matching-opinion-migrate'));
                 } finally {

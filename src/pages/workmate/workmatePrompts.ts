@@ -60,12 +60,16 @@ function buildSelectedJobContext(job: JobOpening | null, form: JobAnalysisForm) 
 연락처: ${job?.contactPhone || '확인 필요'}`;
 }
 
-export const buildJobAnalysisPrompt = (job: JobOpening | null, form: JobAnalysisForm, photoNames: string[]) => `${buildSelectedJobContext(job, form)}
+/**
+ * 사진의 실제 파일명은 외부로 보내지 않는다 — 파일명에 이용자 이름·기관명이 들어가는 일이 잦다.
+ * 장수만 알려 줘도 AI가 사진을 참고하는 데 지장이 없다.
+ */
+export const buildJobAnalysisPrompt = (job: JobOpening | null, form: JobAnalysisForm, photoCount: number) => `${buildSelectedJobContext(job, form)}
 
 [직무분석 기본 정보]
 사업체명: ${job?.companyName || form.companyName || '확인 필요'}
 직무명: ${job?.jobRole || form.jobRole || '확인 필요'}
-사진 참고: ${photoNames.length ? `${photoNames.length}장 첨부됨 (${photoNames.join(', ')})` : '첨부 사진 없음'}
+사진 참고: ${photoCount > 0 ? `${photoCount}장 첨부됨` : '첨부 사진 없음'}
 
 [간략 사업체/직무 특성]
 ${form.traits || form.tasks || form.environment || '담당자 입력 없음'}
