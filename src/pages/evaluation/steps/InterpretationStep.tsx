@@ -3,7 +3,7 @@
  * AI 제안은 항상 "제안" 상태로 저장되고, 품질 검사를 통과하지 못한 제안은 채택할 수 없다.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Check, Loader2, Pencil, Sparkles, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Check, Loader2, Pencil, Sparkles, X } from 'lucide-react';
 import {
     CLAIM_TYPE_LABELS,
     acceptClaim,
@@ -24,6 +24,7 @@ import {
     type TestSession,
 } from '../../../features/vocationalEvaluation';
 import { requestInterpretation } from '../../../features/vocationalEvaluation/interpretation/request';
+import { describeReadinessItem, entryGuide } from '../../../features/vocationalEvaluation/interpretation/readiness';
 import { selectActiveSourceDocument } from '../../../features/vocationalEvaluation/sourceDocument/record';
 import { useConfirm } from '../../../components/common/ConfirmProvider';
 import { useAppToast } from '../../../components/Toast';
@@ -45,12 +46,15 @@ export function InterpretationStep({
     sessions,
     documents,
     onEpisodeChange,
+    onGoToTest,
     locked = false,
 }: {
     episode: EvaluationEpisode;
     sessions: TestSession[];
     documents: SourceDocumentRecord[];
     onEpisodeChange: (next: EvaluationEpisode) => void;
+    /** "② 검사 실시로 이동" — 값이 비어 해석을 못 할 때 바로 입력하러 가게 한다 */
+    onGoToTest?: () => void;
     /** 보관된 회차는 읽기 전용 */
     locked?: boolean;
 }) {
@@ -186,6 +190,9 @@ export function InterpretationStep({
     }
 
     const adopted = adoptedClaims(run);
+    // 공식 결과지를 연결했으면 값은 결과지에서 오므로 앱 기록의 빈칸 안내는 띄우지 않는다.
+    const guide = session && !context.hasOfficialDocument ? entryGuide(session) : null;
+    const blocked = snapshot?.readiness.status === 'BLOCKED';
 
     return (
         <div className="space-y-4">
@@ -222,7 +229,22 @@ export function InterpretationStep({
                             {snapshot.readiness.message} ({snapshot.readiness.usableCoreFields}/{snapshot.readiness.totalCoreFields})
                         </p>
                         {snapshot.readiness.missing.length > 0 && (
-                            <p className="text-xs text-white/40">확인 필요: {snapshot.readiness.missing.slice(0, 6).join(', ')}</p>
+                            <p className="text-xs text-white/50">
+                                확인 필요: {snapshot.readiness.missing.map(describeReadinessItem).join(', ')}
+                            </p>
+                        )}
+                        {guide?.message && snapshot.readiness.status !== 'READY' && (
+                            <div className="rounded-lg border border-amber-300/30 bg-amber-300/10 px-3 py-2 space-y-2" role="status">
+                                <p className="text-sm text-amber-100">{guide.message}</p>
+                                {guide.measuredWithoutScore.length > 0 && (
+                                    <p className="text-xs text-amber-100/70">{guide.measuredWithoutScore.join(', ')}</p>
+                                )}
+                                {onGoToTest && (
+                                    <button type="button" className="btn-secondary !px-3 !py-1.5 text-xs" onClick={onGoToTest}>
+                                        ② 검사 실시로 이동 <ArrowRight size={12} className="inline ml-1" />
+                                    </button>
+                                )}
+                            </div>
                         )}
                         {snapshot.package.unresolvedIssues.length > 0 && (
                             <p className="text-xs text-amber-200">
@@ -272,9 +294,14 @@ export function InterpretationStep({
                     </button>
                 </div>
 
+                {blocked && (
+                    <p className="text-xs text-rose-200">
+                        확인된 검사 결과가 하나도 없어 해석 제안을 받을 수 없습니다. 위 안내대로 수행량을 입력하면 버튼이 켜집니다.
+                    </p>
+                )}
                 {stale && (
                     <p className="text-xs text-amber-200">
-                        근거가 바뀌었습니다. 아래 제안은 예전 근거로 만든 것이라 **보고서에 들어가지 않습니다.** 다시 요청해 주세요.
+                        근거가 바뀌었습니다. 아래 제안은 예전 근거로 만든 것이라 <strong>보고서에 들어가지 않습니다.</strong> 다시 요청해 주세요.
                     </p>
                 )}
                 {run?.status === 'FAILED' && <p className="text-sm text-rose-200">{run.errorReason}</p>}

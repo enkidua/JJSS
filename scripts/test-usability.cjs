@@ -365,7 +365,9 @@ async function main() {
         });
         await page.evaluate(() => { location.hash = '/evaluation'; });
         await page.getByRole('button', { name: '평가 진행', exact: true }).click();
-        await page.locator('#ve-seeker').selectOption('ux-ve-seeker');
+        // 이용자 검색: 이름·ID로 좁히고, 한 명으로 좁혀지면 자동 선택된다.
+        await page.locator('#ve-seeker-search').fill('UX-VE');
+        await page.waitForFunction(() => document.getElementById('ve-seeker')?.value === 'ux-ve-seeker');
         await page.getByRole('button', { name: '새 평가 회차', exact: true }).click();
         await page.getByRole('heading', { name: '우세손 판정' }).waitFor();
         for (const question of ['글씨를 쓸 때 어느 손을 사용합니까?', '공을 던질 때 어느 손을 사용합니까?', '젓가락질을 할 때 어느 손을 사용합니까?']) {
@@ -376,6 +378,19 @@ async function main() {
         await page.getByRole('button', { name: /KEAD 손기능 작업표본검사/ }).click();
         await page.getByText('실시요강 기준 조건당 30초').first().waitFor();
         await page.getByRole('button', { name: /검사 시작/ }).click();
+        // 회귀: 측정 중 렌더마다 타이머 기준점이 지워져 30초에서 멈추던 문제. 실제로 줄어들고 저장이 끝나야 한다.
+        await page.waitForFunction(() => /00:2[0-8]/.test(document.querySelector('main')?.innerText || ''), null, { timeout: 5000 });
+        await page.getByText('저장됨', { exact: true }).first().waitFor({ timeout: 5000 });
+        assert.equal(await page.getByRole('button', { name: '제한시간 종료 알림음 끄기' }).count(), 1, 'time-up chime toggle is available');
+        // 오류 기록 단축키: 조합키 하나(Ctrl)+F키가 기본이고, 맨 F키도 인정. Alt 조합은 무시(Alt+F4=창 닫기).
+        await page.getByText('Ctrl+F1~F12', { exact: false }).first().waitFor(); // 화면에 조합키 안내 표시
+        await page.getByRole('button', { name: /핀 떨어뜨림/ }).getByText('Ctrl+F1', { exact: true }).waitFor(); // 버튼마다 키 배지
+        await page.keyboard.press('Control+F1');
+        await page.getByRole('button', { name: /핀 떨어뜨림/ }).getByText('1', { exact: true }).waitFor();
+        await page.keyboard.press('F9');
+        await page.getByRole('button', { name: /주의분산/ }).getByText('1', { exact: true }).waitFor();
+        await page.keyboard.press('Alt+F5');
+        assert.equal(await page.getByRole('button', { name: /핀 방향 오류/ }).getByText('1', { exact: true }).count(), 0, 'Alt combo must not record');
         await page.getByRole('button', { name: /측정 종료/ }).click();
         await page.getByRole('spinbutton', { name: '수행량' }).fill('12');
         await page.getByRole('button', { name: /이 시행 확정/ }).click();
@@ -398,9 +413,26 @@ async function main() {
         await page.getByRole('button', { name: '목록으로', exact: true }).click();
         await page.getByRole('button', { name: '④ 원자료 요약', exact: true }).click();
         await page.getByText('소형핀 · 우세손: 12 / 미실시 / 미실시 → 평균 12 (1회 실시 평균)').waitFor();
+        // ⑤ 분석지 직접 입력: AI 없이 문장을 추가하면 ⑦ 보고서 초안 재료가 된다.
+        await page.getByRole('button', { name: '⑤ 결과지·분석지', exact: true }).click();
+        await page.getByRole('heading', { name: '그 밖의 검사 분석지' }).waitFor();
+        await page.getByRole('button', { name: /직접 입력/ }).click();
+        await page.getByLabel('보고서 영역').first().selectOption('psychological');
+        await page.getByLabel('분석지 문장').first().fill('수용어휘력 검사 결과 등가연령 6세 0개월~6세 5개월로 표기되어 있다.');
         await page.getByRole('button', { name: '⑦ 보고서', exact: true }).click();
-        await page.getByRole('button', { name: '보고서 만들기', exact: true }).click();
+        // 재료 요약: 분석지 1건이 집계된다.
+        await page.getByText('⑤ 분석지', { exact: true }).waitFor();
+        await page.getByText('1건 · 문장 1개', { exact: false }).waitFor();
+        await page.getByRole('button', { name: '보고서 초안 만들기', exact: true }).click();
         await page.getByRole('heading', { name: '종합소견 및 직업재활방향' }).waitFor();
+        // 분석지 문장이 심리진단 섹션에 자동 배치된다.
+        await page.getByText('수용어휘력 검사 결과 등가연령', { exact: false }).first().waitFor();
+        // 근거 모음: 검사 결과 문장을 골라 소견 칸에 붙일 수 있다(기본 대상: 직업적 강점).
+        await page.getByText('근거 모음', { exact: false }).first().waitFor();
+        const strengthsBefore = await page.locator('#ve-summary-strengths').inputValue();
+        await page.getByRole('button', { name: /넣기$/ }).first().click();
+        const strengthsAfter = await page.locator('#ve-summary-strengths').inputValue();
+        assert.ok(strengthsAfter.length > strengthsBefore.length, 'evidence sentence appended to strengths');
         await page.getByText('KEAD 손기능 작업표본검사을(를) 실시요강 기준 조건당 30초 기준으로 실시했다.', { exact: false }).first().waitFor();
         await page.getByText('총합', { exact: false }).first().waitFor();
         assert.equal(await page.getByRole('button', { name: 'DOCX', exact: true }).count(), 1, 'DOCX export button exists');

@@ -75,6 +75,10 @@ export interface SupportedEmploymentDocumentOptions {
     organizationName: string;
     staffName: string;
     coachDaysBasis: 'scheduled' | 'attended';
+    /** 공단 지사명(직무지도원 출근부 제목). 예전 저장본에는 없다 */
+    branchName?: string;
+    /** 사업체(업체) 담당자 — 훈련일지·출근부 확인란. 예전 저장본에는 없다 */
+    employerContactName?: string;
 }
 
 export interface SupportedEmploymentCase {
@@ -378,6 +382,8 @@ export function normalizeCase(input: unknown): SupportedEmploymentCase {
             organizationName: str(options.organizationName),
             staffName: str(options.staffName),
             coachDaysBasis: options.coachDaysBasis === 'attended' ? 'attended' : 'scheduled',
+            ...(str(options.branchName) ? { branchName: str(options.branchName) } : {}),
+            ...(str(options.employerContactName) ? { employerContactName: str(options.employerContactName) } : {}),
         };
     }
     if (typeof o.createdAt === 'string') normalized.createdAt = o.createdAt;

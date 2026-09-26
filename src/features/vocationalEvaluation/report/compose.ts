@@ -13,7 +13,9 @@ import { isOfficialDocumentUsable, selectActiveSourceDocument } from '../sourceD
 import type { EvaluationEpisode } from '../model/episode';
 import type { TestSession } from '../model/types';
 import type { SourceDocumentRecord } from '../sourceDocument/types';
-import type { ReportParagraph, ReportResultTable, ReportSection } from './model';
+import { analysisTitle, type AnalysisDocumentRecord, type AnalysisArea } from '../analysisDocument/model';
+import type { ReportParagraph, ReportResultTable, ReportSection, ReportSummary } from './model';
+import { buildResultNarrative } from './narrative';
 
 function paragraph(id: string, text: string, origin: ReportParagraph['origin'], sourceLabel?: string): ReportParagraph {
     return { id, origin, text, included: true, sourceLabel };
@@ -107,6 +109,19 @@ export interface ComposeInput {
     episode: EvaluationEpisode;
     sessions: TestSession[];
     documents: SourceDocumentRecord[];
+    /** 그 밖의 검사 분석지(흥미검사·사회적응도·심리검사 등). 없으면 빈 배열로 취급 */
+    analyses?: AnalysisDocumentRecord[];
+}
+
+/** 분석지에서 보고서 자동 조립에 쓸 문장만(포함 표시 + 차단 없음) */
+function usableFindings(analyses: AnalysisDocumentRecord[] | undefined, areas: AnalysisArea[]) {
+    return (analyses ?? [])
+        .filter(record => record.extractionStatus === 'SUCCEEDED')
+        .flatMap(record =>
+            record.findings
+                .filter(finding => finding.included && !finding.blocked && areas.includes(finding.area))
+                .map(finding => ({ record, finding })),
+        );
 }
 
 /** 섹션별 자동 문단. 이미 있던 평가사 서술과 제외 표시는 유지한다. */
@@ -160,6 +175,17 @@ export function composeSections(input: ComposeInput, previous: ReportSection[]):
                 plugin.manifest.shortName,
             ),
         );
+        // 결과지(없으면 앱 기록)의 값을 해석한 초안. 평가사는 고치거나 뺄 수 있다.
+        const narrative = buildResultNarrative(session, document);
+        const label = `${plugin.manifest.shortName} 결과 해석${narrative.fromOfficialDocument ? ' · 공식 결과지' : ' · 앱 기록'}`;
+        for (const item of narrative.paragraphs) {
+            push('vocational', paragraph(`result:${session.id}:${item.key}`, item.text, 'AUTO', label));
+        }
+    }
+
+    // 분석지: 문서에 적힌 내용을 보고서 영역 그대로 배치한다(심리진단·사회진단 등).
+    for (const { record, finding } of usableFindings(input.analyses, ['disability', 'career', 'living', 'social', 'physical', 'psychological', 'vocational'])) {
+        push(finding.area, paragraph(`analysis:${record.id}:${finding.id}`, finding.text, 'AUTO', `분석지 · ${analysisTitle(record)}`));
     }
 
     // 직업진단: 채택한 해석 문장
@@ -201,3 +227,26 @@ export function fillToolRows(
 }
 
 export const REPORT_COMPONENT_KEYS = COMPONENT_KEYS;
+
+/**
+ * 요약의 "직업적 강점"·"제한점·고려사항"이 비어 있으면 결과 해석에서 초안을 채운다.
+ * 평가사가 이미 쓴 칸은 건드리지 않는다. 직업수준·추천 직무는 판단이 필요하므로 채우지 않는다.
+ */
+export function composeSummaryDraft(input: ComposeInput, summary: ReportSummary): ReportSummary {
+    const strengths: string[] = [];
+    const limitations: string[] = [];
+    for (const session of input.sessions) {
+        const narrative = buildResultNarrative(session, selectActiveSourceDocument(input.documents, session.id));
+        strengths.push(...narrative.strengths);
+        limitations.push(...narrative.limitations);
+    }
+    strengths.push(...usableFindings(input.analyses, ['strength']).map(({ finding }) => finding.text));
+    limitations.push(...usableFindings(input.analyses, ['limitation']).map(({ finding }) => finding.text));
+    const recommendations = usableFindings(input.analyses, ['recommendation']).map(({ finding }) => finding.text);
+    return {
+        ...summary,
+        strengths: summary.strengths.trim() ? summary.strengths : strengths.join('\n'),
+        limitations: summary.limitations.trim() ? summary.limitations : limitations.join('\n'),
+        recommendedPrograms: summary.recommendedPrograms.trim() ? summary.recommendedPrograms : recommendations.join('\n'),
+    };
+}

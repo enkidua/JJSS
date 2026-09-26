@@ -49,6 +49,7 @@ const events = await load('events.mjs');
 const measurement = await load('measurement.mjs');
 const bimanual = await load('bimanual.mjs');
 const registry = await load('tests/registry.mjs');
+const shortcuts = await load('shortcuts.mjs');
 const handFunction = await load('tests/keadHandFunction.mjs');
 const keadBimanual = await load('tests/keadBimanual.mjs');
 const dominantHand = await load('dominantHand.mjs');
@@ -73,6 +74,7 @@ const interpretationTypes = await load('interpretation/types.mjs');
 const reportModel = await load('report/model.mjs');
 const reportSerialization = await load('report/serialization.mjs');
 const reportCompose = await load('report/compose.mjs');
+const analysisModel = await load('analysisDocument/model.mjs');
 const reportDocument = await load('report/document.mjs');
 const blocks = await import(pathToFileURL(path.join(outDir, 'features', 'docx', 'blocks.mjs')).href);
 
@@ -599,11 +601,126 @@ await check('두 검사가 등록되어 있다', () => {
 await check('등록되지 않은 검사는 오류를 낸다', () => {
     assert.throws(() => registry.getTestPlugin('없는검사'), /등록되지 않은 검사/);
 });
+await check('오류·진행 기록 단축키는 화면 순서대로 F1부터 빠짐없이 이어지고 겹치지 않는다', () => {
+    for (const pluginId of ['kead-hand-function', 'kead-bimanual']) {
+        const events = registry.getTestPlugin(pluginId).events;
+        // 화면 순서: 오류 기록(수행량 처리·재설명 필요)이 먼저, 진행 기록이 다음 — EventQuickActions와 같은 기준.
+        const ordered = [
+            ...events.filter(event => event.scoreEffect || event.requiresReinstruction),
+            ...events.filter(event => !event.scoreEffect && !event.requiresReinstruction),
+        ];
+        const shortcuts = ordered.map(event => event.shortcut).filter(Boolean);
+        assert.deepEqual(
+            shortcuts,
+            shortcuts.map((_, index) => `F${index + 1}`),
+            `${pluginId}: 단축키가 F1부터 순서대로여야 한다 (${shortcuts.join(',')})`,
+        );
+        assert.ok(shortcuts.length >= 12 || shortcuts.length === ordered.length, `${pluginId}: F12까지 쓰거나 전부 배정`);
+        assert.ok(shortcuts.every(key => /^F([1-9]|1[0-2])$/.test(key)), `${pluginId}: F1~F12 범위`);
+    }
+    // 손기능: 요강 표4-2·4-3 오류 6종이 F1~F6.
+    const errors = registry.getTestPlugin('kead-hand-function').events.filter(e => e.scoreEffect || e.requiresReinstruction);
+    assert.deepEqual(errors.map(e => e.shortcut), ['F1', 'F2', 'F3', 'F4', 'F5', 'F6']);
+});
+
+await check('단축키 판정: 윈도우 Ctrl+F키·맥 ⌘+F키·맨 F키만 인정하고 Alt/Shift 조합은 거른다', () => {
+    const key = (over = {}) => ({ key: 'F4', ctrlKey: false, altKey: false, shiftKey: false, metaKey: false, ...over });
+    const win = event => shortcuts.matchesEventShortcut('F4', event, false);
+    const mac = event => shortcuts.matchesEventShortcut('F4', event, true);
+    assert.equal(win(key({ ctrlKey: true })), true, 'Ctrl+F4');
+    assert.equal(win(key()), true, '맨 F4');
+    assert.equal(win(key({ altKey: true })), false, 'Alt+F4는 창 닫기라 기록하지 않는다');
+    assert.equal(win(key({ ctrlKey: true, altKey: true })), false, 'Ctrl+Alt+F4');
+    assert.equal(win(key({ shiftKey: true })), false, 'Shift+F10류 조합 배제');
+    assert.equal(win(key({ metaKey: true })), false, 'Win+F4는 OS 몫');
+    assert.equal(mac(key({ metaKey: true })), true, '맥 ⌘F4');
+    assert.equal(mac(key({ ctrlKey: true })), false, '맥 Ctrl+F키는 시스템 예약');
+    assert.equal(mac(key()), true, '맥 맨 F4');
+    assert.equal(shortcuts.matchesEventShortcut('F4', key({ key: 'F5', ctrlKey: true }), false), false, '다른 키');
+    assert.equal(shortcuts.matchesEventShortcut(undefined, key({ ctrlKey: true }), false), false, '단축키 없는 항목');
+    assert.equal(shortcuts.shortcutDisplay('F3', false), 'Ctrl+F3');
+    assert.equal(shortcuts.shortcutDisplay('F3', true), '⌘F3');
+});
+
 await check('제한시간 근거 문구가 화면에 그대로 나갈 수 있게 들어 있다', () => {
     assert.ok(registry.getTestPlugin('kead-hand-function').manifest.durationNote.includes('30초'));
     assert.ok(registry.getTestPlugin('kead-bimanual').manifest.durationNote.includes('1분 30초'));
 });
 
+
+/* ── 11-b. 분석지(그 밖의 검사 결과지) ───────────────────────── */
+console.log('분석지');
+
+await check('분석지 AI 응답을 영역별 문장으로 정리하고, 모르는 영역은 사회진단으로 보낸다', () => {
+    const parsed = analysisModel.normalizeAnalysisExtraction({
+        detectedTitle: '직업흥미검사(NISE-VISIT)',
+        findings: [
+            { area: 'psychological', text: '수용어휘력 검사 결과 원점수 64점, 등가연령 6세 0개월~6세 5개월이다.' },
+            { area: '이상한영역', text: '그림 이해도 100%, 일관성 60%로 기준점 이상의 결과를 보였다.' },
+        ],
+        warnings: [],
+    });
+    assert.equal(parsed.detectedTitle, '직업흥미검사(NISE-VISIT)');
+    assert.equal(parsed.findings.length, 2);
+    assert.equal(parsed.findings[0].area, 'psychological');
+    assert.equal(parsed.findings[0].included, true);
+    assert.equal(parsed.findings[1].area, 'social', '모르는 영역은 사회진단으로');
+    assert.ok(parsed.warnings.some(w => w.includes('사회진단')));
+    assert.equal(analysisModel.normalizeAnalysisExtraction({ findings: [] }), null);
+});
+
+await check('취업 단정·연락처 형태 문장은 자동 제외되고, 저장을 고쳐도 되살아나지 않는다', () => {
+    const blocked = analysisModel.createAnalysisFinding('vocational', '단순 조립 직무에 취업 가능함');
+    assert.equal(blocked.included, false);
+    assert.ok(blocked.blocked.includes('평가사'));
+    const phone = analysisModel.createAnalysisFinding('social', '보호자 연락처는 010-1234-5678이다');
+    assert.equal(phone.included, false);
+    const record = {
+        ...analysisModel.createAnalysisDocument({ episodeId: 'ep1', seekerId: 's1', seekerName: '합성이용자', source: 'AI' }),
+        findings: [{ ...blocked, included: true }],
+    };
+    const roundtrip = analysisModel.parseAnalysisDocument(analysisModel.serializeAnalysisDocument(record));
+    assert.equal(roundtrip.ok, true);
+    assert.equal(roundtrip.record.findings[0].included, false, '차단 문장은 강제로 포함시켜도 저장에서 다시 꺼진다');
+    assert.equal(analysisModel.parseAnalysisDocument(JSON.stringify({ version: 99, id: 'x', episodeId: 'ep' })).ok, false);
+});
+
+await check('코드 펜스가 붙은 분석지 응답에서도 JSON을 꺼낸다', () => {
+    const body = ['정리했습니다.', '```json', '{"detectedTitle":"CISA-2","findings":[{"area":"living","text":"적응지수 일반규준 51점으로 표기되어 있다."}]}', '```'].join(String.fromCharCode(10));
+    const parsed = analysisModel.normalizeAnalysisExtraction(analysisModel.parseAnalysisJson(body));
+    assert.equal(parsed.detectedTitle, 'CISA-2');
+    assert.equal(parsed.findings[0].area, 'living');
+});
+
+await check('분석지 문장이 보고서 해당 섹션과 요약 초안에 들어가고, 제외 문장은 빠진다', () => {
+    const record = {
+        ...analysisModel.createAnalysisDocument({ episodeId: 'ep1', seekerId: 's1', seekerName: '합성이용자', source: 'AI' }),
+        detectedTitle: '사회적응도(CISA-2)',
+        findings: [
+            analysisModel.createAnalysisFinding('psychological', 'BGT 오류점수 11점으로 시각-운동 협응에 어려움이 관찰되었다.'),
+            { ...analysisModel.createAnalysisFinding('living', '대중교통은 활동지원사와 함께 이용한다.'), included: false },
+            analysisModel.createAnalysisFinding('strength', '손가락 기민성이 양호하다.'),
+            analysisModel.createAnalysisFinding('limitation', '작업 집중을 위한 언어적 지원이 필요할 수 있다.'),
+            analysisModel.createAnalysisFinding('recommendation', '직업적응훈련 프로그램 참여를 고려할 수 있다.'),
+        ],
+    };
+    const episode = reportEpisode();
+    const report = baseReport(episode);
+    const sections = reportCompose.composeSections({ episode, sessions: [], documents: [], analyses: [record] }, report.sections);
+    const psychological = sections.find(item => item.id === 'psychological');
+    assert.ok(psychological.paragraphs.some(item => item.text.includes('BGT 오류점수') && item.sourceLabel.includes('사회적응도')));
+    const living = sections.find(item => item.id === 'living');
+    assert.equal(living.paragraphs.some(item => item.text.includes('대중교통')), false, '포함 해제한 문장은 빠진다');
+    const summary = reportCompose.composeSummaryDraft({ episode, sessions: [], documents: [], analyses: [record] }, report.summary);
+    assert.ok(summary.strengths.includes('손가락 기민성'));
+    assert.ok(summary.limitations.includes('언어적 지원'));
+    assert.ok(summary.recommendedPrograms.includes('직업적응훈련'));
+    const kept = reportCompose.composeSummaryDraft(
+        { episode, sessions: [], documents: [], analyses: [record] },
+        { ...report.summary, recommendedPrograms: '평가사가 쓴 추천' },
+    );
+    assert.equal(kept.recommendedPrograms, '평가사가 쓴 추천');
+});
 
 /* ── 12. 공식 결과지 가져오기 ─────────────────────────────────── */
 console.log('공식 결과지');
@@ -1504,6 +1621,147 @@ await check('제외한 문단은 다시 만들어도 제외 상태가 남는다'
     const again = reportCompose.composeSections({ episode, sessions: [s], documents: [] }, excluded);
     assert.ok(again.every(section => section.paragraphs.every(item => item.included === false)));
 });
+/* ── 결과지 기반 보고서 자동 문단 ─────────────────────────────── */
+const reportNarrative = await load('report/narrative.mjs');
+// claimQuality가 막는 판단 표현과 같은 기준. 자동 문단에도 이런 말이 들어가면 안 된다.
+const NARRATIVE_FORBIDDEN =
+    /(취업|고용|채용).{0,12}(가능|불가능|어렵|힘들)|직무.{0,12}(적합|부적합)|진단|정상\s*(범위|수준)|(상위|하위)\s*\d+(\.\d+)?\s*%|백분위|위\s*수준/;
+
+const HAND_SCORES = {
+    'SMALL.DOMINANT': 12,
+    'SMALL.NON_DOMINANT': 10,
+    'SMALL.BILATERAL': 8,
+    'MEDIUM.DOMINANT': 14,
+    'MEDIUM.NON_DOMINANT': 13,
+    'LARGE.DOMINANT': 16,
+    'LARGE.NON_DOMINANT': 15,
+};
+function scoredHandSession() {
+    let s = makeHandSession();
+    for (let i = 0; i < 21; i += 1) {
+        const current = s.trials.find(trial => trial.id === s.currentTrialId);
+        s = runTrial(s, HAND_SCORES[`${current.size}.${current.handMode}`], i * 40);
+    }
+    return s;
+}
+
+await check('손기능 기록만으로 조건별 평균·손 비교·최고/최저 조건 문단을 쓴다', () => {
+    const result = reportNarrative.buildResultNarrative(scoredHandSession(), undefined, NOW);
+    const text = result.paragraphs.map(item => item.text).join(' ');
+    assert.equal(result.fromOfficialDocument, false);
+    assert.ok(text.includes('소형핀 우세손 12개'), text);
+    assert.ok(text.includes('대형핀 비우세손 15개'), text);
+    assert.ok(text.includes('소형핀은 우세손 평균이 2개 많았다'), text);
+    assert.ok(text.includes('가장 많은 조건은 대형핀 우세손(16개)'), text);
+    assert.ok(text.includes('가장 적은 조건은 소형핀 양손(8개)'), text);
+    assert.ok(result.strengths.some(line => line.includes('대형핀 우세손')));
+    assert.ok(result.limitations.some(line => line.includes('소형핀 양손')));
+    for (const line of [...result.paragraphs.map(item => item.text), ...result.strengths, ...result.limitations]) {
+        assert.equal(NARRATIVE_FORBIDDEN.test(line), false, line);
+    }
+});
+
+await check('점수를 하나도 입력하지 않았으면 결과 문단을 만들지 않는다', () => {
+    const result = reportNarrative.buildResultNarrative(makeHandSession(), undefined, NOW);
+    assert.deepEqual(result.paragraphs, []);
+    assert.deepEqual(result.strengths, []);
+});
+
+function confirmedBimanualDocument(sessionId) {
+    const extraction = extractionSchema.normalizeExtraction(
+        {
+            documentType: 'KEAD_BIMANUAL',
+            detectedTitle: 'KEAD 다차원 양손협응검사 개인프로파일',
+            participant: { sex: null, disabilityType: null, dominantHand: null },
+            test: { testDate: '2026-09-06' },
+            performance: {
+                recordedDuration: scalar('1분 20초', '1분 20초'),
+                components: {
+                    cylinder: scalar(2), largeBolt: scalar(4), largeNut: scalar(4), smallBolt: scalar(2),
+                    smallNut: scalar(3), plate: scalar(1), fixingPin: scalar(4),
+                },
+                componentDenominators: {
+                    cylinder: scalar(4), largeBolt: scalar(4), largeNut: scalar(4), smallBolt: scalar(4),
+                    smallNut: scalar(4), plate: scalar(4), fixingPin: scalar(4),
+                },
+                reportedTotalCompleted: scalar(20),
+                reportedTotalTools: scalar(25),
+            },
+            norms: [
+                { path: 'nondisabled.total', sourceLabel: '비장애인 전체 대비', sourceValue: scalar(34) },
+                { path: 'nondisabled.male', sourceLabel: '비장애인 남성 대비', sourceValue: scalar(24.8) },
+                { path: 'disabled.total', sourceLabel: '지체장애 전체 대비', sourceValue: scalar(78.9) },
+                { path: 'disabled.male', sourceLabel: '지체장애 남성 대비', sourceValue: scalar(77.2) },
+            ],
+        },
+        'gemini',
+    );
+    const document = {
+        ...sourceRecord.createSourceDocument({
+            episodeId: 'ep1', seekerId: 's1', seekerName: '합성이용자', sessionId,
+            fileName: 'sheet.pdf', fileSize: 1, sha256: 'sheet', pageCount: 2,
+        }),
+        extractionStatus: 'SUCCEEDED',
+        confirmedAt: NOW,
+    };
+    const fields = review.flattenExtraction(extraction);
+    const pdfFacts = facts.buildPdfFacts(fields, document.id, NOW);
+    return { ...document, extraction, reviewFields: fields, facts: pdfFacts, resolutions: facts.createResolutions(fields, [], pdfFacts, NOW) };
+}
+
+await check('양손협응: 확정한 결과지의 수행량·규준 표기값을 그대로 옮기고 두 인쇄값의 비교만 적는다', () => {
+    const s = makeBimanualSession();
+    const result = reportNarrative.buildResultNarrative(s, confirmedBimanualDocument(s.id), NOW);
+    const text = result.paragraphs.map(item => item.text).join(' ');
+    assert.equal(result.fromOfficialDocument, true);
+    assert.ok(text.includes('총 수행량은 20개(총 도구수 25개 기준)'), text);
+    assert.ok(text.includes('완성소요시간은 1분 20초'), text);
+    assert.ok(text.includes('판 1/1'), text);
+    assert.ok(text.includes('원통결합 2/4'), text);
+    assert.ok(text.includes('비장애인 전체 대비 34%'), text);
+    assert.ok(text.includes('지체장애 남성 대비 77.2%'), text);
+    assert.ok(text.includes('같은 장애유형 규준과 비교한 수행도(78.9)가 비장애인 전체 규준 대비 수행도(34)보다 높게 표기되었다'), text);
+    assert.ok(result.strengths.some(line => line.includes('볼트(대)·너트(대)·판·고정핀')), result.strengths.join(' / '));
+    assert.ok(result.limitations.some(line => line.includes('원통결합(2/4)·볼트(소)(2/4)')), result.limitations.join(' / '));
+    for (const line of [...result.paragraphs.map(item => item.text), ...result.strengths, ...result.limitations]) {
+        assert.equal(NARRATIVE_FORBIDDEN.test(line), false, line);
+    }
+});
+
+await check('보고서 직업진단에 결과 해석 문단이 들어가고, 요약은 빈 칸만 초안으로 채운다', () => {
+    const s = scoredHandSession();
+    const episode = reportEpisode();
+    const report = baseReport(episode);
+    const sections = reportCompose.composeSections({ episode, sessions: [s], documents: [] }, report.sections);
+    const vocational = sections.find(item => item.id === 'vocational');
+    assert.ok(vocational.paragraphs.some(item => item.id.startsWith(`result:${s.id}:`) && item.sourceLabel.includes('앱 기록')));
+
+    const drafted = reportCompose.composeSummaryDraft({ episode, sessions: [s], documents: [] }, report.summary);
+    assert.ok(drafted.strengths.includes('대형핀 우세손'));
+    assert.ok(drafted.limitations.includes('소형핀 양손'));
+    assert.equal(drafted.vocationalLevel, report.summary.vocationalLevel, '직업수준은 평가사 판단이라 채우지 않는다');
+    assert.equal(drafted.recommendation, report.summary.recommendation, '추천 직무는 평가사 판단이라 채우지 않는다');
+
+    const kept = reportCompose.composeSummaryDraft(
+        { episode, sessions: [s], documents: [] },
+        { ...report.summary, strengths: '평가사가 직접 쓴 강점' },
+    );
+    assert.equal(kept.strengths, '평가사가 직접 쓴 강점');
+});
+
+await check('해석 화면 안내: 내부 키를 한글 이름으로 보여 주고, 개수를 넣지 않은 시행을 짚는다', () => {
+    assert.equal(readinessModule.describeReadinessItem('SMALL / DOMINANT'), '소형핀 · 우세손');
+    assert.equal(readinessModule.describeReadinessItem('trials.LARGE.NON_DOMINANT.2'), '대형핀 · 비우세손 2차 (값 충돌)');
+    assert.equal(readinessModule.describeReadinessItem('plate'), '판');
+    let s = makeHandSession();
+    s = session.changeTrialState(s, 'RUNNING', NOW, 30_000);
+    s = session.changeTrialState(s, 'FINISHED', later(30), 0);
+    const guide = readinessModule.entryGuide(s);
+    assert.deepEqual(guide.measuredWithoutScore, ['소형핀 · 우세손 1차']);
+    assert.match(guide.message, /수행량\(꽂은 핀 개수\)을 입력하지 않은 시행이 1개/);
+    assert.equal(readinessModule.entryGuide(scoredHandSession()).message, '');
+});
+
 await check('평가도구 표의 빈 칸만 자동으로 채운다', () => {
     let s = makeHandSession();
     const tools = reportModel.DEFAULT_TOOL_ROWS.map(row => ({ ...row }));

@@ -20,6 +20,8 @@ export type CaseDocumentType =
     | 've_session'
     /** 직업평가 워크벤치 — 공단 공식 결과지에서 확인한 값(JSON). PDF 원본은 저장하지 않는다 */
     | 've_source_document'
+    /** 직업평가 워크벤치 — 그 밖의 검사 분석지 정리(JSON) */
+    | 've_analysis_document'
     /** 직업평가 워크벤치 — 직업평가보고서 한 버전(JSON) */
     | 've_report';
 export type CaseDocumentTab = 'case' | 'docs' | 'employment';

@@ -280,59 +280,154 @@ scored.evaluation.pre = Array.from({ length: 20 }, () => 3);
 scored.evaluation.field = Array.from({ length: 20 }, () => 4);
 scored.evaluation.opinions.attitude = '출근 시간을 잘 지킴';
 
-await test('DOCX ① 결과보고', async () => {
-    const xml = await documentXml(docs.buildResultReport(scored, { staffName: '담당테스트', organizationName: '가상기관' }));
-    for (const text of ['지원고용 훈련 결과보고', '훈련 개요', '수당 지급 내역', '1,250,100', '560,000', '290,100', '400,000', '사전 60점', '현장 80점', '맑은 고딕', TRAINEE]) {
-        assert.ok(xml.includes(text), text);
+// 서식은 기관 제출 원본("지원고용 결과보고 서류모음" — 공단 붙임 서식 스캔본)을 그대로 따른다.
+// 칸 이름·순서뿐 아니라 열 폭(mm → twip)과 쪽 여백까지 원본 기준으로 검사한다.
+const twip = mm => Math.round(mm * 56.6929);
+/** document.xml의 글자만 문단 단위로 모은다(칸 안 줄바꿈은 문단이 나뉜다). */
+function docText(xml) {
+    return [...xml.matchAll(/<w:p[ >][\s\S]*?<\/w:p>/g)]
+        .map(match => [...match[0].matchAll(/<w:t(?: [^>]*)?>([^<]*)<\/w:t>/g)].map(t => t[1]).join(''))
+        .join('\n');
+}
+function gridCols(xml) {
+    return [...xml.matchAll(/<w:tblGrid>([\s\S]*?)<\/w:tblGrid>/g)].map(grid => [...grid[1].matchAll(/w:w="(\d+)"/g)].map(m => Number(m[1])));
+}
+function pageMargins(xml) {
+    const m = /<w:pgMar ([^>]*)\/>/.exec(xml);
+    const get = name => Number(new RegExp(`w:${name}="(\\d+)"`).exec(m[1])[1]);
+    return { left: get('left'), right: get('right') };
+}
+const closeTo = (actual, expected, label) => assert.ok(Math.abs(actual - expected) <= 2, `${label}: ${actual} ≠ ${expected}`);
+
+await test('서식 원본 폭: 7종 모두 원본에서 잰 열 폭(mm)을 그대로 쓰고 좌우 여백이 같다', async () => {
+    const expected = {
+        resultReport: [[28.7, 25.0, 32.8, 24.8, 25.5, 23.2], [16.5, 15.5, 12.3, 12.5, 13.4, 17.1, 18.0, 17.5, 17.5, 19.7], [53.4, 53.3, 53.3]],
+        paymentStatement: [[15.8, 20.2, 30.7, 38.2, 18.1, 29.2]],
+        trainingLog: [[16.9, 45.2, 26.7, 25.3, 22.1, 25.5], [6.7, 10.3, 16.5, 22.9, 18.2, 25.3, 14.8, 47.0]],
+        evaluationRecord: [[9.5, 7.7, 18.7, 47.4, 11.0, 11.7, 10.4, 43.4]],
+        coachTimesheet: [[34.8, 47.8, 30.0, 46.1], [18.3, 20.3, 20.0, 20.1, 20.0, 19.9, 20.0, 20.1]],
+        safetyChecklist: [[39.6, 39.4, 39.4, 40.1], [13.5, 109.7, 35.0], [158.2]],
+        otherIncomeStatement: [[26.9, 56.8, 27.9, 55.9]],
+    };
+    for (const item of docs.SUPPORTED_EMPLOYMENT_DOCUMENTS) {
+        const xml = await documentXml(docs.buildDocument(item.kind, case16));
+        const grids = gridCols(xml);
+        for (const [index, widths] of expected[item.kind].entries()) {
+            assert.ok(grids[index], `${item.kind} 표 ${index + 1} 없음`);
+            assert.deepEqual(grids[index], widths.map(twip), `${item.kind} 표 ${index + 1} 열 폭`);
+        }
+        const margins = pageMargins(xml);
+        closeTo(margins.left, margins.right, `${item.kind} 좌우 여백`);
+        const widest = Math.max(...expected[item.kind].map(widths => widths.reduce((a, b) => a + b, 0)));
+        assert.ok(twip(210) - margins.left - margins.right >= twip(widest) - 5, `${item.kind}: 본문 폭이 원본 표보다 좁음`);
     }
 });
 
-await test('DOCX ② 지원고용 수당 지급명세서 (열 순서 별지 제9호)', async () => {
+await test('DOCX ① 결과보고 (원본: 훈련개요 6칸·훈련결과 2단 머리·수당지급내역 3칸)', async () => {
+    const xml = await documentXml(docs.buildResultReport(scored, { staffName: '담당테스트', organizationName: '가상기관' }));
+    const text = docText(xml);
+    for (const value of ['14', '차 지원고용 결과보고', '1. 훈련개요', '2. 훈련결과', '3. 수당지급내역', '※ 지원고용수당 지급명세서 첨부', TRAINEE, EMPLOYER]) {
+        assert.ok(text.includes(value), value);
+    }
+    const order = ['사업체명', '훈련직무', '훈련기간', '계획인원', '수료인원', '취업인원'].map(label => text.indexOf(label));
+    assert.deepEqual([...order].sort((a, b) => a - b), order, '훈련개요 열 순서');
+    for (const value of ['훈련일수', '수당지급내역', '실제\n종료일', '사전\n훈련', '현장\n훈련', '사업주\n보조금', '취업일자\n(예정일)', '총 지급액(세전)']) {
+        assert.ok(text.includes(value), value);
+    }
+    for (const value of ['1,250,100원', '560,000원', '290,100원', '400,000원', '사전훈련: 1일\n현장훈련: 15일', '현장훈련: 15일']) {
+        assert.ok(text.includes(value), value);
+    }
+    assert.ok(xml.includes('w:gridSpan w:val="4"'), '훈련일수 4칸 병합');
+    assert.ok(xml.includes('바탕'), '원본 본문 글꼴(바탕)');
+    assert.equal(text.includes('담당테스트'), false, '원본 결과보고에는 서명란이 없다');
+});
+
+await test('DOCX ② [붙임 28] 지원고용 수당 지급명세서 (원본 열 순서)', async () => {
     const xml = await documentXml(docs.buildPaymentStatement(case15));
-    const order = ['구분', '성명(사업장명)', '수령인(송금계좌번호)', '연락처', '지급명세', '금액'].map(label => xml.indexOf(`>${label}<`));
+    const text = docText(xml);
+    // 제목("…지급명세서")과 섞이지 않게 표 머리 행부터 찾는다.
+    const table = text.slice(text.indexOf('(단위 : 원)'));
+    const order = ['구분', '성    명', '연락처', '지급명세', '금  액', '수령인'].map(label => table.indexOf(label));
     assert.ok(order.every(index => index >= 0), '열 제목 누락');
-    assert.deepEqual([...order].sort((a, b) => a - b), order, '열 순서');
-    for (const text of ['지원고용 수당 지급명세서', '(단위 : 원)', '훈련수당', '사업주보조금', '직무지도원수당', '525,000', '270,760', '375,000', '1,170,760', '35,000원 × 15일', '000-00-000003', EMPLOYER]) {
-        assert.ok(xml.includes(text), text);
+    assert.deepEqual([...order].sort((a, b) => a - b), order, '열 순서: 구분 | 성명(사업장명) | 연락처 | 지급명세 | 금액 | 수령인(송금계좌번호)');
+    for (const value of ['[붙임 28] 지원고용 수당 지급명세서', '지원고용 수당 지급명세서', '(단위 : 원)', '훈련\n수당', '사업주\n보조금', '직무지도\n원 수당', '525,000', '270,760', '375,000', '1,170,760', '사전+현장훈련\n35,000원 * 15일', '19,340원 * 14일', '가상은행\n000-00-000003', EMPLOYER]) {
+        assert.ok(text.includes(value), value);
     }
     assert.ok(xml.includes('w:w="11906"') && xml.includes('w:h="16838"'), 'A4');
 });
 
-await test('DOCX ③ 지원고용 훈련일지 (반복 머리행·일자별 행)', async () => {
-    const xml = await documentXml(docs.buildTrainingLog(case16));
-    for (const text of ['지원고용 훈련일지', '직무지도원 성명', '직무지도시간', '직무지도원 구분', '직무지도일수', '1:多 지도여부', '주휴수당', '평가 및 지도사항', '수행정도', '07.20(월)', '08.10(월)', '위와 같이 실시하였음을 확인함', '지도사항 16', '16일']) {
-        assert.ok(xml.includes(text), text);
+await test('DOCX ③ 지원고용 훈련일지 (원본 머리표 3줄·8칸 일지·쪽마다 머리행)', async () => {
+    const xml = await documentXml(docs.buildTrainingLog(case16, { staffName: '담당테스트', employerContactName: '업체테스트' }));
+    const text = docText(xml);
+    for (const value of ['지원고용 훈련일지', '훈련생명', '직무지도원\n성명', '직무지도\n시간', '직무지도원\n구분', '직무지도\n일수', '1:多 지도여부', '주휴수당 등', '평가 및 지도사항', '수행정도\n(측정시\n간)', '출퇴근\n지도 및\n휴게시간\n지도 여부', '7/20', '8/10', '위와 같이 실시하였음을 확인함', '지도사항 16', '16일', '6h']) {
+        assert.ok(text.includes(value), value);
+    }
+    assert.ok(text.includes('사\n전\n훈\n련') && text.includes('현\n장\n훈\n련'), '구분 칸 세로쓰기');
+    for (const value of ['(공단/위탁기관) 담당자:', '업체담당자:', '직무지도원:', '담당테스트', '업체테스트', '(서명 또는 인)']) {
+        assert.ok(text.includes(value), value);
     }
     assert.ok(xml.includes('<w:tblHeader/>') || xml.includes('<w:tblHeader'), '반복 머리행');
 });
 
-await test('훈련일지 직무지도일수 내역: coachDaysBasis(훈련일/출석일)와 일치', async () => {
+await test('훈련일지는 쪽마다 표를 나누고, 쪽마다 머리행과 구분 칸을 다시 그린다', async () => {
+    const model3 = docs.buildHtmlPreview(case16, 'trainingLog');
+    const breaks = (model3.match(/class="page-break"/g) || []).length;
+    assert.ok(breaks >= 1, '16일 일지는 두 쪽 이상');
+    assert.equal((model3.match(/평가 및 지도사항/g) || []).length, breaks + 1, '쪽마다 머리행');
+});
+
+await test('훈련일지 직무지도일수: coachDaysBasis(훈련일/출석일)와 일치', async () => {
     const c = structuredClone(case16);
     c.dailyLogs[0].attendance = '결석'; // 사전
     c.dailyLogs[5].attendance = '결석'; // 현장
-    assert.ok((await documentXml(docs.buildTrainingLog(c))).includes('16일 (사전 1일, 현장 15일)'));
-    const attended = await documentXml(docs.buildTrainingLog(c, { coachDaysBasis: 'attended' }));
-    assert.ok(attended.includes('14일 (출석 기준: 사전 0일, 현장 14일)'));
-    assert.equal(attended.includes('16일 (사전'), false);
+    assert.ok(docText(await documentXml(docs.buildTrainingLog(c))).split('\n').includes('16일'));
+    const attended = docText(await documentXml(docs.buildTrainingLog(c, { coachDaysBasis: 'attended' }))).split('\n');
+    assert.ok(attended.includes('14일'));
+    assert.equal(attended.includes('16일'), false);
 });
 
-await test('DOCX ④ 훈련생 종합 평가기록부 (20항목 문구·총점·비고)', async () => {
-    const xml = await documentXml(docs.buildEvaluationRecord(scored));
+await test('DOCX ④ 훈련생 종합 평가기록부 (원본: 영역 세로쓰기·20항목·총점·비고)', async () => {
+    const xml = await documentXml(docs.buildEvaluationRecord(scored, { staffName: '담당테스트' }));
+    const text = docText(xml);
     for (const group of model.EVALUATION_GROUPS) {
-        assert.ok(xml.includes(group.label), group.label);
-        for (const item of group.items) assert.ok(xml.includes(item), item);
+        assert.ok(text.includes([...group.label].join('\n')), group.label);
+        for (const item of group.items) assert.ok(text.includes(item), item);
     }
-    for (const text of ['지원고용 훈련생 종합 평가기록부', '총점(만점 100점)', '※ 항목별 점수채점 : 우수 5점, 양호 4점, 보통 3점, 미흡 2점, 불량 1점', '>60<', '>80<', '(위탁기관) 담당자', '출근 시간을 잘 지킴']) {
-        assert.ok(xml.includes(text), text);
+    for (const value of ['지원고용 훈련생 종합 평가기록부', '훈련생명', '사업체명', '훈련기간', '평 가 소 견', '총 점(만점 100점)', '※ 항목별 점수채점 : 우수 5점, 양호 4점, 보통 3점, 미흡 2점, 불량 1점', '60', '80', '직무지도원:', '(위탁기관) 담당자:', '담당테스트', '출근 시간을 잘 지킴']) {
+        assert.ok(text.includes(value), value);
     }
 });
 
-await test('DOCX ⑤ 직무지도원 출근부 (주간 격자)', async () => {
-    const xml = await documentXml(docs.buildCoachTimesheet(case16));
-    for (const text of ['직무지도원 출근부', '배치사업체명', '지도기간', '지도일수 및 시간', '16일 / 96시간', '1:多 지도시간', '연장 지도시간', '1주차', '4주차', '07.20', '30시간', '위와 같이 근무하였음을 확인함', COACH]) {
-        assert.ok(xml.includes(text), text);
+await test('DOCX ⑤ [붙임 19] 직무지도원 출근부 (원본: 머리표 5줄·주간 근무상황표)', async () => {
+    const xml = await documentXml(docs.buildCoachTimesheet(case16, { branchName: '가상지사', staffName: '담당테스트', employerContactName: '업체테스트' }));
+    const text = docText(xml);
+    for (const value of ['[붙임 19] 직무지도원 출근부', '가상지사 직무지도원 출근부', '배치사업체명', '지도기간', '지도일수 및 시간\n(주휴미포함)', '총 16일,   총 96h', '일반 지도시간\n(1:1 지도시간)', '1:多 지도시간\n(2인 이상)', '연장 지도시간\n(1:1 지도시간)', '※ 주휴수당은 위탁기관 담당자가 작성', '■ 근무상황표', '일자', '총\n지도시간', '1:多 지도', '7/20', '09:00 ~\n15:00\n6(h)', '위와 같이 근무(출근) 하였음을 확인함', '공단/위탁기관 담당자:', '사업체담당자:', COACH]) {
+        assert.ok(text.includes(value), value);
     }
-    for (const day of ['월', '화', '수', '목', '금', '토', '일']) assert.ok(xml.includes(`>${day}<`), day);
+    for (const day of ['월', '화', '수', '목', '금', '토', '일']) assert.ok(text.split('\n').includes(day), day);
+    assert.ok(text.split('\n').includes('/'), '기간 밖 날짜는 / 로 표시');
+});
+
+await test('DOCX ⑥ [붙임 41] 현장훈련 안전체크리스트 (원본 문구 33항목)', async () => {
+    const xml = await documentXml(docs.buildSafetyChecklist(case16, { staffName: '담당테스트' }));
+    const text = docText(xml);
+    const { SAFETY_CHECKLIST } = await load('docs/builders.mjs');
+    assert.equal(SAFETY_CHECKLIST.reduce((total, group) => total + group.items.length, 0), 33);
+    for (const group of SAFETY_CHECKLIST) for (const item of group.items) assert.ok(text.includes(item), item);
+    for (const value of ['[붙임 41] 지원고용 현장훈련 안전체크리스트', '점검 담당자', '점검일', '업체명', '지원고용 훈련기간', '□양호   □개선필요', '□ 개선필요에 대한 조치사항 기입', '담당테스트', EMPLOYER]) {
+        assert.ok(text.includes(value), value);
+    }
+    assert.ok(xml.includes('w:u w:val="single"'), '안내문 밑줄');
+});
+
+await test('DOCX ⑦ 기타소득 지급내역서 (주민등록번호는 앱이 채우지 않는다)', async () => {
+    const xml = await documentXml(docs.buildOtherIncomeStatement(case16, { organizationName: '가상기관' }));
+    const text = docText(xml);
+    for (const value of ['(별지 제37-4호 서식)', '기타소득 지급내역서', '□ 건명: 제14차 중증장애인지원고용 직무지도원 수당지급', '□ 지급대상자 정보', '주민등록번호', '소속기관', '가상기관', '지급은행', '000-00-000001', '400,000원', '위 지급대상자 본인은 상기 내역을 이해하고', '(서명 또는 인)', COACH]) {
+        assert.ok(text.includes(value), value);
+    }
+    assert.equal(/\d{6}-[1-8]\d{6}/.test(text), false, '주민등록번호 형식 값이 들어가면 안 된다');
+    assert.ok(xml.includes('w:u w:val="double"'), '제목 이중 밑줄');
 });
 
 await test('HTML 미리보기·파일명(이용자 이름 미포함)', () => {

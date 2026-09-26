@@ -86,6 +86,18 @@ const NAME_LABEL_PATTERN = /(?:이\s?름|성\s?명|성함|이용자명|대상자
  */
 const NAME_FIELD_LABEL_PATTERN =
   /(?:이\s?름|성\s?명|성함|이용자명|대상자명|내담자명|참여자명|훈련생명|보호자\s?성명|보호자명|담당자명|의사명|평가사|평가자|검사자)(?:\s*[:：]\s*|\s+)([가-힣]{2,8})/g;
+/**
+ * 자간을 벌려 쓴 이름 칸("직업평가사  이 지 영", "팀 장  김 경 은").
+ * 공식 서식 결재란·서명란에서 흔하다. 글자마다 띄어 쓰므로 위 패턴들이 모두 놓친다.
+ *
+ * 쌍점이 없을 수 있으므로 **성씨로 시작하는 값만** 이름으로 본다(아래 수집부에서 확인).
+ * 줄바꿈은 건너뛰지 않는다(`[ 	]`) — 다음 줄의 글자를 이름으로 잘못 묶지 않기 위해서다.
+ */
+const SPACED_NAME_LABEL_PATTERN =
+  /(?:이\s?름|성\s?명|성함|이용자명|대상자명|내담자명|참여자명|훈련생명|보호자\s?성명|보호자명|담당자명|의사명|직업평가사|평가사|평가자|검사자|작성자|팀\s?장|부\s?서\s?장|과\s?장|관\s?장|센\s?터\s?장)[ 	]*[:：]?[ 	]*((?:[가-힣][ 	]{1,3}){1,3}[가-힣])/g;
+
+/** 서식상 이름 뒤에 붙는 글자("… 이 지 영  인 / 서명"). 이름에서 떼어 낸다. */
+const NAME_TRAILING_MARKERS = new Set(['인', '님', '외', '등', '및', '씨']);
 const HONORIFIC_NAME_PATTERN = /(?<![가-힣])([가-힣]{3})\s?(?:님|씨)/g;
 const ROLE_NAME_PATTERN = /(?<![가-힣])([가-힣]{3})\s(?:이용자|보호자|당사자|훈련생|참여자|구직자|근로자|팀장|과장|대리|주임|선생님|사원|직원|원장|실장|부장|사장|대표|사회복지사|직업재활사|상담사|복지사)/g;
 // 의사 이름: "홍길동 전문의", "홍길동 의사", "홍길동 주치의", "홍길동 교수님"
@@ -293,6 +305,16 @@ export function anonymizeText(text: string, options: AnonymizeOptions = {}): Ano
       if (!name) continue;
       if (/[:：]/.test(match[0]) || COMMON_SURNAMES.has(name[0])) detectedNames.add(name);
     }
+    for (const match of segment.matchAll(SPACED_NAME_LABEL_PATTERN)) {
+      // 띄어 쓴 글자를 붙여 이름으로 만들고("이 지 영" → "이지영"),
+      // 뒤에 딸려 온 서식 글자("… 영 인")를 떼어 낸다.
+      let candidate = match[1].replace(/[ 	]+/g, '');
+      while (candidate.length > 2 && NAME_TRAILING_MARKERS.has(candidate[candidate.length - 1])) {
+        candidate = candidate.slice(0, -1);
+      }
+      const name = cleanLabeledName(candidate);
+      if (name && COMMON_SURNAMES.has(name[0])) detectedNames.add(name);
+    }
     for (const pattern of [HONORIFIC_NAME_PATTERN, ROLE_NAME_PATTERN, DOCTOR_NAME_PATTERN]) {
       for (const match of segment.matchAll(pattern)) {
         if (looksLikePersonName(match[1])) detectedNames.add(match[1]);
@@ -301,15 +323,22 @@ export function anonymizeText(text: string, options: AnonymizeOptions = {}): Ano
     return segment;
   });
 
+  // 붙여 쓴 형태와 자간을 벌려 쓴 형태를 한 번에 찾는다("이지영" / "이 지 영").
+  // 글자 사이 공백은 한 칸까지만, 줄바꿈은 허용하지 않는다(다음 줄 글자를 이름에 붙이지 않기 위해).
+  const spacedName = (name: string) => [...name].map(escapeRegExp).join('[ 	]?');
   const namesInText = [...detectedNames]
-    .filter(name => maskedText.includes(name))
+    .filter(name => new RegExp(spacedName(name)).test(maskedText))
     .sort((a, b) => b.length - a.length);
   if (namesInText.length) {
     const namePattern = new RegExp(
-      `(?<![가-힣A-Za-z0-9])(${namesInText.map(escapeRegExp).join('|')})(?=$|[^가-힣A-Za-z0-9]|(?:${NAME_FOLLOWER_PATTERN}))`,
+      `(?<![가-힣A-Za-z0-9])(${namesInText.map(spacedName).join('|')})(?=$|[^가-힣A-Za-z0-9]|(?:${NAME_FOLLOWER_PATTERN}))`,
       'g',
     );
-    maskedText = mapOutsideTokens(maskedText, segment => segment.replace(namePattern, (name: string) => tokenFor('이름', name)));
+    // 띄어 쓴 이름과 붙여 쓴 이름은 같은 사람이므로 같은 토큰을 준다(AI가 두 사람으로 보지 않게).
+    // 복원은 붙여 쓴 형태로 한다 — AI 답변에 들어온 토큰을 자연스러운 이름으로 되돌리기 위해서다.
+    maskedText = mapOutsideTokens(maskedText, segment =>
+      segment.replace(namePattern, (name: string) => tokenFor('이름', name.replace(/[ 	]+/g, ''))),
+    );
   }
 
   // 장애유형(예: 지적장애, 자폐성장애)과 장애 정도, 진료과·기관 종류는 업무에 필요하므로 변환하지 않는다.

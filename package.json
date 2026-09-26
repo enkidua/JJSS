@@ -37,6 +37,7 @@
         "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json",
         "make:ve-verification": "node scripts/make-ve-verification.mjs",
         "make:verification": "node scripts/make-jjss-verification.mjs",
+        "verify:ai-live": "node scripts/verify-ai-live.mjs",
         "check:build": "node scripts/check-production-build.mjs",
         "verify:release": "npm run test:all && npm run test:data-at-rest && npm run build && npm run check:build && npm run test:usability"
     },

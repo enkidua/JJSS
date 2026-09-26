@@ -51,14 +51,15 @@ export function createHandFunctionTrials(durationSeconds = HAND_FUNCTION_DURATIO
 /**
  * 요강 표4-2·4-3의 오류유형. `scoreEffect`가 수행량 처리다.
  * INCLUDE: 수행량에 포함 / EXCLUDE: 수행량에서 제외.
+ * 단축키는 화면에 보이는 순서 그대로 F1부터 배정한다(오류 F1~F6, 진행 기록 F7~F12 — common.ts).
  */
 export const handFunctionErrorEvents: EventDefinition[] = [
-    { type: 'DROPPED_PIN', label: '핀 떨어뜨림', shortcut: 'F3', scoreEffect: 'INCLUDE' },
+    { type: 'DROPPED_PIN', label: '핀 떨어뜨림', shortcut: 'F1', scoreEffect: 'INCLUDE' },
     { type: 'SKIPPED_HOLE', label: '꽂기 생략(빈 구멍)', shortcut: 'F2', scoreEffect: 'INCLUDE' },
-    { type: 'OTHER_HAND_INSERT', label: '다른 손으로 꽂음', scoreEffect: 'EXCLUDE' },
-    { type: 'MULTIPLE_PINS', label: '여러 핀 동시 집기', shortcut: 'F1', scoreEffect: 'EXCLUDE', requiresReinstruction: true },
-    { type: 'WRONG_DIRECTION', label: '핀 방향 오류', requiresReinstruction: true },
-    { type: 'BILATERAL_TIME_GAP', label: '양손 동시성 부족(1초 이상)', scoreEffect: 'EXCLUDE' },
+    { type: 'OTHER_HAND_INSERT', label: '다른 손으로 꽂음', shortcut: 'F3', scoreEffect: 'EXCLUDE' },
+    { type: 'MULTIPLE_PINS', label: '여러 핀 동시 집기', shortcut: 'F4', scoreEffect: 'EXCLUDE', requiresReinstruction: true },
+    { type: 'WRONG_DIRECTION', label: '핀 방향 오류', shortcut: 'F5', requiresReinstruction: true },
+    { type: 'BILATERAL_TIME_GAP', label: '양손 동시성 부족(1초 이상)', shortcut: 'F6', scoreEffect: 'EXCLUDE' },
 ];
 
 const specificObservationPairs: Array<[string, string]> = [

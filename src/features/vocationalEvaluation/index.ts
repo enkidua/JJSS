@@ -7,6 +7,7 @@ export * from './dominantHand';
 export * from './timer';
 export * from './measurement';
 export * from './events';
+export * from './shortcuts';
 export * from './session';
 export {
     attemptProblems,
@@ -45,4 +46,6 @@ export * from './sourceDocument/record';
 export * from './report/model';
 export * from './report/serialization';
 export * from './report/compose';
+export * from './report/narrative';
+export * from './analysisDocument/model';
 export * from './storage';

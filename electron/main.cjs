@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain, safeStorage, shell } = require('electron');
 const path = require('path');
 const { fileURLToPath } = require('url');
 const { getAllowedExternalUrl } = require('./externalUrl.cjs');
@@ -191,6 +191,10 @@ if (!hasSingleInstanceLock) {
     });
 
     app.whenReady().then(async () => {
+        // 기본 메뉴를 없앤다. 기본 메뉴의 단축키(F11 전체화면, Ctrl+R 새로고침 등)가 화면보다 먼저
+        // 키를 가로채, 직업평가 검사 중 F1~F12 오류 기록 단축키(특히 F11)가 동작하지 않기 때문이다.
+        // 메뉴 표시줄은 원래 숨겨져 있었고(autoHideMenuBar) 앱의 모든 기능은 화면 버튼으로 제공된다.
+        Menu.setApplicationMenu(null);
         registerJjssFileIpc({ app, ipcMain, dialog, shell, BrowserWindow, expectedIndexPath: INDEX_PATH });
         registerDataKeyIpc({ app, ipcMain, safeStorage, expectedIndexPath: INDEX_PATH });
         createWindow();

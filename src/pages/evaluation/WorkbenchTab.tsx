@@ -7,6 +7,7 @@ import { CalendarDays, ChevronRight, FlaskConical, Loader2, Plus, Trash2 } from 
 import {
     EPISODE_STATUS_LABELS,
     createEpisode,
+    type AnalysisDocumentRecord,
     type EvaluationEpisode,
     type EvaluationReport,
     type SourceDocumentRecord,
@@ -14,6 +15,7 @@ import {
 } from '../../features/vocationalEvaluation';
 import {
     deleteEpisode,
+    listAnalysisDocumentsForEpisode,
     listEpisodesForSeeker,
     listSessionsForEpisode,
     listReportsForEpisode,
@@ -35,9 +37,11 @@ export function WorkbenchTab({
     onSeekerChange: (key: string) => void;
 }) {
     const seekers = useDataStore(state => state.seekers);
+    const [seekerQuery, setSeekerQuery] = useState('');
     const [episodes, setEpisodes] = useState<EvaluationEpisode[]>([]);
     const [sessionsByEpisode, setSessionsByEpisode] = useState<Record<string, TestSession[]>>({});
     const [documentsByEpisode, setDocumentsByEpisode] = useState<Record<string, SourceDocumentRecord[]>>({});
+    const [analysesByEpisode, setAnalysesByEpisode] = useState<Record<string, AnalysisDocumentRecord[]>>({});
     const [reportsByEpisode, setReportsByEpisode] = useState<Record<string, EvaluationReport[]>>({});
     const [openId, setOpenId] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
@@ -48,6 +52,28 @@ export function WorkbenchTab({
         () => seekers.find(item => getSeekerKey(item) === seekerKey) ?? null,
         [seekers, seekerKey],
     );
+
+    /**
+     * 이름·이용자 ID로 좁힌 목록(현황판의 "이용자 찾기"와 같은 방식).
+     * 이미 고른 이용자는 검색어와 상관없이 목록에 남겨 선택이 풀리지 않게 한다.
+     */
+    const filteredSeekers = useMemo(() => {
+        const query = seekerQuery.replace(/\s+/g, '').toLowerCase();
+        if (!query) return seekers;
+        return seekers.filter(item => {
+            if (getSeekerKey(item) === seekerKey) return true;
+            const name = String(item.name ?? '').replace(/\s+/g, '').toLowerCase();
+            const id = String((item as { seekerId?: unknown }).seekerId ?? '').replace(/\s+/g, '').toLowerCase();
+            return name.includes(query) || id.includes(query);
+        });
+    }, [seekers, seekerQuery, seekerKey]);
+
+    // 검색 결과가 한 명으로 좁혀지면 바로 선택해 준다(엔터·클릭 없이).
+    useEffect(() => {
+        if (!seekerQuery.trim() || filteredSeekers.length !== 1) return;
+        const key = getSeekerKey(filteredSeekers[0]);
+        if (key !== seekerKey) onSeekerChange(key);
+    }, [filteredSeekers, seekerQuery, seekerKey, onSeekerChange]);
 
     const reload = useCallback(async () => {
         if (!seekerKey) {
@@ -66,6 +92,10 @@ export function WorkbenchTab({
                 list.map(async episode => [episode.id, await listSourceDocumentsForEpisode(episode.id)] as const),
             );
             setDocumentsByEpisode(Object.fromEntries(documentEntries));
+            const analysisEntries = await Promise.all(
+                list.map(async episode => [episode.id, await listAnalysisDocumentsForEpisode(episode.id)] as const),
+            );
+            setAnalysesByEpisode(Object.fromEntries(analysisEntries));
             const reportEntries = await Promise.all(
                 list.map(async episode => [episode.id, await listReportsForEpisode(episode.id)] as const),
             );
@@ -130,6 +160,7 @@ export function WorkbenchTab({
                 episode={openEpisode}
                 sessions={sessionsByEpisode[openEpisode.id] ?? []}
                 sourceDocuments={documentsByEpisode[openEpisode.id] ?? []}
+                analysisDocuments={analysesByEpisode[openEpisode.id] ?? []}
                 reports={reportsByEpisode[openEpisode.id] ?? []}
                 onBack={() => {
                     setOpenId(null);
@@ -144,9 +175,22 @@ export function WorkbenchTab({
         <div className="space-y-4">
             <section className="glass-card !p-5">
                 <div className="flex flex-wrap items-end justify-between gap-3">
+                    <div className="flex-1 min-w-[200px]">
+                        <label htmlFor="ve-seeker-search" className="text-sm text-white/60">
+                            이용자 찾기
+                        </label>
+                        <input
+                            id="ve-seeker-search"
+                            type="search"
+                            className="input-field mt-1"
+                            placeholder="이름 또는 이용자 ID로 검색"
+                            value={seekerQuery}
+                            onChange={event => setSeekerQuery(event.target.value)}
+                        />
+                    </div>
                     <div className="flex-1 min-w-[220px]">
                         <label htmlFor="ve-seeker" className="text-sm text-white/60">
-                            이용자
+                            이용자 선택{seekerQuery.trim() ? ` (검색 결과 ${filteredSeekers.length}명)` : ''}
                         </label>
                         <select
                             id="ve-seeker"
@@ -155,9 +199,10 @@ export function WorkbenchTab({
                             onChange={event => onSeekerChange(event.target.value)}
                         >
                             <option value="">이용자를 선택하세요</option>
-                            {seekers.map(item => (
+                            {filteredSeekers.map(item => (
                                 <option key={getSeekerKey(item)} value={getSeekerKey(item)}>
                                     {item.name}
+                                    {(item as { seekerId?: string }).seekerId ? ` · ${(item as { seekerId?: string }).seekerId}` : ''}
                                 </option>
                             ))}
                         </select>

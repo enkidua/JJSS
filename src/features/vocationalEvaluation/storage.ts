@@ -13,6 +13,12 @@ import { normalizeEpisode, parseEpisode, serializeEpisode, type EvaluationEpisod
 import { normalizeSession, parseSession, serializeSession } from './model/sessionSerialization';
 import { normalizeReport, parseReport, serializeReport } from './report/serialization';
 import { normalizeSourceDocument, parseSourceDocument, serializeSourceDocument } from './sourceDocument/record';
+import {
+    normalizeAnalysisDocument,
+    parseAnalysisDocument,
+    serializeAnalysisDocument,
+    type AnalysisDocumentRecord,
+} from './analysisDocument/model';
 import { findTestPlugin } from './tests/registry';
 import type { EvaluationReport } from './report/model';
 import type { SourceDocumentRecord } from './sourceDocument/types';
@@ -22,6 +28,7 @@ export const VE_EPISODE_DOC_TYPE = 've_episode' as const;
 export const VE_SESSION_DOC_TYPE = 've_session' as const;
 export const VE_SOURCE_DOCUMENT_DOC_TYPE = 've_source_document' as const;
 export const VE_REPORT_DOC_TYPE = 've_report' as const;
+export const VE_ANALYSIS_DOC_TYPE = 've_analysis_document' as const;
 
 const ORGANIZATION = '직업재활기관';
 
@@ -113,6 +120,9 @@ export async function deleteEpisode(id: string): Promise<void> {
     }
     for (const sourceDocument of await listSourceDocumentsForEpisode(id)) {
         await deleteDoc('caseDocuments', sourceDocument.id);
+    }
+    for (const analysis of await listAnalysisDocumentsForEpisode(id)) {
+        await deleteDoc('caseDocuments', analysis.id);
     }
     for (const report of await listReportsForEpisode(id)) {
         await deleteDoc('caseDocuments', report.id);
@@ -237,6 +247,59 @@ export async function deleteSourceDocument(id: string): Promise<void> {
     const doc = await getById<CaseDocument>('caseDocuments', id);
     if (!doc) return;
     if (doc.type !== VE_SOURCE_DOCUMENT_DOC_TYPE) throw new Error('결과지 기록 문서가 아니어서 삭제하지 않았습니다.');
+    await deleteDoc('caseDocuments', id);
+}
+
+/* ── 분석지(그 밖의 검사 결과지) ─────────────────────────────── */
+
+function documentToAnalysis(doc: CaseDocument): AnalysisDocumentRecord | null {
+    const parsed = parseAnalysisDocument(doc.content);
+    if (!parsed.ok) {
+        console.warn('[vocationalEvaluation] 분석지 기록을 읽지 못했습니다.', { id: doc.id, reason: parsed.error });
+        return null;
+    }
+    return { ...parsed.record, id: doc.id || parsed.record.id };
+}
+
+export async function listAnalysisDocumentsForEpisode(episodeId: string): Promise<AnalysisDocumentRecord[]> {
+    if (!episodeId) return [];
+    const docs = await query<CaseDocument>('caseDocuments', doc => doc.type === VE_ANALYSIS_DOC_TYPE);
+    return docs
+        .map(documentToAnalysis)
+        .filter((item): item is AnalysisDocumentRecord => item !== null && item.episodeId === episodeId)
+        .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+}
+
+export async function saveAnalysisDocument(value: AnalysisDocumentRecord): Promise<AnalysisDocumentRecord> {
+    const now = new Date().toISOString();
+    const existing = value.id ? await getById<CaseDocument>('caseDocuments', value.id) : undefined;
+    if (existing && existing.type !== VE_ANALYSIS_DOC_TYPE) {
+        throw new Error('같은 ID의 다른 문서가 있어 분석지 기록을 저장하지 못했습니다.');
+    }
+    const toSave = normalizeAnalysisDocument({ ...value, createdAt: value.createdAt || now, updatedAt: now });
+    const doc: CaseDocument = {
+        ...(existing || {}),
+        id: toSave.id,
+        seekerId: toSave.seekerId,
+        seekerName: toSave.seekerName,
+        type: VE_ANALYSIS_DOC_TYPE,
+        content: serializeAnalysisDocument(toSave),
+        tab: 'case',
+        source: 'evaluation',
+        organization: existing?.organization || ORGANIZATION,
+        title: '검사 분석지 정리',
+        createdAt: existing?.createdAt || localTimestamp(),
+        updatedAt: localTimestamp(),
+    };
+    await addDoc<CaseDocument>('caseDocuments', doc);
+    return toSave;
+}
+
+export async function deleteAnalysisDocument(id: string): Promise<void> {
+    if (!id) return;
+    const doc = await getById<CaseDocument>('caseDocuments', id);
+    if (!doc) return;
+    if (doc.type !== VE_ANALYSIS_DOC_TYPE) throw new Error('분석지 기록 문서가 아니어서 삭제하지 않았습니다.');
     await deleteDoc('caseDocuments', id);
 }
 

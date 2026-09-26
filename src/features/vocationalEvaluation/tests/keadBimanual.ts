@@ -57,19 +57,20 @@ const specificObservations: ObservationDefinition[] = specificObservationPairs.m
     supportsDetail: true,
 }));
 
+// 화면에 보이는 순서 그대로 F1~F12를 배정한다. 나머지는 단축키 없이 마우스로 기록한다.
 export const bimanualEvents: EventDefinition[] = [
     { type: 'ONE_HAND_DOMINANT', label: '한 손 중심', shortcut: 'F1' },
     { type: 'ASSEMBLY_SEQUENCE_ERROR', label: '순서 오류', shortcut: 'F2' },
     { type: 'DROPPED_COMPONENT', label: '부품 떨어뜨림', shortcut: 'F3' },
     { type: 'ATTENTION_DISTRACTION', label: '주의분산', shortcut: 'F4' },
-    { type: 'DIFFICULTY_HOLDING_COMPONENT', label: '부품 잡기 어려움' },
-    { type: 'DIFFICULTY_ROTATING_COMPONENT', label: '부품 돌리기 어려움' },
-    { type: 'WRONG_COMPONENT_DIRECTION', label: '부품 방향 오류' },
-    { type: 'SEARCH_DELAY', label: '부품 찾기 지연' },
-    { type: 'REPEATED_INSTRUCTION', label: '재설명' },
-    { type: 'ADDITIONAL_DEMONSTRATION', label: '추가 시범' },
-    { type: 'SELF_CORRECTION', label: '스스로 수정' },
-    { type: 'STRATEGY_CHANGE', label: '방법 변경' },
+    { type: 'DIFFICULTY_HOLDING_COMPONENT', label: '부품 잡기 어려움', shortcut: 'F5' },
+    { type: 'DIFFICULTY_ROTATING_COMPONENT', label: '부품 돌리기 어려움', shortcut: 'F6' },
+    { type: 'WRONG_COMPONENT_DIRECTION', label: '부품 방향 오류', shortcut: 'F7' },
+    { type: 'SEARCH_DELAY', label: '부품 찾기 지연', shortcut: 'F8' },
+    { type: 'REPEATED_INSTRUCTION', label: '재설명', shortcut: 'F9' },
+    { type: 'ADDITIONAL_DEMONSTRATION', label: '추가 시범', shortcut: 'F10' },
+    { type: 'SELF_CORRECTION', label: '스스로 수정', shortcut: 'F11' },
+    { type: 'STRATEGY_CHANGE', label: '방법 변경', shortcut: 'F12' },
     { type: 'TASK_STOPPED', label: '작업 멈춤' },
     { type: 'FATIGUE', label: '피로' },
     { type: 'PAIN', label: '통증' },

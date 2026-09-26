@@ -19,8 +19,8 @@ interface Props {
     onBusyChange: (busy: boolean) => void;
 }
 
-/** 결과보고 4종: 직무지도원 출근부를 뺀 앞의 4가지(기관 제출용). 전체 5종은 출근부 포함. */
-const REPORT_KINDS: SupportedEmploymentDocumentKind[] = SUPPORTED_EMPLOYMENT_DOCUMENTS.filter(item => item.kind !== 'coachTimesheet').map(item => item.kind);
+/** 결과보고 4종: 결과보고·지급명세서·훈련일지·평가기록부. 전체 7종은 원본 서류모음 순서 그대로(출근부·안전체크리스트·기타소득 지급내역서 포함). */
+const REPORT_KINDS: SupportedEmploymentDocumentKind[] = ['resultReport', 'paymentStatement', 'trainingLog', 'evaluationRecord'];
 const ALL_KINDS: SupportedEmploymentDocumentKind[] = SUPPORTED_EMPLOYMENT_DOCUMENTS.map(item => item.kind);
 
 const ISSUE_STYLE = {
@@ -47,6 +47,8 @@ export function OutputPanel({ draft, update, dirty, onBusyChange }: Props) {
     const docOptions: DocumentOptions = {
         organizationName: options.organizationName.trim() || undefined,
         staffName: options.staffName.trim() || undefined,
+        branchName: options.branchName?.trim() || undefined,
+        employerContactName: options.employerContactName?.trim() || undefined,
         documentDate: documentDate || undefined,
         coachDaysBasis: options.coachDaysBasis,
     };
@@ -153,7 +155,17 @@ export function OutputPanel({ draft, update, dirty, onBusyChange }: Props) {
                 </select>
             </label>
         </div>
-        <p className="text-xs text-white/45 mt-1">기관명·담당자는 이 회차에 함께 저장되고, 다음 회차로 복사할 때도 이어집니다.</p>
+        <div className="grid gap-3 sm:grid-cols-2 mt-3">
+            <label className="text-sm text-white/75" htmlFor="se-branch-name">공단 지사명(출근부 제목)
+                <input id="se-branch-name" className="input-field mt-1" value={options.branchName || ''} maxLength={30} placeholder="예: 서울동부지사"
+                    onChange={e => setOption({ branchName: e.target.value })} />
+            </label>
+            <label className="text-sm text-white/75" htmlFor="se-employer-contact">업체 담당자(훈련일지·출근부 확인란)
+                <input id="se-employer-contact" className="input-field mt-1" value={options.employerContactName || ''} maxLength={30}
+                    onChange={e => setOption({ employerContactName: e.target.value })} />
+            </label>
+        </div>
+        <p className="text-xs text-white/45 mt-1">기관명·담당자·지사명·업체 담당자는 이 회차에 함께 저장되고, 다음 회차로 복사할 때도 이어집니다. 서식은 기관 제출 원본(공단 붙임 서식)과 같은 칸·폭으로 나옵니다. 주민등록번호처럼 앱에 저장하지 않는 칸은 비워 두니 출력 후 직접 적어 주세요.</p>
 
         <div className="mt-4" aria-live="polite">
             <h4 className="text-base font-bold text-white">출력 전 확인</h4>
@@ -204,11 +216,11 @@ export function OutputPanel({ draft, update, dirty, onBusyChange }: Props) {
                 <Package className="w-4 h-4" aria-hidden="true" /> 결과보고 4종 묶음
             </button>
             <button type="button" className="btn-secondary !px-4 !py-2 text-sm flex items-center gap-2" disabled={busy || blocked}
-                onClick={() => void handleBundle(ALL_KINDS, '전체 5종')}>
-                <Package className="w-4 h-4" aria-hidden="true" /> 전체 5종 묶음
+                onClick={() => void handleBundle(ALL_KINDS, '서류모음 전체 7종')}>
+                <Package className="w-4 h-4" aria-hidden="true" /> 서류모음 전체 7종 묶음
             </button>
             {busy && <span role="status" className="text-sm text-white/60 self-center">서류를 만드는 중...</span>}
         </div>
-        <p className="text-xs text-white/45 mt-2">묶음은 ZIP 파일 하나로 저장됩니다. 압축을 풀면 파일 이름 앞 번호(01_~05_) 순서로 정리되어 있습니다.</p>
+        <p className="text-xs text-white/45 mt-2">묶음은 ZIP 파일 하나로 저장됩니다. 압축을 풀면 파일 이름 앞 번호(01_~07_) 순서로 원본 서류모음과 같은 순서입니다.</p>
     </section>;
 }

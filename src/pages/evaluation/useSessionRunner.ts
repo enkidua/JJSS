@@ -37,6 +37,7 @@ import {
 import { createId } from '../../features/vocationalEvaluation/ids';
 import { saveSession } from '../../features/vocationalEvaluation/storage';
 import { useSaveQueue, type SaveState } from './useSaveQueue';
+import { playTimeUpChime, primeChime } from './timeUpChime';
 
 export type { SaveState } from './useSaveQueue';
 
@@ -102,6 +103,7 @@ export function useSessionRunner(initial: TestSession, onSaved?: (session: TestS
         onSavedRef.current?.(saved);
     });
     const persist = queue.save;
+    const savePaused = queue.save;
 
     /**
      * 상태를 바꾸고 저장한다. 도메인 규칙 위반은 화면에 문구로 알린다.
@@ -157,6 +159,8 @@ export function useSessionRunner(initial: TestSession, onSaved?: (session: TestS
             setRemainingMs(left);
             if (left <= 0) {
                 anchorRef.current = null;
+                // 제한시간이 다 되었을 때만 울린다(평가사가 직접 "측정 종료"를 누른 경우는 울리지 않는다).
+                playTimeUpChime();
                 apply(current =>
                     current.bimanual
                         ? changeBimanualState(current, 'FINISHED', new Date().toISOString(), 0)
@@ -211,12 +215,14 @@ export function useSessionRunner(initial: TestSession, onSaved?: (session: TestS
                 const paused = current.bimanual
                     ? changeBimanualState(current, 'PAUSED', at, left)
                     : changeTrialState(current, 'PAUSED', at, left);
-                queue.save(paused);
+                savePaused(paused);
             } catch {
                 // 전환이 거부되면 복구 절차(중단 처리)에 맡긴다.
             }
         },
-        [stopAnchor, queue],
+        // 화면을 닫을 때 한 번만 돌아야 한다. 바뀌지 않는 함수만 의존성으로 둔다 —
+        // 저장 상태처럼 자주 바뀌는 값에 묶이면 측정 중 렌더마다 기준점이 지워져 타이머가 멈춘다.
+        [stopAnchor, savePaused],
     );
 
     /* ── 동작 ───────────────────────────────────────────────── */
@@ -224,6 +230,8 @@ export function useSessionRunner(initial: TestSession, onSaved?: (session: TestS
     const now = () => new Date().toISOString();
 
     const start = useCallback(() => {
+        // 알림음은 사용자 조작 안에서 오디오를 깨워 두어야 제한시간 끝에 막히지 않고 울린다.
+        primeChime();
         const next = apply(current => {
             const left = currentMeasurement(current).remainingMs;
             return current.bimanual

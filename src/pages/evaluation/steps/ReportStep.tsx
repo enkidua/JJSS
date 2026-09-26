@@ -7,13 +7,19 @@ import { FileDown, FileText, Lock, Plus, RefreshCw } from 'lucide-react';
 import {
     buildResultTables,
     composeSections,
+    composeSummaryDraft,
     confirmReport,
     createNextVersion,
     createReport,
     fillToolRows,
     isLocked,
+    adoptedClaims,
+    buildObservationNarrative,
+    selectCurrentRun,
+    type AnalysisDocumentRecord,
     type EvaluationEpisode,
     type EvaluationReport,
+    type InterpretationRun,
     type SourceDocumentRecord,
     type TestSession,
 } from '../../../features/vocationalEvaluation';
@@ -22,6 +28,7 @@ import { refreshRunStaleness } from '../../../features/vocationalEvaluation/inte
 import { packDocument } from '../../../features/docx/blocks';
 import { saveReport } from '../../../features/vocationalEvaluation/storage';
 import { saveJjssBlob, saveJjssPdf, savedLocationMessage } from '../../../utils/jjssFileService';
+import { ReportEvidencePanel } from './ReportEvidencePanel';
 import { useConfirm } from '../../../components/common/ConfirmProvider';
 import { useAppToast } from '../../../components/Toast';
 import { useDataStore } from '../../../store/dataStore';
@@ -35,6 +42,7 @@ export function ReportStep({
     episode,
     sessions,
     documents,
+    analyses,
     reports,
     onReportsChange,
     onEpisodeChange,
@@ -43,6 +51,7 @@ export function ReportStep({
     episode: EvaluationEpisode;
     sessions: TestSession[];
     documents: SourceDocumentRecord[];
+    analyses: AnalysisDocumentRecord[];
     reports: EvaluationReport[];
     onReportsChange: (next: EvaluationReport[]) => void;
     onEpisodeChange: (next: EvaluationEpisode) => void;
@@ -77,6 +86,34 @@ export function ReportStep({
     );
 
     const text = (value: unknown) => (typeof value === 'string' ? value : '');
+
+    // 보고서 재료 요약: 무엇이 모였고 무엇이 비었는지 만들기 전에 한눈에 보여 준다.
+    const materials = useMemo(() => {
+        const confirmedSheets = documents.filter(item => item.confirmedAt && !item.supersededAt).length;
+        const findingCount = analyses.reduce(
+            (total, record) => total + record.findings.filter(finding => finding.included && !finding.blocked).length,
+            0,
+        );
+        const observationCount = sessions.reduce(
+            (total, session) => total + session.observations.filter(item => buildObservationNarrative(item)).length,
+            0,
+        );
+        const adoptedCount = sessions.reduce(
+            (total, session) => total + adoptedClaims(selectCurrentRun(episode.interpretations as InterpretationRun[], session.id)).length,
+            0,
+        );
+        return [
+            { label: '② 검사 실시', value: sessions.length ? `${sessions.length}건` : '없음', ok: sessions.length > 0 },
+            { label: '⑤ 공식 결과지(확정)', value: confirmedSheets ? `${confirmedSheets}건` : '없음', ok: confirmedSheets > 0 },
+            {
+                label: '⑤ 분석지',
+                value: analyses.length ? `${analyses.length}건 · 문장 ${findingCount}개` : '없음',
+                ok: analyses.length > 0,
+            },
+            { label: '③ 행동관찰', value: observationCount ? `${observationCount}개` : '없음', ok: observationCount > 0 },
+            { label: '⑥ 채택한 해석', value: adoptedCount ? `${adoptedCount}문장` : '없음', ok: adoptedCount > 0 },
+        ];
+    }, [documents, analyses, sessions, episode.interpretations]);
 
     /**
      * 보고서를 조립하기 전에 해석 실행의 근거가 아직 유효한지 다시 계산한다.
@@ -121,7 +158,8 @@ export function ReportStep({
         const composed: EvaluationReport = {
             ...base,
             tools: fillToolRows(base.tools, sessions),
-            sections: composeSections({ episode: currentEpisode, sessions, documents }, base.sections),
+            sections: composeSections({ episode: currentEpisode, sessions, documents, analyses }, base.sections),
+            summary: composeSummaryDraft({ episode: currentEpisode, sessions, documents, analyses }, base.summary),
             resultTables: buildResultTables(sessions, documents),
         };
         try {
@@ -139,7 +177,8 @@ export function ReportStep({
         update({
             ...report,
             tools: fillToolRows(report.tools, sessions),
-            sections: composeSections({ episode: currentEpisode, sessions, documents }, report.sections),
+            sections: composeSections({ episode: currentEpisode, sessions, documents, analyses }, report.sections),
+            summary: composeSummaryDraft({ episode: currentEpisode, sessions, documents, analyses }, report.summary),
             resultTables: buildResultTables(sessions, documents),
         });
         showToast('자동 문단과 결과표를 다시 만들었습니다.', 'success');
@@ -208,11 +247,23 @@ export function ReportStep({
             <div className="glass-card !p-5 space-y-3">
                 <h3 className="font-semibold text-white">직업평가보고서</h3>
                 <p className="text-sm text-white/50">
-                    회차 정보·검사 결과·채택한 해석 문장을 모아 보고서 초안을 만듭니다. 만든 뒤에도 모든 항목을 직접 고칠 수 있습니다.
+                    아래 재료(검사 기록·결과지·분석지·관찰·해석)를 모아 보고서 서식에 맞춘 초안을 한 번에 만듭니다. 만든
+                    뒤에도 모든 항목을 직접 고칠 수 있고, 재료가 없어도 직접 서술만으로 완성할 수 있습니다.
                 </p>
+                <ul className="grid sm:grid-cols-2 gap-2" aria-label="보고서 재료">
+                    {materials.map(item => (
+                        <li key={item.label} className={`glass rounded-lg px-3 py-2 text-sm flex items-center justify-between gap-2 ${item.ok ? 'text-white/75' : 'text-white/40'}`}>
+                            <span>{item.label}</span>
+                            <span className={item.ok ? 'text-emerald-200' : ''}>{item.value}</span>
+                        </li>
+                    ))}
+                </ul>
                 <button type="button" className="btn-primary" onClick={() => void handleCreate()} disabled={episodeLocked}>
-                    <Plus size={16} className="inline mr-1" /> 보고서 만들기
+                    <Plus size={16} className="inline mr-1" /> 보고서 초안 만들기
                 </button>
+                <p className="text-xs text-white/40">
+                    재료를 나중에 더 채웠다면 보고서 화면의 <strong>자동 문단 새로 만들기</strong>로 다시 반영할 수 있습니다.
+                </p>
             </div>
         );
     }
@@ -338,6 +389,16 @@ export function ReportStep({
                     ))}
                 </div>
             </section>
+
+            <ReportEvidencePanel
+                episode={episode}
+                sessions={sessions}
+                documents={documents}
+                analyses={analyses}
+                report={report}
+                locked={locked}
+                onUpdate={update}
+            />
 
             <section className="glass-card !p-5 space-y-3">
                 <h3 className="font-semibold text-white">종합소견 및 직업재활방향</h3>

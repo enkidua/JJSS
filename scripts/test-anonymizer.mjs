@@ -161,6 +161,40 @@ test('쌍점 없이 칸만 띄운 이름 칸(공단 결과지 서식)도 가리�
     }
 });
 
+test('자간을 벌려 쓴 이름(결재란·서명란)도 가리고, 붙여 쓴 형태와 같은 토큰을 쓴다', () => {
+    // 공식 서식 결재란은 글자마다 띄어 쓴다: "직업평가사 이 지 영".
+    const text = [
+        '작 성 일 : 2025년 10월 30일   직업평가사 서 하 람 (서명)',
+        '팀 장 도 경 한 (서명)',
+        '부 서 장 남 시 우 (서명)',
+        '상담 중 서하람 평가사가 직접 확인함.',
+    ].join(String.fromCharCode(10));
+    const { maskedText, mapping } = anonymizeText(text);
+    for (const spaced of ['서 하 람', '도 경 한', '남 시 우']) {
+        assert.equal(maskedText.includes(spaced), false, spaced);
+    }
+    assert.equal(maskedText.includes('서하람'), false, '붙여 쓴 형태도 함께 가려야 한다');
+    // 같은 사람은 띄어 쓰든 붙여 쓰든 같은 토큰이어야 복원이 어긋나지 않는다.
+    const tokens = [...maskedText.matchAll(/⟦이름\d+⟧/g)].map(m => m[0]);
+    assert.equal(new Set(tokens).size, 3, `이름 토큰 3개여야 함: ${tokens.join(',')}`);
+    assert.equal(tokens.filter(t => t === tokens[0]).length, 2, '같은 이름은 같은 토큰');
+    assert.ok(Object.values(mapping).includes('서하람'));
+    // 직함·날짜 같은 서식 글자는 그대로 둔다.
+    for (const keep of ['작 성 일', '직업평가사', '팀 장', '부 서 장', '2025년 10월 30일', '(서명)']) {
+        assert.ok(maskedText.includes(keep), keep);
+    }
+});
+
+test('자간 벌림 오탐 방지: 띄어 쓴 일반 낱말과 줄바꿈 너머 글자는 이름으로 보지 않는다', () => {
+    const text = [
+        '평가사 소 견 은 다음과 같다.',
+        '작성자',
+        '하 람 은 이 문서와 관계없는 다음 줄 글자다.',
+        '팀 장 회 의 결과를 공유함.',
+    ].join(String.fromCharCode(10));
+    assert.equal(anonymizeText(text).maskedText, text);
+});
+
 test('쌍점 없는 이름 칸 오탐 방지: 값이 아닌 일반 낱말은 가리지 않는다', () => {
     const text = '이름 확인이 필요합니다. 성명 미상으로 접수됨. 평가사 소견 작성 예정. 이름표시 방식 협의.';
     assert.equal(anonymizeText(text).maskedText, text);

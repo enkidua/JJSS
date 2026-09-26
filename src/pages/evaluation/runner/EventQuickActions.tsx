@@ -1,5 +1,8 @@
 import { Undo2 } from 'lucide-react';
 import { getTestPlugin, tallyEvents, type EvaluationEventType, type TestSession } from '../../../features/vocationalEvaluation';
+import { isMacKeyboard, shortcutDisplay } from '../../../features/vocationalEvaluation/shortcuts';
+
+const MAC = isMacKeyboard();
 
 const EFFECT_LABELS: Record<'INCLUDE' | 'EXCLUDE', string> = {
     INCLUDE: '수행량 포함',
@@ -44,7 +47,7 @@ export function EventQuickActions({
             >
                 <span className="flex items-center gap-2">
                     <span>{label}</span>
-                    {shortcut && <kbd className="text-[10px] px-1 py-0.5 rounded bg-black/30 text-white/50">{shortcut}</kbd>}
+                    {shortcut && <kbd className="text-[10px] px-1 py-0.5 rounded bg-black/30 text-white/50">{shortcutDisplay(shortcut, MAC)}</kbd>}
                     {count > 0 && <span className="ml-auto font-bold tabular-nums">{count}</span>}
                 </span>
                 {effect && <span className="block text-[11px] text-white/40 mt-0.5">{EFFECT_LABELS[effect]}</span>}
@@ -54,6 +57,11 @@ export function EventQuickActions({
 
     return (
         <div className="space-y-3">
+            <p className="text-xs text-amber-100/80 bg-amber-300/10 border border-amber-300/20 rounded-lg px-3 py-2">
+                <kbd className="text-[10px] px-1 py-0.5 rounded bg-black/30 mr-1">{MAC ? '⌘+F1~F12' : 'Ctrl+F1~F12'}</kbd>
+                각 버튼의 표시된 키를 누르면 화면 순서대로 바로 기록됩니다(측정 중·일시정지·측정 완료 상태에서).
+                다른 프로그램 단축키와 겹치지 않도록 조합키를 쓰며, 맨 F키(F1~F12)를 눌러도 똑같이 기록됩니다.
+            </p>
             {errors.length > 0 && (
                 <div>
                     <p className="text-xs text-white/40 mb-2">오류 기록 (실시요강 표4-2·4-3)</p>

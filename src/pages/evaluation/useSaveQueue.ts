@@ -7,7 +7,7 @@
  *
  * 함께 쓰는 것: 저장소의 revision 비교(예전 상태 저장 거부)와 `flush()`(화면을 떠나기 전에 강제 저장).
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 export type SaveState = 'SAVED' | 'SAVING' | 'ERROR';
 
@@ -104,5 +104,7 @@ export function useSaveQueue<T>(
         [enqueue],
     );
 
-    return { saveState, saveError, save, saveDebounced, flush };
+    // 돌려주는 객체를 고정한다. 매 렌더 새 객체를 주면 이 값을 의존성으로 쓰는 효과(화면 닫을 때 정리 등)가
+    // 렌더마다 다시 돌아, 측정 중 타이머 기준점을 지우고 일시정지본을 저장하는 사고가 난다.
+    return useMemo(() => ({ saveState, saveError, save, saveDebounced, flush }), [saveState, saveError, save, saveDebounced, flush]);
 }

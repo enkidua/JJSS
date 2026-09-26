@@ -17,6 +17,7 @@ import { ObservationStep } from './steps/ObservationStep';
 import { InterpretationStep } from './steps/InterpretationStep';
 import { ReportStep } from './steps/ReportStep';
 import { SourceDocumentStep } from './steps/SourceDocumentStep';
+import type { AnalysisDocumentRecord } from '../../features/vocationalEvaluation';
 import { SummaryStep } from './steps/SummaryStep';
 import { TestStep } from './steps/TestStep';
 
@@ -25,7 +26,7 @@ const STEPS = [
     { id: 'tests', label: '② 검사 실시' },
     { id: 'observation', label: '③ 행동관찰' },
     { id: 'summary', label: '④ 원자료 요약' },
-    { id: 'source', label: '⑤ 결과지 가져오기' },
+    { id: 'source', label: '⑤ 결과지·분석지' },
     { id: 'interpretation', label: '⑥ 해석' },
     { id: 'report', label: '⑦ 보고서' },
 ] as const;
@@ -38,6 +39,7 @@ export function EpisodeDetail({
     episode: initial,
     sessions: initialSessions,
     sourceDocuments: initialSourceDocuments,
+    analysisDocuments: initialAnalysisDocuments,
     reports: initialReports,
     onBack,
     onEpisodeSaved,
@@ -45,6 +47,7 @@ export function EpisodeDetail({
     episode: EvaluationEpisode;
     sessions: TestSession[];
     sourceDocuments: SourceDocumentRecord[];
+    analysisDocuments: AnalysisDocumentRecord[];
     reports: EvaluationReport[];
     onBack: () => void;
     onEpisodeSaved: (episode: EvaluationEpisode) => void;
@@ -52,6 +55,7 @@ export function EpisodeDetail({
     const [episode, setEpisode] = useState(initial);
     const [sessions, setSessions] = useState(initialSessions);
     const [sourceDocuments, setSourceDocuments] = useState(initialSourceDocuments);
+    const [analysisDocuments, setAnalysisDocuments] = useState(initialAnalysisDocuments);
     const [reports, setReports] = useState(initialReports);
     const [step, setStep] = useState<StepId>('basic');
     const showToast = useAppToast();
@@ -169,6 +173,7 @@ export function EpisodeDetail({
                     documents={sourceDocuments}
                     onEpisodeChange={updateEpisode}
                     locked={locked}
+                    onGoToTest={() => setStep('tests')}
                 />
             )}
             {step === 'report' && (
@@ -176,6 +181,7 @@ export function EpisodeDetail({
                     episode={episode}
                     sessions={sessions}
                     documents={sourceDocuments}
+                    analyses={analysisDocuments}
                     reports={reports}
                     onReportsChange={setReports}
                     onEpisodeChange={updateEpisode}
@@ -188,6 +194,8 @@ export function EpisodeDetail({
                     sessions={sessions}
                     documents={sourceDocuments}
                     onDocumentsChange={setSourceDocuments}
+                    analyses={analysisDocuments}
+                    onAnalysesChange={setAnalysisDocuments}
                     locked={locked}
                 />
             )}

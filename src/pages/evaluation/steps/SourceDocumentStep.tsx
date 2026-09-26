@@ -28,6 +28,8 @@ import { documentTypeToPluginId } from '../../../features/vocationalEvaluation/s
 import { readSourceDocument, sha256Hex } from '../../../features/vocationalEvaluation/sourceDocument/extraction';
 import { deleteSourceDocument, saveSourceDocument } from '../../../features/vocationalEvaluation/storage';
 import { FileDropZone } from '../../../components/common/FileDropZone';
+import { AnalysisDocumentsSection } from './AnalysisDocumentsSection';
+import type { AnalysisDocumentRecord } from '../../../features/vocationalEvaluation';
 import { useDataStore } from '../../../store/dataStore';
 import { getSeekerKey } from '../../../utils/seeker';
 import { useConfirm } from '../../../components/common/ConfirmProvider';
@@ -48,12 +50,16 @@ export function SourceDocumentStep({
     sessions,
     documents,
     onDocumentsChange,
+    analyses,
+    onAnalysesChange,
     locked = false,
 }: {
     episode: EvaluationEpisode;
     sessions: TestSession[];
     documents: SourceDocumentRecord[];
     onDocumentsChange: (next: SourceDocumentRecord[]) => void;
+    analyses: AnalysisDocumentRecord[];
+    onAnalysesChange: (next: AnalysisDocumentRecord[]) => void;
     /** 보관된 회차는 읽기 전용 */
     locked?: boolean;
 }) {
@@ -550,6 +556,8 @@ export function SourceDocumentStep({
                     )}
                 </>
             )}
+
+            <AnalysisDocumentsSection episode={episode} analyses={analyses} onAnalysesChange={onAnalysesChange} locked={locked} />
         </div>
     );
 }

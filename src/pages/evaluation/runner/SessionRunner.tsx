@@ -3,7 +3,7 @@
  * 앱은 실시요강에 따라 시행한 결과를 기록만 하고, 실물 검사 도구나 공단 프로그램을 대체하지 않는다.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Check, CircleSlash, Pause, Play, RotateCcw, Save, Square } from 'lucide-react';
+import { AlertTriangle, Bell, BellOff, Check, CircleSlash, Pause, Play, RotateCcw, Save, Square } from 'lucide-react';
 import {
     COMPONENT_KEYS,
     conditionSummaries,
@@ -17,7 +17,9 @@ import {
 } from '../../../features/vocationalEvaluation';
 import { useConfirm } from '../../../components/common/ConfirmProvider';
 import { useAppToast } from '../../../components/Toast';
+import { matchesEventShortcut } from '../../../features/vocationalEvaluation/shortcuts';
 import { useSessionRunner } from '../useSessionRunner';
+import { isChimeEnabled, playTimeUpChime, primeChime, setChimeEnabled } from '../timeUpChime';
 import { EventQuickActions } from './EventQuickActions';
 import { ScoreControl } from './ScoreControl';
 import { TimerDisplay } from './TimerDisplay';
@@ -34,6 +36,7 @@ export function SessionRunner({
     onSaved?: (session: TestSession) => void;
     onClose: () => void;
 }) {
+    const [chimeOn, setChimeOn] = useState(isChimeEnabled);
     const runner = useSessionRunner(initial, onSaved);
     const { session } = runner;
     const plugin = getTestPlugin(session.testPluginId);
@@ -63,7 +66,8 @@ export function SessionRunner({
             const target = event.target as HTMLElement | null;
             const editing = target?.closest('input,textarea,select,[contenteditable="true"],[role="dialog"],[role="alertdialog"]');
             const status = currentMeasurement(session).status;
-            const shortcut = plugin.events.find(item => item.shortcut === event.key);
+            // 조합키 규칙(shortcuts.ts): Ctrl+F키(맥 ⌘+F키) 또는 맨 F키만 인정. Alt·Shift 조합은 무시.
+            const shortcut = plugin.events.find(item => matchesEventShortcut(item.shortcut, event));
             if (shortcut && !editing && ['RUNNING', 'PAUSED', 'FINISHED'].includes(status)) {
                 event.preventDefault();
                 runner.addEvent(shortcut.type);
@@ -137,6 +141,16 @@ export function SessionRunner({
     const bimanualState = session.bimanual;
     const saveLabel =
         runner.saveState === 'SAVING' ? '저장 중…' : runner.saveState === 'ERROR' ? '저장 실패' : '저장됨';
+    const toggleChime = () => {
+        const next = !chimeOn;
+        setChimeEnabled(next);
+        setChimeOn(next);
+        // 켤 때 한 번 들려준다(소리 크기 확인용).
+        if (next) {
+            primeChime();
+            playTimeUpChime();
+        }
+    };
 
     return (
         <div className="space-y-4">
@@ -147,6 +161,17 @@ export function SessionRunner({
                         <p className="text-sm text-white/50 mt-1">{plugin.manifest.durationNote}</p>
                     </div>
                     <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            className="btn-ghost !px-2.5 !py-1.5 text-xs flex items-center gap-1"
+                            aria-pressed={chimeOn}
+                            aria-label={chimeOn ? '제한시간 종료 알림음 끄기' : '제한시간 종료 알림음 켜기'}
+                            title="제한시간이 끝나면 알림음(디리링)을 냅니다"
+                            onClick={toggleChime}
+                        >
+                            {chimeOn ? <Bell size={14} aria-hidden="true" /> : <BellOff size={14} aria-hidden="true" />}
+                            {chimeOn ? '알림음 켜짐' : '알림음 꺼짐'}
+                        </button>
                         <span
                             className={`text-xs px-2 py-1 rounded-lg ${
                                 runner.saveState === 'ERROR' ? 'bg-rose-500/20 text-rose-200' : 'bg-white/10 text-white/60'

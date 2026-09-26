@@ -1,5 +1,6 @@
 /**
- * 지원고용 결과보고 서류 5종: DOCX(Document) 빌더와 PDF·미리보기용 HTML.
+ * 지원고용 결과보고 서류모음 7종: DOCX(Document) 빌더와 PDF·미리보기용 HTML.
+ * 양식은 기관 제출 원본(공단 붙임 서식)을 mm 단위로 옮긴 것이다(builders.ts).
  * 저장은 화면에서: `saveJjssBlob('case-management', buildDocumentFileName(kind, c), await packDocument(doc))`,
  * PDF는 `saveJjssPdf('case-management', buildDocumentFileName(kind, c, { extension: 'pdf' }), buildHtmlPreview(c, kind))`.
  */
@@ -11,8 +12,10 @@ import {
     coachTimesheetModel,
     documentModel,
     evaluationRecordModel,
+    otherIncomeStatementModel,
     paymentStatementModel,
     resultReportModel,
+    safetyChecklistModel,
     SUPPORTED_EMPLOYMENT_DOCUMENTS,
     trainingLogModel,
     type DocumentOptions,
@@ -40,6 +43,14 @@ export function buildEvaluationRecord(c: SupportedEmploymentCase, options?: Docu
 
 export function buildCoachTimesheet(c: SupportedEmploymentCase, options?: DocumentOptions): Document {
     return renderDocx(coachTimesheetModel(c, options));
+}
+
+export function buildSafetyChecklist(c: SupportedEmploymentCase, options?: DocumentOptions): Document {
+    return renderDocx(safetyChecklistModel(c, options));
+}
+
+export function buildOtherIncomeStatement(c: SupportedEmploymentCase, options?: DocumentOptions): Document {
+    return renderDocx(otherIncomeStatementModel(c, options));
 }
 
 export function buildDocument(kind: SupportedEmploymentDocumentKind, c: SupportedEmploymentCase, options?: DocumentOptions): Document {
