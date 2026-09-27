@@ -470,8 +470,10 @@ report = {
         goalGuardian: '(평가사 직접 작성 영역)',
         strengths: '(평가사 직접 작성 영역)',
         limitations: '(평가사 직접 작성 영역)',
+        supportNeeds: '(평가사 직접 작성 영역)',
         recommendation: '(평가사 직접 작성 영역)',
         recommendedPrograms: '(평가사 직접 작성 영역)',
+        overallOpinion: '(평가사 직접 작성 영역)',
     },
 };
 const confirmed = reportModel.confirmReport(report, episode.evaluator, later(1600));

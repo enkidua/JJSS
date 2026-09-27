@@ -68,7 +68,8 @@ function printedNorms(document: SourceDocumentRecord | undefined): Array<{ label
 function normSentences(document: SourceDocumentRecord | undefined): { text: string | null; comparison: string | null } {
     const norms = printedNorms(document);
     if (!norms.length) return { text: null, comparison: null };
-    const text = `공단 검사해석 프로그램 결과지에 인쇄된 규준 비교는 ${norms.map(norm => norm.text).join(', ')}이다(결과지 표기값을 그대로 옮김).`;
+    // 값 자체가 소견의 내용이다. "앱이 계산하지 않았다" 같은 출처 설명은 결과표 아래 주석에만 둔다.
+    const text = `결과지에 인쇄된 규준 비교는 ${norms.map(norm => norm.text).join(', ')}이다.`;
     // 비장애인 규준과 장애 규준이 함께 인쇄되어 있으면, 두 인쇄값의 크고 작음만 적는다.
     const nondisabled = norms.find(norm => /비장애/.test(norm.label) && /전체/.test(norm.label) && norm.value !== null);
     const disabled = norms.find(norm => !/비장애/.test(norm.label) && /장애/.test(norm.label) && /전체/.test(norm.label) && norm.value !== null);
@@ -189,9 +190,17 @@ function bimanualNarrative(facts: CanonicalFact[]): ResultNarrative {
     if (total !== null || duration) {
         const parts = [
             total !== null ? `제한시간 1분 30초 동안의 총 수행량은 ${total}개(총 도구수 ${bimanualPartSpecification.reportedTotal}개 기준)` : '',
-            duration ? `기록된 완성소요시간은 ${duration}` : '',
+            // "완성소요시간"이라고 쓰면 전체 과제를 끝낸 시간으로 읽힌다. 기록된 측정 시간일 뿐이다.
+            duration ? `측정 기록시간은 ${duration}` : '',
         ].filter(Boolean);
         paragraphs.push({ key: 'bimanual:total', text: `${parts.join('이고, ')}이다.` });
+        // 수행량이 총 도구수에 못 미치면 "완료"로 읽히지 않도록 분명히 적는다.
+        if (total !== null && total < bimanualPartSpecification.reportedTotal) {
+            paragraphs.push({
+                key: 'bimanual:incomplete',
+                text: `총 도구수 ${bimanualPartSpecification.reportedTotal}개 중 ${total}개가 기록되어 전체 과제를 끝낸 기록은 아니다. 기록시간은 전체 조립을 마친 시간이 아니라 측정한 시간이다.`,
+            });
+        }
     }
 
     if (components.length) {

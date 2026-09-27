@@ -47,5 +47,6 @@ export * from './report/model';
 export * from './report/serialization';
 export * from './report/compose';
 export * from './report/narrative';
+export * from './report/aiOpinion';
 export * from './analysisDocument/model';
 export * from './storage';

@@ -20,6 +20,7 @@ export const ANALYSIS_PROMPT = `당신은 직업평가 검사 분석지(결과�
 ${Object.entries(ANALYSIS_AREA_LABELS)
     .map(([key, label]) => `   - ${key}: ${label}`)
     .join('\n')}
+   어느 영역인지 확신할 수 없으면 억지로 고르지 말고 unclassified를 쓰세요.
 6. 설명 없이 JSON 하나만 출력하세요:
 { "documentType": "ANALYSIS", "detectedTitle": "문서에 적힌 검사 이름", "findings": [{ "area": "psychological", "text": "..." }], "warnings": [] }`;
 

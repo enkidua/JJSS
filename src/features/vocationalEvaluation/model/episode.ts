@@ -30,6 +30,25 @@ export const EPISODE_NEED_LABELS: Record<EpisodeNeedKey, string> = {
     emotion: '정서',
 };
 
+/**
+ * ⑥ 결과 해석의 "결과 분석" 본문 — 기존 결과분석기 엔진(services/gemini analyzeTestResults)이 쓴 초안과
+ * 평가사의 수정본. ⑦ 종합소견 자동 작성의 입력으로 그대로 전달된다.
+ */
+export interface EpisodeResultAnalysis {
+    /** 분석 본문(평가사가 고쳤으면 고친 내용) */
+    text: string;
+    /** AI가 초안을 쓴 시각 */
+    generatedAt: ISODateTime;
+    /** 평가사가 마지막으로 고친 시각(고친 적 없으면 없음) */
+    editedAt?: ISODateTime;
+    /**
+     * 분석을 만들 때의 입력 자료 지문(report/aiOpinion.ts의 analysisSourceHash).
+     * 이후 KEAD 값·공식 결과지·관찰·분석지가 바뀌면 지문이 어긋나 STALE로 판정된다.
+     * 없으면(이전 형식) 보수적으로 STALE로 본다.
+     */
+    sourceHash?: string;
+}
+
 export interface EvaluationEpisode {
     version: number;
     id: string;
@@ -48,6 +67,10 @@ export interface EvaluationEpisode {
     evaluationDate: string;
     evaluator: string;
     needs: Record<EpisodeNeedKey, boolean>;
+    /** 장애 및 진단이력 — 보고서 "평가 상세"에 자동으로 들어간다 */
+    disabilityHistory: string;
+    /** 교육훈련 및 직업경력 — 보고서 "평가 상세"에 자동으로 들어간다 */
+    careerHistory: string;
     dominantHandAssessment: DominantHandAssessment;
     /** 판정 결과를 저장해 둔다(판정 로직이 바뀌어도 과거 회차의 기록이 흔들리지 않게). */
     dominantHand: DominantHand;
@@ -56,6 +79,8 @@ export interface EvaluationEpisode {
     reportIds: string[];
     /** 해석 실행 기록(AI 제안과 평가사의 채택·수정·제외) */
     interpretations: InterpretationRun[];
+    /** ⑥ 결과 분석(기존 결과분석기 엔진의 결과 + 평가사 수정본) */
+    resultAnalysis?: EpisodeResultAnalysis;
     note: string;
     createdAt?: ISODateTime;
     updatedAt?: ISODateTime;
@@ -89,6 +114,8 @@ export function createEpisode(input: {
         evaluationDate: input.evaluationDate,
         evaluator: '',
         needs: emptyNeeds(),
+        disabilityHistory: '',
+        careerHistory: '',
         dominantHandAssessment: createDominantHandAssessment(),
         dominantHand: 'UNKNOWN',
         sessionIds: [],
@@ -114,6 +141,18 @@ function normalizeHandAnswers(value: unknown): Record<string, 'RIGHT' | 'LEFT' |
         if (answer === 'RIGHT' || answer === 'LEFT' || answer === 'EITHER') result[key] = answer;
     }
     return result;
+}
+
+function normalizeResultAnalysis(value: unknown): EpisodeResultAnalysis | undefined {
+    if (!value || typeof value !== 'object') return undefined;
+    const raw = value as Partial<EpisodeResultAnalysis>;
+    if (typeof raw.text !== 'string' || !raw.text.trim() || typeof raw.generatedAt !== 'string') return undefined;
+    return {
+        text: raw.text,
+        generatedAt: raw.generatedAt,
+        ...(typeof raw.editedAt === 'string' && raw.editedAt ? { editedAt: raw.editedAt } : {}),
+        ...(typeof raw.sourceHash === 'string' && raw.sourceHash ? { sourceHash: raw.sourceHash } : {}),
+    };
 }
 
 function normalizeAssessment(value: unknown): DominantHandAssessment {
@@ -149,6 +188,8 @@ export function normalizeEpisode(value: EvaluationEpisode): EvaluationEpisode {
         evaluationDate: text(value.evaluationDate),
         evaluator: text(value.evaluator),
         needs,
+        disabilityHistory: text(value.disabilityHistory),
+        careerHistory: text(value.careerHistory),
         dominantHandAssessment: assessment,
         dominantHand: resolved.hand,
         sessionIds: idList(value.sessionIds),
@@ -157,6 +198,7 @@ export function normalizeEpisode(value: EvaluationEpisode): EvaluationEpisode {
         interpretations: (Array.isArray(value.interpretations) ? value.interpretations : [])
             .map(normalizeInterpretationRun)
             .filter((run): run is InterpretationRun => run !== null),
+        resultAnalysis: normalizeResultAnalysis(value.resultAnalysis),
         note: text(value.note),
         createdAt: value.createdAt,
         updatedAt: value.updatedAt,

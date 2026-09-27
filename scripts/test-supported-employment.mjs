@@ -144,6 +144,9 @@ await test('공휴일 2026: 설·추석 연휴, 대체공휴일(3·1절·부처�
     for (const date of ['2026-02-16', '2026-02-17', '2026-02-18', '2026-09-24', '2026-09-25', '2026-09-26', '2026-05-24']) {
         assert.ok(dates.has(date), date);
     }
+    // 근로자의 날(5/1): 사업체 유급휴일이라 훈련 제외일. 금요일이라 대체공휴일 대상도 아니어야 한다.
+    assert.equal(holidays.getHolidayName('2026-05-01'), '근로자의 날');
+    assert.equal(holidays.getHolidayName('2025-05-01'), '근로자의 날');
     const substitutes = list.filter(item => item.substitute).map(item => item.date);
     assert.deepEqual(substitutes, ['2026-03-02', '2026-05-25', '2026-08-17', '2026-10-05']);
     // 추석 연휴 마지막 날이 토요일이어도 설·추석은 대체공휴일 없음

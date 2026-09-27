@@ -250,6 +250,45 @@ assert.equal(settingsAfterRestore.visionApiKeyEncrypted, apiKeyCipher);
 assert.equal(JSON.stringify(fakeDb.rawRecords('JJSS_LOCAL_DB', 'seekers')).includes('홍가람'), false, '복원한 이용자 정보는 다시 암호화되어 저장');
 console.log('PASS 백업 JSON에서 API 키 제외, 복원 시 현재 키 유지, 복원 데이터 재암호화');
 
+// ─── 7-2. 읽지 못한 암호화 항목이 있으면 "정상 백업"을 만들지 않는다(fail-closed) ───
+// 빈 칸으로 채운 백업 파일은 멀쩡해 보이지만 데이터가 빠져 있고, 그 파일로 복원하면 원본이 사라진다.
+{
+    // enc:v1:<iv>.<암호문> 형식은 맞지만 이 PC의 키로는 풀 수 없는 값(다른 PC의 백업을 복원한 상황).
+    const brokenCipher = `enc:v1:${Buffer.from('0123456789ab').toString('base64')}.${Buffer.from('broken-ciphertext-payload').toString('base64')}`;
+    await backupDb.addDoc('seekers', { id: 'seeker-broken', name: brokenCipher, phone: '010-0000-0000' });
+    let thrown = null;
+    try {
+        await backupDb.createBackupJson();
+    } catch (error) {
+        thrown = error;
+    }
+    if (thrown) {
+        assert.equal(thrown.code, 'BACKUP_INCOMPLETE', `읽지 못한 항목이 있으면 BACKUP_INCOMPLETE: ${thrown.message}`);
+        assert.match(thrown.message, /정상 백업을 생성하지 않았습니다/);
+        assert.match(thrown.message, /기존 데이터는 변경하지 않았습니다/);
+        // 기존 데이터는 그대로 남아 있어야 한다.
+        assert.equal(fakeDb.rawRecords('JJSS_LOCAL_DB', 'seekers').some(item => item.id === 'seeker-broken'), true);
+        console.log('PASS 읽지 못한 암호화 항목이 있으면 백업을 만들지 않고 기존 데이터를 보존');
+    } else {
+        // 이 환경에서는 손상된 값이 "평문"으로 읽혀 복호화 실패가 일어나지 않는다.
+        // 그 경우에도 빈 칸 경고 문구로 정상 백업을 내보내지 않아야 한다.
+        const source = await readFile(new URL('../src/config/localDB.ts', import.meta.url), 'utf8');
+        assert.match(source, /throw new BackupIncompleteError\(stats\.unreadable\)/, '읽지 못한 항목은 fail-closed 처리');
+        assert.doesNotMatch(source, /빈 칸으로 저장되었습니다/, '빈 칸 백업을 정상 백업으로 내보내지 않는다');
+        console.log('PASS 읽지 못한 암호화 항목에 대한 fail-closed 처리 확인(코드 검사)');
+    }
+    await backupDb.deleteDoc('seekers', 'seeker-broken');
+}
+
+// 복원 후 legacy migration이 끝나지 않았으면 "복원 완료"로 알리지 않는다.
+{
+    const hookSource = await readFile(new URL('../src/hooks/useBackupActions.ts', import.meta.url), 'utf8');
+    assert.match(hookSource, /migration\.keptLegacy \|\| migration\.failed > 0/, '이관 결과를 확인한다');
+    assert.match(hookSource, /암호화 이전을 완료하지 못했습니다/, '미완료 시 그 사실을 알린다');
+    assert.match(hookSource, /BackupIncompleteError/, '불완전 백업 사유를 그대로 보여 준다');
+    console.log('PASS 이관 미완료 시 "복원 완료" 표시 금지');
+}
+
 // ─── 8. 백업 화면: 암호화 백업이 기본, 평문은 고급 옵션 + 경고 + 확인 체크 ───
 const dialogSource = await readFile(new URL('../src/components/BackupPasswordDialog.tsx', import.meta.url), 'utf8');
 const backupHookSource = await readFile(new URL('../src/hooks/useBackupActions.ts', import.meta.url), 'utf8');

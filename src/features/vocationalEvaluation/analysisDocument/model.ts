@@ -28,6 +28,9 @@ export const ANALYSIS_AREAS = [
     'strength',
     'limitation',
     'recommendation',
+    // 분류를 확신할 수 없는 문장. "분류 실패 = 사회진단"이 아니다 — 평가사가 영역을 정하기 전에는
+    // 보고서 자동 조립에 들어가지 않는다.
+    'unclassified',
 ] as const;
 export type AnalysisArea = (typeof ANALYSIS_AREAS)[number];
 
@@ -42,10 +45,11 @@ export const ANALYSIS_AREA_LABELS: Record<AnalysisArea, string> = {
     strength: '직업적 강점(요약)',
     limitation: '제한점·고려사항(요약)',
     recommendation: '추천 직무·프로그램(요약)',
+    unclassified: '분류 필요(기타)',
 };
 
-/** 분류를 알 수 없는 문장이 떨어지는 곳. 평가사가 영역을 바꿔 주면 된다. */
-export const ANALYSIS_FALLBACK_AREA: AnalysisArea = 'social';
+/** 분류를 알 수 없는 문장이 떨어지는 곳. 평가사가 영역을 정해 주기 전에는 보고서에 자동 포함되지 않는다. */
+export const ANALYSIS_FALLBACK_AREA: AnalysisArea = 'unclassified';
 
 export interface AnalysisFinding {
     id: string;
@@ -110,9 +114,24 @@ export function createAnalysisFinding(area: AnalysisArea, text: string): Analysi
         id: createId('vefind'),
         area,
         text: trimmed,
-        included: !blocked && trimmed.length > 0,
+        // 분류하지 못한 문장은 평가사가 영역을 정한 뒤에만 포함되게 기본을 끔으로 둔다.
+        included: !blocked && trimmed.length > 0 && area !== 'unclassified',
         ...(blocked ? { blocked } : {}),
     };
+}
+
+/**
+ * AI로 내보내는 참고 내용에 쓰는 제목. **실제 파일 이름은 절대 쓰지 않는다** —
+ * 파일 이름에는 이용자 이름·기관명이 들어 있는 경우가 많다(예: 김민수_CISA_서울병원.pdf).
+ * 화면·로컬 출력에는 analysisTitle(파일 이름 포함)을 그대로 써도 된다.
+ */
+export function outboundAnalysisTitle(
+    record: Pick<AnalysisDocumentRecord, 'detectedTitle' | 'source'>,
+    index: number,
+): string {
+    const detected = record.detectedTitle?.trim();
+    if (detected) return detected;
+    return record.source === 'MANUAL' ? '직접 입력 분석지' : `추가 평가자료 ${index + 1}`;
 }
 
 export function createAnalysisDocument(input: {

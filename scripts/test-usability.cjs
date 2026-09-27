@@ -374,6 +374,9 @@ async function main() {
             await page.getByRole('group', { name: question }).getByRole('button', { name: '오른손' }).click();
         }
         await page.locator('.badge', { hasText: '오른손' }).first().waitFor();
+        // ① 기본정보에 한 번만 적으면 보고서 머리 정보·평가 상세로 자동으로 들어간다.
+        await page.locator('#ve-purpose').fill('검증용 평가목적');
+        await page.locator('#ve-disability-history').fill('지적장애 정도가 심한 장애로 2019년 등록되었다.');
         await page.getByRole('button', { name: '② 검사 실시', exact: true }).click();
         await page.getByRole('button', { name: /KEAD 손기능 작업표본검사/ }).click();
         await page.getByText('실시요강 기준 조건당 30초').first().waitFor();
@@ -419,30 +422,57 @@ async function main() {
         await page.getByRole('button', { name: /직접 입력/ }).click();
         await page.getByLabel('보고서 영역').first().selectOption('psychological');
         await page.getByLabel('분석지 문장').first().fill('수용어휘력 검사 결과 등가연령 6세 0개월~6세 5개월로 표기되어 있다.');
+        // ⑥ 결과 해석: 기존 결과분석기 방식의 "결과 분석" 카드가 자료를 자동으로 연결한다.
+        await page.getByRole('button', { name: '⑥ 해석', exact: true }).click();
+        await page.getByRole('heading', { name: '결과 분석', exact: true }).waitFor();
+        assert.equal(await page.getByRole('button', { name: '결과 분석하기', exact: true }).count(), 1, 'one-click analysis CTA exists');
+        await page.getByLabel('자동으로 연결된 자료').getByText('양손협응', { exact: false }).waitFor(); // 자동 연결 자료 표시
+        // 기존 claim/근거 UI는 기본으로 접혀 있어야 한다(주 흐름은 위의 결과 분석).
+        assert.equal(await page.getByRole('heading', { name: '근거 확인' }).count(), 0, 'legacy evidence UI is collapsed by default');
+        const legacyToggle = page.getByRole('button', { name: /세부 근거/ });
+        assert.equal(await legacyToggle.getAttribute('aria-expanded'), 'false');
+        await legacyToggle.click();
+        await page.getByRole('heading', { name: '근거 확인' }).waitFor(); // 펼치면 그대로 쓸 수 있다
+        await legacyToggle.click();
         await page.getByRole('button', { name: '⑦ 보고서', exact: true }).click();
         // 재료 요약: 분석지 1건이 집계된다.
         await page.getByText('⑤ 분석지', { exact: true }).waitFor();
         await page.getByText('1건 · 문장 1개', { exact: false }).waitFor();
+        // ⑥ 결과 분석 재료 상태가 표시된다(없으면 ⑦ 자동 작성이 내부 실행한다는 안내).
+        await page.getByText('없음 — 자동 작성 시 내부 실행', { exact: false }).waitFor();
         await page.getByRole('button', { name: '보고서 초안 만들기', exact: true }).click();
         await page.getByRole('heading', { name: '종합소견 및 직업재활방향' }).waitFor();
+        // 머리 정보·평가목적은 ①에서 자동으로 들어온다(보고서에서 다시 입력하지 않는다).
+        await page.getByRole('heading', { name: '머리 정보 · 평가목적' }).waitFor();
+        await page.getByText('검증용 평가목적', { exact: false }).first().waitFor();
+        await page.getByText('합성 평가 이용자', { exact: false }).first().waitFor();
+        // ①의 장애·진단이력이 평가 상세에 자동 문단으로 들어온다.
+        await page.getByText('2019년 등록되었다', { exact: false }).first().waitFor();
+        // 평가 도구 표는 실시한 KEAD 검사로 자동으로 채워진다.
+        assert.equal(
+            await page.getByLabel('직업진단(손기능) 평가도구').inputValue(),
+            'KEAD 손기능 작업표본검사',
+            'tool table auto-filled from sessions',
+        );
         // 분석지 문장이 심리진단 섹션에 자동 배치된다.
         await page.getByText('수용어휘력 검사 결과 등가연령', { exact: false }).first().waitFor();
-        // 근거 모음: 검사 결과 문장을 골라 소견 칸에 붙일 수 있다(기본 대상: 직업적 강점).
-        await page.getByText('근거 모음', { exact: false }).first().waitFor();
-        const strengthsBefore = await page.locator('#ve-summary-strengths').inputValue();
-        await page.getByRole('button', { name: /넣기$/ }).first().click();
-        const strengthsAfter = await page.locator('#ve-summary-strengths').inputValue();
-        assert.ok(strengthsAfter.length > strengthsBefore.length, 'evidence sentence appended to strengths');
-        await page.getByText('KEAD 손기능 작업표본검사을(를) 실시요강 기준 조건당 30초 기준으로 실시했다.', { exact: false }).first().waitFor();
+        // AI 종합소견: 버튼이 있고, 키가 없으면 그 사실을 안내한다(테스트 환경에는 키가 없다).
+        assert.equal(await page.getByRole('button', { name: 'AI 종합소견 초안 쓰기', exact: true }).count(), 1, 'AI opinion button exists');
+        await page.getByText('Gemini API 키를 등록하면', { exact: false }).first().waitFor();
+        // 평가하지 않은 영역은 숨겨져 있고, 필요할 때만 추가한다.
+        await page.getByText('평가한 영역 추가', { exact: false }).waitFor();
+        await page.getByRole('button', { name: /생활적응능력/ }).click();
+        await page.getByRole('heading', { name: '생활적응능력' }).waitFor();
+        await page.getByText('KEAD 손기능 작업표본검사을(를) 실시했다.', { exact: false }).first().waitFor();
         await page.getByText('총합', { exact: false }).first().waitFor();
         assert.equal(await page.getByRole('button', { name: 'DOCX', exact: true }).count(), 1, 'DOCX export button exists');
-        await page.getByLabel('평가목적').fill('검증용 평가목적');
+        await page.getByLabel('종합소견', { exact: true }).fill('검증용 종합소견');
         await page.getByRole('button', { name: '확정', exact: true }).click();
         await answerConfirm(page, true);
         await page.getByText('확정된 보고서입니다', { exact: false }).waitFor();
         assert.equal(await page.getByRole('button', { name: '새 버전', exact: true }).count(), 1, 'a confirmed report can only be changed as a new version');
-        assert.equal(await page.getByLabel('평가목적').isDisabled(), true, 'confirmed report fields are locked');
-        console.log('PASS vocational evaluation workbench: dominant hand, hand-function trial, skipped trial average, bimanual /25 denominators, report compose and confirm lock');
+        assert.equal(await page.locator('#ve-summary-overallOpinion').isDisabled(), true, 'confirmed report fields are locked');
+        console.log('PASS vocational evaluation workbench: dominant hand, auto header/tools, AI opinion entry, conditional detail sections, confirm lock');
 
         await page.setViewportSize({ width: 390, height: 600 });
         await page.getByRole('button', { name: '모바일 메뉴 열기' }).click();

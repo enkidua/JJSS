@@ -8,7 +8,7 @@ import {
     parseEncryptedBackupEnvelope,
     type EncryptedBackupEnvelope,
 } from '../config/crypto';
-import { createBackupJson, importAllData, parseBackupJson, type ParsedBackupData } from '../config/localDB';
+import { BackupIncompleteError, createBackupJson, importAllData, parseBackupJson, type ParsedBackupData } from '../config/localDB';
 import { runLegacyMigration } from '../services/legacyMigration';
 import type { JjssSaveResult } from '../types/jjssFiles';
 import { localDateKey } from '../utils/date';
@@ -86,6 +86,11 @@ export function useBackupActions(options: UseBackupActionsOptions = {}) {
             );
             for (const warning of warnings) showToast(warning, 'info', 8000);
         } catch (error) {
+            // 읽지 못한 암호화 항목 때문에 막힌 경우에는 그 사유를 그대로 보여 준다(재시도 안내가 아니다).
+            if (error instanceof BackupIncompleteError) {
+                showToast(error.message, 'error', 12000);
+                return;
+            }
             showToast(`백업 파일을 만들지 못했습니다. ${errorMessage(error, '잠시 후 다시 시도해 주세요.')}`, 'error');
         } finally {
             endBusy();
@@ -113,10 +118,20 @@ export function useBackupActions(options: UseBackupActionsOptions = {}) {
             await importAllData(data);
             // 구형 백업에는 평문 직업평가 이력이 들어 있을 수 있다.
             // 암호화 저장소로 옮기는 것까지 끝낸 뒤에 "완료"를 알린다.
-            await runLegacyMigration().catch(() => {
+            const migration = await runLegacyMigration().catch(() => {
                 // 옮기지 못하면 원본을 남긴다. 다음 실행에서 다시 시도한다.
+                return { migrated: 0, failed: 1, keptLegacy: true, reason: 'failed' as const };
             });
-            showToast('데이터 복원이 완료되었습니다. 화면을 다시 불러옵니다.', 'success');
+            // 이관을 끝내지 못했는데 "복원 완료"라고 알리면, 평문으로 남은 민감정보를 사용자가 모르고 넘어간다.
+            if (migration.keptLegacy || migration.failed > 0) {
+                showToast(
+                    '백업은 읽었으나 일부 민감정보의 암호화 이전을 완료하지 못했습니다. 기존 데이터는 지우지 않았으며 다음 실행에서 다시 시도합니다.',
+                    'error',
+                    10000,
+                );
+            } else {
+                showToast('데이터 복원이 완료되었습니다. 화면을 다시 불러옵니다.', 'success');
+            }
             window.setTimeout(() => window.location.reload(), 1200);
         } catch (error) {
             showToast(`데이터 복원에 실패했습니다. ${errorMessage(error, '올바른 백업 파일인지 확인해 주세요.')}`, 'error');

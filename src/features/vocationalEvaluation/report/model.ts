@@ -92,10 +92,14 @@ export interface ReportSummary {
     strengths: string;
     /** 제한점·고려사항 */
     limitations: string;
-    /** 추천(적합 추천 직무 및 사유) */
+    /** 지원이 필요한 사항 */
+    supportNeeds: string;
+    /** 추천직무 및 권고프로그램 */
     recommendation: string;
-    /** 추천직무·프로그램 */
+    /** 추천직무 세부정보 */
     recommendedPrograms: string;
+    /** 종합소견 */
+    overallOpinion: string;
 }
 
 export interface EvaluationReport {
@@ -112,6 +116,8 @@ export interface EvaluationReport {
     tools: ReportToolRow[];
     sections: ReportSection[];
     summary: ReportSummary;
+    /** AI가 종합소견 초안을 채운 시각(표시용 메타데이터 — 내용 지문에는 넣지 않는다) */
+    aiOpinionAt?: ISODateTime;
     /** 확정 시점의 검사 결과표(원자료가 바뀌어도 출력은 변하지 않는다) */
     resultTables: ReportResultTable[];
     writtenOn: string;
@@ -170,8 +176,10 @@ export function createReport(input: {
             goalGuardian: '',
             strengths: '',
             limitations: '',
+            supportNeeds: '',
             recommendation: '',
             recommendedPrograms: '',
+            overallOpinion: '',
         },
         resultTables: [],
         writtenOn: input.writtenOn,
@@ -199,12 +207,17 @@ function stable(value: unknown): string {
  * 보안용 서명이 아니라 실수로 덮어쓰는 것을 막는 확인값이다(동기 계산이 필요해 FNV-1a를 쓴다).
  */
 export function hashReportContent(report: EvaluationReport): string {
+    // 요약에 나중에 추가된 칸(지원이 필요한 사항·종합소견)은 비어 있으면 지문에서 뺀다 —
+    // 새 칸이 생겨도 이전 버전에서 확정한 보고서의 지문이 그대로 맞아야 하기 때문이다.
+    const summary: Record<string, unknown> = { ...report.summary };
+    if (!report.summary.supportNeeds) delete summary.supportNeeds;
+    if (!report.summary.overallOpinion) delete summary.overallOpinion;
     const content = stable({
         header: report.header,
         purpose: report.purpose,
         tools: report.tools,
         sections: report.sections,
-        summary: report.summary,
+        summary,
         resultTables: report.resultTables,
         writtenOn: report.writtenOn,
         evaluator: report.evaluator,

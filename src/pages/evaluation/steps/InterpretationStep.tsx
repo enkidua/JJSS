@@ -17,12 +17,14 @@ import {
     getTestPlugin,
     selectCurrentRun,
     rejectClaim,
+    type AnalysisDocumentRecord,
     type EvaluationEpisode,
     type EvidenceSnapshot,
     type InterpretationClaim,
     type SourceDocumentRecord,
     type TestSession,
 } from '../../../features/vocationalEvaluation';
+import { ResultAnalysisSection } from './ResultAnalysisSection';
 import { requestInterpretation } from '../../../features/vocationalEvaluation/interpretation/request';
 import { describeReadinessItem, entryGuide } from '../../../features/vocationalEvaluation/interpretation/readiness';
 import { selectActiveSourceDocument } from '../../../features/vocationalEvaluation/sourceDocument/record';
@@ -45,6 +47,7 @@ export function InterpretationStep({
     episode,
     sessions,
     documents,
+    analyses = [],
     onEpisodeChange,
     onGoToTest,
     locked = false,
@@ -52,6 +55,8 @@ export function InterpretationStep({
     episode: EvaluationEpisode;
     sessions: TestSession[];
     documents: SourceDocumentRecord[];
+    /** ⑤에서 넣은 그 밖의 검사 분석지 — 결과 분석 입력에 함께 들어간다 */
+    analyses?: AnalysisDocumentRecord[];
     onEpisodeChange: (next: EvaluationEpisode) => void;
     /** "② 검사 실시로 이동" — 값이 비어 해석을 못 할 때 바로 입력하러 가게 한다 */
     onGoToTest?: () => void;
@@ -59,6 +64,8 @@ export function InterpretationStep({
     locked?: boolean;
 }) {
     const [sessionId, setSessionId] = useState(sessions[0]?.id ?? '');
+    // 기존 claim/근거 UI는 기본으로 접어 둔다 — 주 흐름은 결과 분석이다.
+    const [showLegacy, setShowLegacy] = useState(false);
     const [snapshot, setSnapshot] = useState<EvidenceSnapshot | null>(null);
     const [busy, setBusy] = useState(false);
     const [editing, setEditing] = useState<Record<string, string>>({});
@@ -186,7 +193,20 @@ export function InterpretationStep({
     };
 
     if (!sessions.length) {
-        return <p className="text-white/40 text-sm px-1">먼저 검사를 실시하세요.</p>;
+        // 검사 없이 분석지만 있어도 결과 분석은 쓸 수 있다.
+        return (
+            <div className="space-y-4">
+                <ResultAnalysisSection
+                    episode={episode}
+                    sessions={sessions}
+                    documents={documents}
+                    analyses={analyses}
+                    onEpisodeChange={onEpisodeChange}
+                    locked={locked}
+                />
+                <p className="text-white/40 text-sm px-1">검사 기록 기반의 세부 근거를 보려면 먼저 ② 검사를 실시하세요.</p>
+            </div>
+        );
     }
 
     const adopted = adoptedClaims(run);
@@ -196,7 +216,28 @@ export function InterpretationStep({
 
     return (
         <div className="space-y-4">
-            {sessions.length > 1 && (
+            <ResultAnalysisSection
+                episode={episode}
+                sessions={sessions}
+                documents={documents}
+                analyses={analyses}
+                onEpisodeChange={onEpisodeChange}
+                locked={locked}
+            />
+
+            {/* 기존 claim/근거 방식은 감사 추적·세부 확인용 고급 영역으로 접어 둔다. 기본 흐름은 위의 결과 분석이다. */}
+            <button
+                type="button"
+                className="btn-ghost !px-3 !py-2 text-sm text-white/60"
+                aria-expanded={showLegacy}
+                onClick={() => setShowLegacy(current => !current)}
+            >
+                {showLegacy ? '▴ 세부 근거·문장 단위 해석 접기' : '▾ 세부 근거·문장 단위 해석 보기(고급)'}
+            </button>
+
+            {showLegacy && (
+                <>
+                    {sessions.length > 1 && (
                 <div className="flex flex-wrap gap-2">
                     {sessions.map(item => (
                         <button
@@ -450,6 +491,8 @@ export function InterpretationStep({
                         ))}
                     </ul>
                 </section>
+            )}
+                </>
             )}
         </div>
     );

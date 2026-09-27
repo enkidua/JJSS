@@ -89,8 +89,10 @@ function normalizeSummary(value: unknown): ReportSummary {
         goalGuardian: text(raw.goalGuardian),
         strengths: text(raw.strengths),
         limitations: text(raw.limitations),
+        supportNeeds: text(raw.supportNeeds),
         recommendation: text(raw.recommendation),
         recommendedPrograms: text(raw.recommendedPrograms),
+        overallOpinion: text(raw.overallOpinion),
     };
 }
 
@@ -119,6 +121,7 @@ export function normalizeReport(value: EvaluationReport): EvaluationReport {
             .map(normalizeSection)
             .filter((item): item is ReportSection => item !== null),
         summary: normalizeSummary(value.summary),
+        aiOpinionAt: optionalText(value.aiOpinionAt),
         resultTables: (Array.isArray(value.resultTables) ? value.resultTables : [])
             .map(normalizeTable)
             .filter((item): item is ReportResultTable => item !== null),

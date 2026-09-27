@@ -5,7 +5,7 @@
 import { renderDocx, renderHtml, type Cell, type DocBlock, type DocModel } from '../../docx/blocks';
 import { EPISODE_NEED_KEYS, EPISODE_NEED_LABELS } from '../model/episode';
 import { EVALUATION_VENUE_LABELS } from '../model/types';
-import type { EvaluationReport, ReportSection } from './model';
+import type { EvaluationReport, ReportResultTable, ReportSection } from './model';
 
 const NOT_ENTERED = '';
 
@@ -14,6 +14,19 @@ function sectionText(section: ReportSection): string[] {
     const evaluator = section.evaluatorText.trim();
     if (evaluator) lines.push(evaluator);
     return lines;
+}
+
+/**
+ * 결과표에 실제 측정값이 하나라도 있는지. 머리 행을 뺀 나머지가 전부 "미실시"·"—"·빈칸·0 분모뿐이면
+ * 내용이 없는 표이므로 출력하지 않는다(빈 표가 여러 장 나오는 것을 막는다).
+ */
+function hasMeasuredValue(table: ReportResultTable): boolean {
+    return table.rows.slice(1).some(row =>
+        row.slice(1).some(cell => {
+            const value = String(cell ?? '').trim();
+            return value !== '' && value !== '—' && value !== '미실시';
+        }),
+    );
 }
 
 function needsLine(report: EvaluationReport): string {
@@ -63,55 +76,81 @@ export function buildReportDocModel(report: EvaluationReport): DocModel {
         ],
     });
 
-    blocks.push({ type: 'spacer' });
-    blocks.push({ type: 'paragraph', text: '1. 평가목적', bold: true });
-    blocks.push({ type: 'paragraph', text: report.purpose || '—' });
+    // 번호는 실제로 출력하는 항목에만 붙인다(빈 항목을 건너뛰어도 번호가 이어지게).
+    let sectionNumber = 0;
+    const heading = (title: string) => {
+        sectionNumber += 1;
+        blocks.push({ type: 'spacer' });
+        blocks.push({ type: 'paragraph', text: `${sectionNumber}. ${title}`, bold: true });
+    };
 
-    blocks.push({ type: 'spacer' });
-    blocks.push({ type: 'paragraph', text: '2. 평가 도구(방법)', bold: true });
-    blocks.push({
-        type: 'table',
-        widths: [40, 60],
-        headerRows: 1,
-        rows: [
-            [
-                { text: '평가영역', shade: true, bold: true, align: 'center' },
-                { text: '평가도구', shade: true, bold: true, align: 'center' },
+    // 평가목적이 비어 있으면 "—" 한 줄짜리 항목을 만들지 않는다(공식 문서 품질).
+    if (report.purpose.trim()) {
+        heading('평가목적');
+        blocks.push({ type: 'paragraph', text: report.purpose.trim() });
+    }
+
+    // 실제로 사용한 평가도구만 출력한다. 미실시 영역의 빈 행은 넣지 않는다.
+    const usedTools = report.tools.filter(row => row.tool.trim());
+    if (usedTools.length) {
+        heading('평가 도구(방법)');
+        blocks.push({
+            type: 'table',
+            widths: [40, 60],
+            headerRows: 1,
+            rows: [
+                [
+                    { text: '평가영역', shade: true, bold: true, align: 'center' },
+                    { text: '평가도구', shade: true, bold: true, align: 'center' },
+                ],
+                ...usedTools.map(row => [row.area, row.tool] as Cell[]),
             ],
-            ...report.tools.map(row => [row.area, row.tool || '—'] as Cell[]),
-        ],
-    });
+        });
+    }
 
-    blocks.push({ type: 'spacer' });
-    blocks.push({ type: 'paragraph', text: '3. 종합소견 및 직업재활방향', bold: true });
-    blocks.push({
-        type: 'table',
-        widths: [20, 80],
-        rows: [
-            [{ text: '직업수준', shade: true, bold: true }, report.summary.vocationalLevel || '—'],
-            [{ text: '직업목표(당사자)', shade: true, bold: true }, report.summary.goalSelf || '—'],
-            [{ text: '직업목표(보호자·지원자)', shade: true, bold: true }, report.summary.goalGuardian || '—'],
-            [{ text: '직업적 강점', shade: true, bold: true }, report.summary.strengths || '—'],
-            [{ text: '제한점·고려사항', shade: true, bold: true }, report.summary.limitations || '—'],
-            [{ text: '추천', shade: true, bold: true }, report.summary.recommendation || '—'],
-            [{ text: '추천직무·프로그램', shade: true, bold: true }, report.summary.recommendedPrograms || '—'],
-        ],
-    });
+    // 종합소견은 표(칸)로 나누지 않고 소제목 + 문단으로 흘려 쓴다 — 긴 소견문이 상자에 갇혀
+    // 읽기 어렵다는 현장 의견을 반영했다. 내용이 없는 항목은 건너뛴다.
+    heading('종합소견 및 직업재활방향');
+    const goalLines = [
+        report.summary.goalSelf.trim() ? `- 당사자: ${report.summary.goalSelf.trim()}` : '',
+        report.summary.goalGuardian.trim() ? `- 보호자/지원자: ${report.summary.goalGuardian.trim()}` : '',
+    ]
+        .filter(Boolean)
+        .join('\n');
+    const opinionParts: Array<[string, string]> = [
+        ['직업수준', report.summary.vocationalLevel.trim()],
+        ['직업목표(당사자 및 보호자/지원자)', goalLines],
+        ['직업적 강점', report.summary.strengths.trim()],
+        ['직업적 제한점(고려사항)', report.summary.limitations.trim()],
+        ['지원이 필요한 사항', report.summary.supportNeeds.trim()],
+        ['적합(추천) 직무 및 권고 프로그램', report.summary.recommendation.trim()],
+        ['추천직무 세부정보', report.summary.recommendedPrograms.trim()],
+        ['종합소견', report.summary.overallOpinion.trim()],
+    ];
+    const filledParts = opinionParts.filter(([, value]) => value);
+    if (filledParts.length) {
+        for (const [label, value] of filledParts) {
+            blocks.push({ type: 'paragraph', text: `[${label}]`, bold: true, spaceBefore: 160 });
+            blocks.push({ type: 'paragraph', text: value });
+        }
+    } else {
+        blocks.push({ type: 'paragraph', text: '—' });
+    }
 
     const detailed = report.sections.filter(section => sectionText(section).length);
     if (detailed.length) {
-        blocks.push({ type: 'spacer' });
-        blocks.push({ type: 'paragraph', text: '4. 평가 상세', bold: true });
+        heading('평가 상세');
         for (const section of detailed) {
             blocks.push({ type: 'paragraph', text: section.title, bold: true, spaceBefore: 120 });
             for (const line of sectionText(section)) blocks.push({ type: 'paragraph', text: line });
         }
     }
 
-    if (report.resultTables.length) {
-        blocks.push({ type: 'spacer' });
-        blocks.push({ type: 'paragraph', text: '5. 검사 결과', bold: true });
-        for (const table of report.resultTables) {
+    // 내용이 하나도 없는(전부 "미실시"·"—") 결과표는 출력하지 않는다.
+    const resultTables = report.resultTables.filter(hasMeasuredValue);
+    if (resultTables.length) {
+        heading('검사 결과');
+        for (const table of resultTables) {
             blocks.push({ type: 'paragraph', text: table.title, bold: true, spaceBefore: 120 });
             const columns = Math.max(...table.rows.map(row => row.length), 1);
             blocks.push({

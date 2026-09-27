@@ -122,6 +122,37 @@ export function BasicInfoStep({
                     />
                 </div>
 
+                <div className="grid md:grid-cols-2 gap-4">
+                    <div>
+                        <label htmlFor="ve-disability-history" className="text-sm text-white/60">
+                            장애 및 진단이력
+                        </label>
+                        <textarea
+                            id="ve-disability-history"
+                            className="textarea-field mt-1"
+                            rows={3}
+                            disabled={disabled}
+                            value={episode.disabilityHistory}
+                            onChange={event => field('disabilityHistory', event.target.value)}
+                            placeholder="장애유형·등록 시기·진단 이력 등. ⑦ 보고서의 '평가 상세'에 자동으로 들어갑니다."
+                        />
+                    </div>
+                    <div>
+                        <label htmlFor="ve-career-history" className="text-sm text-white/60">
+                            교육훈련 및 직업경력
+                        </label>
+                        <textarea
+                            id="ve-career-history"
+                            className="textarea-field mt-1"
+                            rows={3}
+                            disabled={disabled}
+                            value={episode.careerHistory}
+                            onChange={event => field('careerHistory', event.target.value)}
+                            placeholder="학력·훈련 이력·근무 경력 등. ⑦ 보고서의 '평가 상세'에 자동으로 들어갑니다."
+                        />
+                    </div>
+                </div>
+
                 <div>
                     <p className="text-sm text-white/60 mb-2">욕구</p>
                     <div className="flex flex-wrap gap-2">

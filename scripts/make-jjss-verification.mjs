@@ -157,6 +157,17 @@ const testScripts = [...new Set([...testAllSteps, ...releaseSteps])]
     .filter(name => name !== 'test:all')
     .map(name => ({ name, command: pkg.scripts[name] ?? '' }));
 
+/**
+ * 검사 건수는 문서에 적어 두지 않고 **방금 실행한 출력에서 읽는다**.
+ * 손으로 적어 둔 숫자는 검사가 늘어나면 바로 어긋나, 문서의 신뢰를 떨어뜨린다.
+ */
+function countFromOutput(pattern, fallback) {
+    const match = testOutput.match(pattern);
+    return match ? `${match[1]}건` : fallback;
+}
+const veCheckCount = countFromOutput(/직업평가 워크벤치 테스트 (\d+)건 통과/, '');
+const veCheckNote = veCheckCount ? ` (${veCheckCount})` : '';
+
 const brief = `# JJSS 전체 검증 요청 (버전 ${pkg.version})
 
 이 폴더는 **JJSS 앱 전체**를 다른 AI가 검증할 수 있도록 만든 자료입니다.
@@ -214,7 +225,7 @@ const brief = `# JJSS 전체 검증 요청 (버전 ${pkg.version})
 ### D. 직업평가 워크벤치 (새로 만든 기능)
 - \`app/src/features/vocationalEvaluation/\`, \`app/src/pages/evaluation/\`
 - 자세한 검증 항목은 \`vocational-evaluation-review.md\`에 따로 적었습니다.
-- 실행 가능한 검사: \`npm run test:ve-workbench\` (126건)
+- 실행 가능한 검사: \`npm run test:ve-workbench\`${veCheckNote}
 
 ### E. 기존 업무 기능
 - 지원고용 수당 계산·서류(\`app/src/features/supportedEmployment/\`) — \`npm run test:supported-employment\`
@@ -434,7 +445,81 @@ const veReview = `# 직업평가 워크벤치 검증 항목
 | 다차원 분모 | 판 1, 나머지 4 → **합계 25** | 〃 |
 | 우세손 판정 | 질문 3문항 → 평가용지 18문항, 8개 이상 | \`dominantHand.ts\` |
 
-실행: \`npm run test:ve-workbench\` (126건)
+실행: \`npm run test:ve-workbench\`${veCheckNote}
+
+## 이번에 바꾼 곳 — 작성 엔진 통합(평가 진행 → 기존 결과분석기·종합소견서)
+
+평가사가 "빈 칸이 너무 많고 분절적"이라고 해서 구조를 이렇게 통합했습니다:
+**평가 진행(①~⑤)은 입력자료 공급자**이고, ⑥은 기존 결과분석기 엔진(\`services/gemini.ts\`의 \`analyzeTestResults\`),
+⑦은 기존 종합소견서 엔진(\`generateReport\`)을 **복사 없이 그대로 재사용**하며, 출력만 새 결과보고서 양식을 씁니다.
+새 코드라 특히 봐 주셨으면 합니다.
+
+| 바뀐 내용 | 확인할 곳 |
+|---|---|
+| 공용 입력 조립기: 회차 자료(기본정보·KEAD·공식 결과지·관찰·분석지)를 두 엔진의 참고 내용으로 조립 | \`report/aiOpinion.ts\`의 \`buildOpinionReference\` (새 파일) |
+| ⑥ "결과 분석" 카드: 자료 자동 연결 → 완성 해석 → 평가사 수정 → 회차에 저장 | \`pages/evaluation/steps/ResultAnalysisSection.tsx\`, \`model/episode.ts\`의 \`resultAnalysis\` |
+| ⑥→⑦ 자동 전달: 수정된 결과 분석이 종합소견 입력에 그대로 들어가고, ⑥을 건너뛰면 ⑦이 분석 엔진을 내부 실행 | \`steps/ReportStep.tsx\`의 \`generateOpinion\` |
+| 종합소견 8개 항목을 AI가 쓰고 칸별로 나눠 담음 | \`report/aiOpinion.ts\`의 \`parseOpinionText\` |
+| 머리 정보·평가목적을 보고서에서 입력하지 않고 회차·이용자 정보에서 가져옴 | \`steps/ReportStep.tsx\`의 \`buildHeaderFrom\` |
+| 장애·진단이력, 교육훈련·직업경력을 회차에 한 번만 입력 | \`model/episode.ts\`, \`steps/BasicInfoStep.tsx\`, \`report/compose.ts\` |
+| 평가도구 표를 분석지 제목으로 자동 분류 | \`report/compose.ts\`의 \`TOOL_AREA_MATCHERS\`·\`fillToolRows\` |
+| KEAD 검사 중 행동관찰은 사회진단이 아니라 직업진단 영역으로 | \`report/compose.ts\`의 \`composeSections\` |
+| 프롬프트의 발달장애인 전제 제거(모든 장애유형) + 자료에 없는 수치·판단 생성 금지 블록 | \`services/gemini.ts\`의 \`analyzeTestResults\`·\`generateReport\` 프롬프트 |
+| 요약에 칸 2개 추가(지원이 필요한 사항·종합소견) | \`report/model.ts\`, \`report/serialization.ts\`, \`report/document.ts\` |
+
+기존 결과분석기·종합소견서 탭의 독립 사용은 그대로 동작해야 합니다(함수 서명 불변) — 깨진 곳이 보이면 그 자체가 결함입니다.
+
+### 안정화(적대검증 지적사항) 수정
+
+| 지적 | 조치 | 확인할 곳 |
+|---|---|---|
+| 새 보고서 저장 직후 AI 자동작성이 state 반영 전 실행돼 조용히 생략될 수 있음 | ref를 커밋 시점에 동기 갱신(\`commitReports\`) + \`generateOpinion\`이 ID가 아닌 **보고서 객체**를 받음 | \`steps/ReportStep.tsx\` |
+| KEAD 값·결과지를 고쳐도 예전 결과분석이 그대로 쓰임 | 입력 자료 지문(\`analysisSourceHash\`)을 분석과 함께 저장하고, 어긋나면 STALE로 보아 다시 분석 | \`report/aiOpinion.ts\`, \`model/episode.ts\` |
+| 실제 파일 이름(이용자명·기관명 포함)이 AI로 나갈 수 있음 | 전송용 제목 함수 분리(\`outboundAnalysisTitle\`) — 검사명만 쓰고 없으면 "추가 평가자료 N" | \`analysisDocument/model.ts\` |
+| PDF 분류 실패 문장이 "사회진단"으로 들어감 | \`unclassified\`(분류 필요) 영역 신설, 기본 미포함·자동 배치 안 함 | 〃 |
+| 검사명을 못 읽은 분석지가 평가도구 표에서 사라짐 | "기타 평가자료" 행으로 남김 | \`report/compose.ts\` |
+| AI가 만든 문장이 다시 AI 입력이 되는 이중 영향 | legacy claim을 참고 내용에서 **기본 제외**(\`includeLegacyClaims\`) | \`report/aiOpinion.ts\` |
+| 읽지 못한 암호화 항목을 빈 칸으로 채운 백업이 정상 파일로 나감 | \`BackupIncompleteError\`로 **fail-closed** | \`config/localDB.ts\`, \`hooks/useBackupActions.ts\` |
+| 이관 미완료인데 "복원 완료" 표시 | 이관 결과를 확인해 미완료 사실을 알림 | \`hooks/useBackupActions.ts\` |
+| 근로자의 날(5/1) 훈련일 제외 누락 | 고정 공휴일 표에 추가(대체공휴일 없음) | \`features/supportedEmployment/holidays.ts\` |
+
+### 소견 품질 개선 — **이번에 가장 중요한 변경**
+
+실제 생성된 보고서가 "대중교통 확인되지 않음 / 앉아 있기 확인되지 않음 / 대인관계 확인되지 않음 …"처럼
+**미확인 항목 나열**로 채워져, 평가사가 대부분을 지우고 다시 써야 하는 문서가 되었습니다.
+원인은 프롬프트에 있던 "자료에 없으면 '확인되지 않아 추가 면담 필요'로 적으라"는 지시였습니다.
+
+새 원칙: **없는 사실은 만들지 않되, 없는 항목을 일일이 열거하지도 않는다.**
+평가하지 않은 영역은 쓰지 않고, 꼭 필요한 미확인 사항만 마지막에 최대 3개로 모읍니다.
+
+| 바뀐 내용 | 확인할 곳 |
+|---|---|
+| 두 엔진 프롬프트의 작성 철학 교체(방어 문구 금지, 적극적 해석, 고정 예시 anchor 제거) | \`services/gemini.ts\` |
+| 결과분석기를 7개 점검표 → 검사결과 해석 6+1 구성으로 | 〃 \`analyzeTestResults\` |
+| 실제 기관 보고서의 작성 방식 이식(근거 붙은 개조식, 지원사항의 관찰→필요성→방법→기대 문단, 기관 어조) | 〃 |
+| \`20/25\`를 "완료"로 읽히게 하던 "완성소요시간" 표기 수정 + 미완료 사실 명시 | \`report/narrative.ts\` |
+| 검사방법·자료출처 설명을 소견 본문에서 빼고 결과표 주석에만 한 번 | \`report/compose.ts\`, \`report/narrative.ts\` |
+| 빈 평가목적·미실시 평가영역 행·전부 미실시 결과표 출력 안 함 | \`report/document.ts\` |
+| 종합소견을 표(9칸)가 아니라 소제목+문단으로 출력(긴 소견이 상자에 갇히는 문제) | 〃 |
+| 목표 라벨 중복·제목 꼬리 유출 파서 수정 | \`report/aiOpinion.ts\`의 \`parseOpinionText\`·\`splitGoals\` |
+
+**이 부분을 특히 적대적으로 봐 주세요:** 방어 문구를 줄이는 방향이 반대로
+**근거 없는 단정이나 환각을 허용하게 되지 않았는지.** 안전장치(공식 결과지 수치만 인용,
+임의 백분위 계산 금지, 취업·직무 적합 단정 금지)는 그대로 두었다고 주장하지만, 실제로 그러한지 확인 부탁드립니다.
+
+확인 부탁드리는 점:
+
+1. **AI로 나가는 참고 내용에 무엇이 실리는가** — \`buildOpinionReference()\`가 만드는 글에
+   포함 해제한 문장·차단된 문장·주민등록번호 형태가 섞여 나가지 않는지.
+   이름은 \`generateReport(..., { knownNames })\`로 비식별화 관문을 거치게 했는데, 충분한지.
+2. **AI 응답을 칸으로 나누는 \`parseOpinionText()\`** — 항목 본문 안의 번호 줄("3. 지원고용 연계: …")을
+   새 항목으로 잘못 끊지 않는지, 형식이 무너졌을 때 내용을 잃지 않는지(4개 미만이면 전문을 종합소견 칸에 담습니다).
+3. **확정본 호환** — 요약에 칸을 추가했는데도 **이전 버전에서 확정한 보고서의 \`contentHash\`가 그대로 맞아야** 합니다.
+   \`hashReportContent()\`는 새 칸이 비어 있으면 지문에서 빼는 방식으로 이를 맞췄습니다.
+   이 방식이 "확정본을 몰래 고치는" 우회를 열지 않는지는 저희도 양방향으로 확인했습니다
+   (확정 후 빈 칸을 채우는 것, 채워진 칸을 비우는 것 모두 저장·복원이 막힙니다 —
+   회귀 테스트 \`새 칸을 지문에서 빼는 방식이 확정본 수정 우회를 열지 않는다\`).
+   **다른 우회가 남아 있는지 봐 주세요.**
 `;
 
 const limitations = `# 아직 확인하지 못한 것
@@ -457,11 +542,19 @@ const limitations = `# 아직 확인하지 못한 것
 4. **화면 검사는 \`test:all\`에 없습니다.**
    개발 서버와 Playwright가 필요해 따로 돌려야 합니다(\`npm run test:usability\`).
 
-5. **macOS 빌드는 서명·공증 전입니다.** Windows 설치 파일도 코드서명이 없습니다.
+5. **AI 소견 품질 개선은 실제 응답으로 확인하지 못했습니다. — 이번 회차에서 가장 큰 공백입니다.**
+   방어 문구("확인되지 않아 추가 면담 필요") 양산을 막고 적극적 해석을 유도하도록 두 엔진의
+   프롬프트를 크게 고쳤지만, **합성 데이터로는 프롬프트 문구의 존재 여부만 검사할 수 있습니다.**
+   실제 Gemini 응답이 의도대로 바뀌었는지, 반대로 근거 없는 단정이 늘지는 않았는지는 확인하지 못했습니다.
+   검증하실 때 이 부분을 가장 의심해 주세요.
 
-6. **쉬운 설명(당사자용)과 현황판 연동은 아직 만들지 않았습니다.**
+6. **macOS 빌드는 서명·공증 전입니다.**
+   Windows 설치 파일은 코드서명합니다(check-win-signing.cjs가 사전 검사).
+   인증서와 비밀번호는 이 자료에 들어 있지 않습니다.
 
-7. **UI 정보구조 개선 제안을 아직 반영하지 않았습니다.**
+7. **쉬운 설명(당사자용)과 현황판 연동은 아직 만들지 않았습니다.**
+
+8. **UI 정보구조 개선 제안을 아직 반영하지 않았습니다.**
    상위 메뉴 정리, 단계 통합, 다음 할 일 안내 등은 검토 중입니다.
 `;
 

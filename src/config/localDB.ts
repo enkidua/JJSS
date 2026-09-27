@@ -781,6 +781,20 @@ type VocationalEvaluationHistoryItem = {
     updatedAt?: string;
 };
 
+/**
+ * 암호화된 값을 읽지 못해 백업을 만들지 않았을 때. 기존 데이터는 그대로 있다.
+ * (읽지 못한 값을 빈 칸으로 넣은 백업 파일이 나가면, 그 파일로 복원할 때 원본이 사라진다.)
+ */
+export class BackupIncompleteError extends Error {
+    readonly code = 'BACKUP_INCOMPLETE';
+    constructor(readonly unreadableCount: number) {
+        super(
+            `암호화된 데이터 ${unreadableCount}건을 읽을 수 없어 정상 백업을 생성하지 않았습니다. 기존 데이터는 변경하지 않았습니다.`,
+        );
+        this.name = 'BackupIncompleteError';
+    }
+}
+
 export interface BackupExportResult {
     /** 백업 JSON(평문). 비밀번호 암호화는 호출하는 쪽에서 처리한다. */
     json: string;
@@ -1039,7 +1053,9 @@ export async function createBackupJson(): Promise<BackupExportResult> {
     if (vocationalEvaluationHistory) data.vocationalEvaluationHistory = vocationalEvaluationHistory;
 
     if (stats.unreadable > 0) {
-        warnings.unshift(`이 PC에서 읽지 못한 암호화 항목 ${stats.unreadable}개는 백업 파일에 빈 칸으로 저장되었습니다.`);
+        // 읽지 못한 민감 항목을 빈 칸으로 채운 백업은 "정상 백업"처럼 보이면서 실제로는 데이터가 빠져 있다.
+        // 그 파일로 복원하면 원본이 지워지므로, 아예 만들지 않는다(fail-closed). 기존 데이터는 건드리지 않는다.
+        throw new BackupIncompleteError(stats.unreadable);
     }
 
     return { json: JSON.stringify(data, null, 2), warnings };

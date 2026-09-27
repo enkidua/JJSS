@@ -651,7 +651,7 @@ await check('제한시간 근거 문구가 화면에 그대로 나갈 수 있게
 /* ── 11-b. 분석지(그 밖의 검사 결과지) ───────────────────────── */
 console.log('분석지');
 
-await check('분석지 AI 응답을 영역별 문장으로 정리하고, 모르는 영역은 사회진단으로 보낸다', () => {
+await check('분석지 AI 응답을 영역별로 정리하고, 모르는 영역은 사회진단이 아니라 "분류 필요"로 둔다', () => {
     const parsed = analysisModel.normalizeAnalysisExtraction({
         detectedTitle: '직업흥미검사(NISE-VISIT)',
         findings: [
@@ -664,9 +664,27 @@ await check('분석지 AI 응답을 영역별 문장으로 정리하고, 모르�
     assert.equal(parsed.findings.length, 2);
     assert.equal(parsed.findings[0].area, 'psychological');
     assert.equal(parsed.findings[0].included, true);
-    assert.equal(parsed.findings[1].area, 'social', '모르는 영역은 사회진단으로');
-    assert.ok(parsed.warnings.some(w => w.includes('사회진단')));
+    // 분류 실패는 "사회진단"이라는 뜻이 아니다. 평가사가 영역을 정하기 전에는 보고서에 자동으로 들어가지 않는다.
+    assert.equal(parsed.findings[1].area, 'unclassified', '모르는 영역은 분류 필요로');
+    assert.equal(parsed.findings[1].included, false, '분류 필요 문장은 기본 포함하지 않는다');
+    assert.ok(parsed.warnings.some(w => w.includes('분류 필요')));
     assert.equal(analysisModel.normalizeAnalysisExtraction({ findings: [] }), null);
+});
+
+await check('분류 필요(unclassified) 문장은 보고서 자동 조립에 들어가지 않는다', () => {
+    const record = {
+        ...analysisModel.createAnalysisDocument({ episodeId: 'ep1', seekerId: 's1', seekerName: '합성이용자', source: 'AI' }),
+        detectedTitle: '심리검사',
+        // 평가사가 포함을 켜더라도 영역이 'unclassified'면 어느 섹션에도 배치되지 않는다.
+        findings: [{ ...analysisModel.createAnalysisFinding('unclassified', '분류를 확신할 수 없는 문장이다.'), included: true }],
+    };
+    const episode = reportEpisode();
+    const sections = reportCompose.composeSections({ episode, sessions: [], documents: [], analyses: [record] }, baseReport(episode).sections);
+    assert.equal(
+        sections.some(section => section.paragraphs.some(item => item.text.includes('분류를 확신할 수 없는'))),
+        false,
+        '분류 필요 문장은 사회진단을 포함한 어느 영역에도 자동 배치되지 않는다',
+    );
 });
 
 await check('취업 단정·연락처 형태 문장은 자동 제외되고, 저장을 고쳐도 되살아나지 않는다', () => {
@@ -1600,14 +1618,20 @@ await check('행동관찰과 채택한 해석만 자동 문단이 된다', () =>
         { episode, sessions: [s], documents: [] },
         baseReport(episode).sections,
     );
+    // KEAD 검사 중 행동관찰만으로는 "사회진단" 항목을 만들지 않는다 — 직업진단(행동관찰)으로 들어간다.
     const social = sections.find(item => item.id === 'social');
-    assert.equal(social.paragraphs.length, 1);
-    assert.ok(social.paragraphs[0].text.includes('핀 떨어뜨림'));
+    assert.equal(social.paragraphs.length, 0, 'KEAD 관찰만으로 사회진단을 만들지 않는다');
 
     const vocational = sections.find(item => item.id === 'vocational');
+    assert.ok(vocational.paragraphs.some(item => item.text.includes('핀 떨어뜨림') && item.sourceLabel.includes('행동관찰')));
     assert.ok(vocational.paragraphs.some(item => item.origin === 'AI_CLAIM'));
     assert.ok(vocational.paragraphs.some(item => item.text.includes('KEAD 손기능 작업표본검사')));
-    assert.ok(vocational.paragraphs.some(item => item.text.includes('공식 결과지를 연결하지 않아')));
+    // 자료 출처·실시요강 설명은 소견 본문이 아니라 결과표 주석에만 둔다.
+    assert.equal(
+        vocational.paragraphs.some(item => /공식 결과지를 연결하지 않아|실시요강 기준|앱이 계산하지/.test(item.text)),
+        false,
+        '검사방법·자료출처 설명이 소견 본문에 들어가면 안 된다',
+    );
 });
 await check('제외한 문단은 다시 만들어도 제외 상태가 남는다', () => {
     let s = makeHandSession();
@@ -1715,7 +1739,10 @@ await check('양손협응: 확정한 결과지의 수행량·규준 표기값을
     const text = result.paragraphs.map(item => item.text).join(' ');
     assert.equal(result.fromOfficialDocument, true);
     assert.ok(text.includes('총 수행량은 20개(총 도구수 25개 기준)'), text);
-    assert.ok(text.includes('완성소요시간은 1분 20초'), text);
+    // "완성소요시간"이라고 쓰면 전체 과제를 끝낸 시간으로 읽힌다. 20/25는 완료가 아니다.
+    assert.ok(text.includes('측정 기록시간은 1분 20초'), text);
+    assert.equal(/완성소요시간|과제를 완료|전체 조립을 완료|모든 과제를 끝/.test(text), false, `완료로 읽히는 표현: ${text}`);
+    assert.ok(text.includes('전체 과제를 끝낸 기록은 아니다'), text);
     assert.ok(text.includes('판 1/1'), text);
     assert.ok(text.includes('원통결합 2/4'), text);
     assert.ok(text.includes('비장애인 전체 대비 34%'), text);
@@ -1772,6 +1799,91 @@ await check('평가도구 표의 빈 칸만 자동으로 채운다', () => {
     assert.equal(filled.find(row => row.area.includes('작업활동')).tool, '');
 });
 
+await check('분석지 제목으로 평가도구 표를 채운다(이미 쓴 칸은 유지)', () => {
+    const tools = reportModel.DEFAULT_TOOL_ROWS.map(row => ({ ...row }));
+    tools.find(row => row.area.includes('직업흥미')).tool = '기관이 쓴 흥미검사';
+    const analysis = (title, status = 'SUCCEEDED') => ({
+        ...analysisModel.createAnalysisDocument({ episodeId: 'ep1', seekerId: 's1', seekerName: '합성이용자', source: 'AI' }),
+        detectedTitle: title,
+        extractionStatus: status,
+    });
+    const filled = reportCompose.fillToolRows(tools, [], [
+        analysis('사회적응도검사(CISA-2)'),
+        analysis('그림지능검사'),
+        analysis('문장완성검사(SCT)'),
+        analysis('직업흥미검사(VISIT)'),
+        analysis('신체능력 측정표'),
+        analysis('읽기 실패한 검사', 'FAILED'),
+    ]);
+    assert.equal(filled.find(row => row.area.includes('사회진단')).tool, '사회적응도검사(CISA-2)');
+    assert.equal(filled.find(row => row.area.includes('인지·언어')).tool, '그림지능검사');
+    assert.equal(filled.find(row => row.area.includes('정서 및 성격')).tool, '문장완성검사(SCT)');
+    assert.equal(filled.find(row => row.area.includes('직업흥미')).tool, '기관이 쓴 흥미검사', '평가사가 쓴 칸은 유지');
+    assert.equal(filled.find(row => row.area.includes('신체적 능력')).tool, '신체능력 측정표');
+});
+
+await check('① 기본정보의 장애·진단이력과 교육·직업경력이 평가 상세에 자동으로 들어간다', () => {
+    const episode = { ...reportEpisode(), disabilityHistory: '지적장애 정도가 심한 장애, 2019년 등록.', careerHistory: '특수학교 전공과 수료.' };
+    const sections = reportCompose.composeSections({ episode, sessions: [], documents: [] }, baseReport(episode).sections);
+    assert.ok(sections.find(item => item.id === 'disability').paragraphs.some(item => item.text.includes('2019년 등록')));
+    assert.ok(sections.find(item => item.id === 'career').paragraphs.some(item => item.text.includes('전공과 수료')));
+    const empty = reportCompose.composeSections({ episode: reportEpisode(), sessions: [], documents: [] }, baseReport(episode).sections);
+    assert.equal(empty.find(item => item.id === 'disability').paragraphs.length, 0, '비어 있으면 문단을 만들지 않는다');
+});
+
+await check('요약에 칸이 늘어도 이전 버전에서 확정한 보고서의 지문이 그대로 맞는다', () => {
+    const episode = reportEpisode();
+    const report = baseReport(episode);
+    // 이전 버전의 저장본에는 supportNeeds·overallOpinion 키 자체가 없었다.
+    const legacySummary = { ...report.summary };
+    delete legacySummary.supportNeeds;
+    delete legacySummary.overallOpinion;
+    assert.equal(
+        reportModel.hashReportContent({ ...report, summary: legacySummary }),
+        reportModel.hashReportContent(report),
+        '새 칸이 비어 있으면 지문은 키가 없던 시절과 같아야 한다',
+    );
+    // 이전 저장본(키 없음 + 그때 지문)을 지금 코드로 복원해도 통과해야 한다.
+    const legacyConfirmed = reportModel.confirmReport({ ...report, summary: legacySummary }, '합성평가사', NOW);
+    const parsed = reportSerialization.parseReport(JSON.stringify(legacyConfirmed));
+    assert.ok(parsed.ok, `이전 확정본 복원 실패: ${parsed.ok ? '' : parsed.error}`);
+    // 새 칸에 내용이 들어간 새 보고서도 확정·복원이 돌아간다.
+    const withNewFields = {
+        ...report,
+        summary: { ...report.summary, supportNeeds: '작업 속도 완화 지원', overallOpinion: '보호고용 검토가 타당할 것으로 보임' },
+    };
+    const confirmed = reportModel.confirmReport(withNewFields, '합성평가사', NOW);
+    const roundTrip = reportSerialization.parseReport(reportSerialization.serializeReport(confirmed));
+    assert.ok(roundTrip.ok);
+    assert.equal(roundTrip.report.summary.supportNeeds, '작업 속도 완화 지원');
+});
+
+await check('새 칸을 지문에서 빼는 방식이 확정본 수정 우회를 열지 않는다', () => {
+    const episode = reportEpisode();
+    const report = baseReport(episode);
+    // (1) 빈 칸으로 확정한 뒤 새 칸을 채워 넣는 우회
+    const legacySummary = { ...report.summary };
+    delete legacySummary.supportNeeds;
+    delete legacySummary.overallOpinion;
+    const confirmedEmpty = reportModel.confirmReport({ ...report, summary: legacySummary }, '합성평가사', NOW);
+    const filledAfter = {
+        ...confirmedEmpty,
+        summary: { ...confirmedEmpty.summary, supportNeeds: '확정 뒤에 몰래 넣은 지원 사항' },
+    };
+    assert.throws(() => reportSerialization.serializeReport(filledAfter), /새 버전/, '확정 후 새 칸 채우기가 막혀야 한다');
+    assert.equal(reportSerialization.parseReport(JSON.stringify(filledAfter)).ok, false);
+
+    // (2) 내용이 있는 채로 확정한 뒤 그 칸을 비워 지문을 맞추려는 우회
+    const confirmedFilled = reportModel.confirmReport(
+        { ...report, summary: { ...report.summary, overallOpinion: '원래 소견' } },
+        '합성평가사',
+        NOW,
+    );
+    const emptiedAfter = { ...confirmedFilled, summary: { ...confirmedFilled.summary, overallOpinion: '' } };
+    assert.throws(() => reportSerialization.serializeReport(emptiedAfter), /새 버전/, '확정 후 칸 비우기가 막혀야 한다');
+    assert.equal(reportSerialization.parseReport(JSON.stringify(emptiedAfter)).ok, false);
+});
+
 await check('확정하면 잠기고 같은 보고서를 다시 확정할 수 없다', () => {
     const episode = reportEpisode();
     const report = baseReport(episode);
@@ -1820,6 +1932,36 @@ await check('확정 스냅샷은 원자료가 바뀌어도 그대로다', () => 
     changed = session.setScore(changed, 20, later(11), changed.trials[0].id);
     assert.notDeepEqual(reportCompose.buildResultTables([changed], []), confirmed.resultTables);
     assert.equal(JSON.stringify(confirmed.resultTables), before);
+});
+
+await check('빈 평가영역·빈 평가목적·빈 결과표를 출력하지 않는다', () => {
+    const episode = reportEpisode();
+    const base = baseReport(episode);
+    const report = {
+        ...base,
+        purpose: '', // ① 기본정보에서 평가목적을 비워 둔 상태
+        tools: reportModel.DEFAULT_TOOL_ROWS.map(row => ({ ...row })).map(row =>
+            row.area.includes('손기능') ? { ...row, tool: 'KEAD 손기능 작업표본검사' } : row,
+        ),
+        resultTables: [
+            { title: '전부 미실시 표', rows: [['조건', '1회', '평균'], ['소형핀 · 우세손', '미실시', '—']] },
+            { title: '실제 측정 표', rows: [['조건', '1회', '평균'], ['소형핀 · 우세손', '12', '12']] },
+        ],
+        summary: { ...base.summary, overallOpinion: '종합소견 본문' },
+    };
+    const html = reportDocument.buildReportHtml(report);
+    // 미실시 영역의 빈 행은 평가도구 표에 나오지 않는다.
+    assert.ok(html.includes('KEAD 손기능 작업표본검사'));
+    assert.equal(html.includes('사회진단(사회적응도)'), false, '미실시 평가영역 행이 출력됨');
+    assert.equal(html.includes('심리진단(인지·언어)'), false);
+    // "1. 평가목적 —" 같은 빈 항목을 만들지 않는다.
+    assert.equal(html.includes('평가목적'), false, '빈 평가목적 항목이 출력됨');
+    // 전부 미실시인 표는 빠지고 실제 측정 표만 남는다.
+    assert.equal(html.includes('전부 미실시 표'), false, '빈 결과표가 출력됨');
+    assert.ok(html.includes('실제 측정 표'));
+    // 항목 번호는 실제로 출력한 것만으로 이어진다(평가목적을 건너뛰었으므로 평가 도구가 1번).
+    assert.ok(/1\.\s*평가 도구/.test(html), html.slice(0, 400));
+    assert.ok(/2\.\s*종합소견 및 직업재활방향/.test(html));
 });
 
 await check('DOCX·HTML 출력에 제외한 문단이 들어가지 않는다', async () => {
@@ -2086,6 +2228,432 @@ await check('정상 서술은 여전히 통과한다(거짓 양성 확인)', () 
     for (const claim of okCases) {
         assert.equal(claimQuality.validateClaim(claim, qualityPack).status, 'VALID', `막힘: ${claim.text}`);
     }
+});
+
+/* ── 종합소견 AI 초안(참고 내용 조립·항목 나누기) ─────────────────── */
+console.log('종합소견 AI 초안');
+const aiOpinion = await load('report/aiOpinion.mjs');
+
+await check('AI 참고 내용에 회차 재료가 항목별로 들어가고, 제외 문장은 빠진다', () => {
+    const episode = {
+        ...reportEpisode(),
+        purpose: '적합 직무 탐색',
+        disabilityHistory: '지적장애 정도가 심한 장애.',
+        careerHistory: '전공과 수료.',
+        note: '평가 중 협조적이었음.',
+        needs: { ...reportEpisode().needs, interest: true },
+    };
+    const record = {
+        ...analysisModel.createAnalysisDocument({ episodeId: episode.id, seekerId: 's1', seekerName: '합성이용자', source: 'AI' }),
+        detectedTitle: '사회적응도(CISA-2)',
+        findings: [
+            analysisModel.createAnalysisFinding('social', '지역사회 이용 기술이 또래 평균 수준으로 확인되었다.'),
+            { ...analysisModel.createAnalysisFinding('living', '대중교통은 지원이 필요하다.'), included: false },
+            analysisModel.createAnalysisFinding('vocational', '취업이 가능한 수준이다.'), // 차단 문장
+        ],
+    };
+    const reference = aiOpinion.buildOpinionReference({
+        episode,
+        sessions: [scoredHandSession()],
+        documents: [],
+        analyses: [record],
+        profile: { sex: '남', birthDate: '1990-01-01', disability: '지적장애 심한 정도' },
+    });
+    assert.ok(reference.includes('[평가 개요]'));
+    assert.ok(reference.includes('평가목적: 적합 직무 탐색'));
+    assert.ok(reference.includes('[장애 및 진단이력]'));
+    assert.ok(reference.includes('[검사 결과 — KEAD 손기능 작업표본검사]'));
+    assert.ok(reference.includes('지역사회 이용 기술'));
+    assert.equal(reference.includes('대중교통은 지원이'), false, '포함 해제한 문장은 보내지 않는다');
+    assert.equal(reference.includes('취업이 가능한'), false, '차단된 문장은 보내지 않는다');
+    assert.ok(reference.includes('[평가사 메모]'));
+});
+
+await check('AI가 쓴 8개 항목을 요약 칸으로 나눠 담는다(직업목표는 당사자/보호자로)', () => {
+    const sample = [
+        '1. 직업적 강점',
+        '- 과제를 중도 포기 없이 끝까지 완성하여 작업 완수 능력이 우수한 것으로 보임',
+        '2. 제한점(고려사항)',
+        '- 일반 속도의 작업 환경에서는 어려움을 겪을 수 있을 것으로 보임',
+        '3. 직업수준',
+        '- 단순 반복 작업 수행이 적절할 것으로 보임',
+        '4. 직업목표(당사자 및 보호자/지원자 목표)',
+        '- 당사자: 보호작업장, 바리스타',
+        '- 보호자/지원자: 본인이 즐거워하는 일',
+        '5. 지원이 필요한 사항',
+        '- 작업 속도 및 생산성 향상을 위한 지원: 충분한 숙련 기간을 보장하는 지원이 필요할 것으로 보임',
+        '6. 추천직무 및 권고프로그램',
+        '- 제조단순작업, 조립작업 등을 들 수 있을 것으로 보임',
+        '7. 추천직무 세부정보',
+        '- 직업재활시설(보호작업장): 보호된 작업 환경을 제공함',
+        '3. 지원고용 연계: 현장훈련과 병행함', // 본문 안의 번호 줄 — 새 항목으로 오인하면 안 된다
+        '8. 종합소견',
+        '- 보호고용 및 현장훈련 연계를 검토하는 것이 타당할 것으로 보임',
+    ].join('\n');
+    const parsed = aiOpinion.parseOpinionText(sample);
+    assert.equal(parsed.matchedSections, 8);
+    assert.ok(parsed.fields.strengths.includes('작업 완수 능력'));
+    assert.ok(parsed.fields.limitations.includes('일반 속도'));
+    assert.ok(parsed.fields.vocationalLevel.includes('단순 반복'));
+    assert.ok(parsed.fields.goalSelf.includes('보호작업장, 바리스타'));
+    assert.ok(parsed.fields.goalGuardian.includes('즐거워하는 일'));
+    assert.ok(parsed.fields.supportNeeds.includes('숙련 기간'));
+    assert.ok(parsed.fields.recommendation.includes('제조단순작업'));
+    assert.ok(parsed.fields.recommendedPrograms.includes('지원고용 연계'), '본문 안의 번호 줄은 그 항목에 남는다');
+    assert.ok(parsed.fields.overallOpinion.includes('보호고용'));
+    const applied = aiOpinion.applyOpinion(baseReport(reportEpisode()).summary, parsed);
+    assert.equal(applied.recommendation, parsed.fields.recommendation);
+});
+
+await check('⑥ 결과 분석이 회차에 저장·복원되고, 종합소견 입력에 그대로 들어간다', () => {
+    const base = {
+        ...reportEpisode(),
+        resultAnalysis: { text: '1. 평가자료 개요\n- 다차원 양손협응 결과지 1부.', generatedAt: NOW, editedAt: NOW },
+    };
+    // 저장·복원
+    const parsed = episodeModel.parseEpisode(episodeModel.serializeEpisode(base));
+    assert.ok(parsed.ok);
+    assert.equal(parsed.episode.resultAnalysis.text, base.resultAnalysis.text);
+    assert.equal(parsed.episode.resultAnalysis.editedAt, NOW);
+    // 빈 본문은 저장하지 않는다
+    const empty = episodeModel.parseEpisode(
+        episodeModel.serializeEpisode({ ...base, resultAnalysis: { text: '   ', generatedAt: NOW } }),
+    );
+    assert.equal(empty.episode.resultAnalysis, undefined);
+    // ⑦ 종합소견 입력에는 들어가고, ⑥ 자신의 입력에는 넣지 않는다
+    const withAnalysis = aiOpinion.buildOpinionReference({ episode: base, sessions: [], documents: [] });
+    assert.ok(withAnalysis.includes('검사 결과 분석(⑥'));
+    assert.ok(withAnalysis.includes('다차원 양손협응 결과지 1부'));
+    const withoutAnalysis = aiOpinion.buildOpinionReference({
+        episode: base,
+        sessions: [],
+        documents: [],
+        includeResultAnalysis: false,
+    });
+    assert.equal(withoutAnalysis.includes('검사 결과 분석(⑥'), false);
+});
+
+await check('이용자 희망직종이 참고 내용에 들어간다', () => {
+    const reference = aiOpinion.buildOpinionReference({
+        episode: reportEpisode(),
+        sessions: [],
+        documents: [],
+        profile: { desiredJobs: '바리스타 보조, 사무보조' },
+    });
+    assert.ok(reference.includes('당사자 희망직종'));
+    assert.ok(reference.includes('바리스타 보조, 사무보조'));
+});
+
+/* ── 소견 품질: 방어 문구·완료 오인·빈 출력 ─────────────────────── */
+
+await check('20/25와 기록시간을 "과제 완료"로 읽히게 쓰지 않는다', () => {
+    const s = makeBimanualSession();
+    const result = reportNarrative.buildResultNarrative(s, confirmedBimanualDocument(s.id), NOW);
+    const text = result.paragraphs.map(item => item.text).join(' ');
+    // 자료: 총 수행량 20 / 총 도구수 25, 기록시간 1분 20초 → 완료가 아니다.
+    for (const forbidden of ['과제를 완료', '전체 조립을 완료', '모든 과제를 끝', '완성소요시간', '만에 완료']) {
+        assert.equal(text.includes(forbidden), false, `완료로 읽히는 표현이 들어감: ${forbidden}`);
+    }
+    assert.ok(text.includes('총 수행량은 20개'), text);
+    assert.ok(text.includes('전체 과제를 끝낸 기록은 아니다'), text);
+    // AI에 보내는 참고 내용에도 같은 주의가 실려야 한다.
+    const reference = aiOpinion.buildOpinionReference({
+        episode: reportEpisode(),
+        sessions: [s],
+        documents: [confirmedBimanualDocument(s.id)],
+    });
+    assert.ok(reference.includes('전체 과제를 끝낸 기록은 아니다'), '참고 내용에도 미완료 사실이 들어간다');
+});
+
+await check('값·관찰이 하나도 없는 세션은 "실시했다" 문장을 만들지 않는다(중복 출력 방지)', () => {
+    // 같은 검사를 여러 번 만들었다가 하나만 실제로 실시한 회차:
+    // 첨부된 실제 DOCX에서 "KEAD 손기능…실시했다"가 3번 반복 출력되던 원인이다.
+    const emptyOne = makeHandSession();
+    const emptyTwo = makeHandSession();
+    let scored = scoredHandSession();
+    const episode = reportEpisode();
+    const sections = reportCompose.composeSections(
+        { episode, sessions: [emptyOne, scored, emptyTwo], documents: [] },
+        baseReport(episode).sections,
+    );
+    const vocational = sections.find(item => item.id === 'vocational');
+    const startLines = vocational.paragraphs.filter(item => item.text.includes('실시했다'));
+    assert.equal(startLines.length, 1, `실시 문장이 ${startLines.length}개 — 빈 세션은 생략되어야 한다`);
+    // 같은 세션이 결과표를 두 번 만들지 않는다(세션당 표 1개 + 규준표).
+    const tables = reportCompose.buildResultTables([scored], []);
+    assert.equal(tables.filter(table => table.title.includes('손기능')).length, 1, '같은 세션의 결과표가 중복 생성됨');
+});
+
+await check('평가하지 않은 영역을 "확인되지 않음"으로 자동 생성하지 않는다', () => {
+    // 손기능 검사만 있고 이동 능력·대인관계·인지 자료는 없는 상황.
+    let s = scoredHandSession();
+    const episode = reportEpisode();
+    const sections = reportCompose.composeSections({ episode, sessions: [s], documents: [] }, baseReport(episode).sections);
+    const summary = reportCompose.composeSummaryDraft({ episode, sessions: [s], documents: [] }, baseReport(episode).summary);
+    const allText = [
+        ...sections.flatMap(section => section.paragraphs.map(item => item.text)),
+        summary.strengths,
+        summary.limitations,
+        summary.vocationalLevel,
+    ].join(' ');
+    // 앱이 만드는 문단에는 "확인되지 않아 추가 면담" 같은 방어 문구가 하나도 없어야 한다.
+    for (const forbidden of ['대중교통', '앉아 있을 수 있는 시간', '대인관계 수준', '인지 및 학습능력', '추가 면담이 필요']) {
+        assert.equal(allText.includes(forbidden), false, `평가하지 않은 항목을 자동 생성함: ${forbidden}`);
+    }
+    const defensiveCount = (allText.match(/확인되지 않아|확인 필요/g) ?? []).length;
+    assert.ok(defensiveCount <= 1, `방어 문구가 ${defensiveCount}개로 많다`);
+});
+
+await check('AI 프롬프트가 미확인 항목 나열을 금지하고 추가 확인사항을 한 곳으로 제한한다', async () => {
+    const source = await readFile(path.join(root, 'src', 'services', 'gemini.ts'), 'utf8');
+    // 지난 버전에서 방어 문구를 양산하던 지시가 남아 있으면 안 된다.
+    assert.equal(
+        source.includes('"현재 자료에서는 확인되지 않아 추가 면담 또는 평가가 필요할 것으로 보임" 형태로만 적습니다'),
+        false,
+        '미확인 항목을 일일이 적게 하는 지시가 남아 있다',
+    );
+    assert.equal(source.includes('추정이 필요한 부분은 반드시 "확인 필요"라고 표시'), false);
+    // 새 철학이 두 엔진 프롬프트에 모두 들어가 있어야 한다.
+    assert.ok(source.includes('확인되지 않은 항목을 하나씩 열거하지도 않습니다'));
+    assert.match(source, /최대 3개/, '추가 확인사항 개수 제한');
+    // anchor로 작용하던 고정 예시 제거
+    for (const anchor of ['앉아 있기 3시간', '보호작업장, 바리스타', '독립적인 대중교통 이용 원활']) {
+        assert.equal(source.includes(anchor), false, `고정 예시가 남아 있다: ${anchor}`);
+    }
+    // 완료 오인 방지 지시
+    assert.ok(source.includes('과제를 완료했다고 쓰지 않습니다'));
+    // 실제 기관 보고서의 작성 방식(개조식 + 근거, 지원사항의 관찰→지원→기대 문단)을 지시한다.
+    assert.ok(source.includes('작성 방식 — 실제 기관 보고서의 문장 방식'), '작성 방식 블록');
+    assert.ok(source.includes('개조식'), '개조식 지시');
+    assert.ok(source.includes('- (지원 소제목): '), '지원사항 문단 틀');
+    assert.ok(source.includes('평가 중 …하는 모습이 관찰됨'), '관찰 근거 명시 지시');
+    assert.ok(source.includes('할 수 있기를 바람'), '기관 보고서 끝맺음 어조');
+    assert.ok(source.includes('없는 기관명·연락처를 만들지 않습니다'), '기관 정보 환각 방지');
+});
+
+await check('실제 파일 이름은 AI로 나가는 참고 내용에 들어가지 않는다', () => {
+    const named = index => ({
+        ...analysisModel.createAnalysisDocument({
+            episodeId: 'ep1',
+            seekerId: 's1',
+            seekerName: '합성이용자',
+            fileName: `김민수_CISA_서울병원_2026_${index}.pdf`,
+            source: 'AI',
+        }),
+        // 첫 장은 검사명 탐지 성공, 둘째 장은 실패(제목 없음)
+        detectedTitle: index === 0 ? 'CISA-2 사회적응도검사' : '',
+        findings: [analysisModel.createAnalysisFinding('social', `분석 문장 ${index}.`)],
+    });
+    const records = [named(0), named(1)];
+    const reference = aiOpinion.buildOpinionReference({
+        episode: reportEpisode(),
+        sessions: [],
+        documents: [],
+        analyses: records,
+    });
+    for (const record of records) {
+        assert.equal(reference.includes(record.fileName), false, `파일 이름이 새어 나감: ${record.fileName}`);
+    }
+    assert.equal(reference.includes('서울병원'), false, '파일 이름 속 기관명이 새어 나감');
+    assert.equal(reference.includes('김민수'), false, '파일 이름 속 이름이 새어 나감');
+    assert.ok(reference.includes('CISA-2 사회적응도검사'), '문서에서 읽은 검사명은 쓴다');
+    assert.ok(reference.includes('추가 평가자료 2'), '검사명을 모르면 안전한 대체 이름을 쓴다');
+    // 화면 표시용 제목은 파일 이름을 그대로 써도 된다(로컬 전용).
+    assert.equal(analysisModel.analysisTitle(records[1]), records[1].fileName);
+});
+
+await check('검사명을 못 읽은 분석지도 평가도구 표에서 사라지지 않는다', () => {
+    const record = {
+        ...analysisModel.createAnalysisDocument({
+            episodeId: 'ep1',
+            seekerId: 's1',
+            seekerName: '합성이용자',
+            fileName: 'ABC 직업행동평가.pdf',
+            source: 'AI',
+        }),
+        detectedTitle: '', // 정규식이 검사명을 못 잡은 상황
+        findings: [analysisModel.createAnalysisFinding('vocational', '내용은 분석에 사용되었다.')],
+    };
+    const tools = reportModel.DEFAULT_TOOL_ROWS.map(row => ({ ...row }));
+    const filled = reportCompose.fillToolRows(tools, [], [record]);
+    const listed = filled.map(row => row.tool).join(' | ');
+    assert.ok(listed.includes('ABC 직업행동평가.pdf'), `평가도구 목록에서 사라짐: ${listed}`);
+    assert.ok(filled.some(row => row.area === '기타 평가자료'), '분류 못 한 자료는 기타 평가자료 행으로 남는다');
+    // 같은 자료를 두 번 채워도 중복 행이 생기지 않는다.
+    assert.equal(reportCompose.fillToolRows(filled, [], [record]).filter(row => row.area === '기타 평가자료').length, 1);
+});
+
+/* ── ⑥ 결과 분석 최신성(STALE) ─────────────────────────────────── */
+
+await check('자료가 바뀌면 저장된 결과 분석이 STALE이 된다(KEAD 값·공식 결과지·관찰·분석지)', () => {
+    let s = scoredHandSession();
+    const base = { episode: reportEpisode(), sessions: [s], documents: [], analyses: [] };
+    const hash = aiOpinion.analysisSourceHash(base);
+    const analysis = { text: '분석 본문', generatedAt: NOW, sourceHash: hash };
+
+    // 변경 없음 → CURRENT
+    assert.equal(aiOpinion.isResultAnalysisCurrent(analysis, aiOpinion.analysisSourceHash(base)), true);
+
+    // KEAD 수행량 변경 → STALE
+    let changed = session.reopenSession(s, later(10));
+    changed = session.setScore(changed, 20, later(11), changed.trials[0].id);
+    assert.equal(
+        aiOpinion.isResultAnalysisCurrent(analysis, aiOpinion.analysisSourceHash({ ...base, sessions: [changed] })),
+        false,
+        'KEAD 값이 바뀌면 STALE',
+    );
+
+    // 공식 결과지 연결 → STALE (양손협응 회차로 확인)
+    const bimanual = makeBimanualSession();
+    const withoutDocument = { ...base, sessions: [bimanual] };
+    const bimanualHash = aiOpinion.analysisSourceHash(withoutDocument);
+    const bimanualAnalysis = { text: '분석 본문', generatedAt: NOW, sourceHash: bimanualHash };
+    const withDocument = aiOpinion.analysisSourceHash({ ...withoutDocument, documents: [confirmedBimanualDocument(bimanual.id)] });
+    assert.equal(aiOpinion.isResultAnalysisCurrent(bimanualAnalysis, withDocument), false, '공식 결과지가 바뀌면 STALE');
+
+    // 분석지 추가 → STALE
+    const record = {
+        ...analysisModel.createAnalysisDocument({ episodeId: 'ep1', seekerId: 's1', seekerName: '합성이용자', source: 'AI' }),
+        detectedTitle: '사회적응도검사',
+        findings: [analysisModel.createAnalysisFinding('social', '새로 추가한 분석 문장이다.')],
+    };
+    assert.equal(
+        aiOpinion.isResultAnalysisCurrent(analysis, aiOpinion.analysisSourceHash({ ...base, analyses: [record] })),
+        false,
+        '분석지가 바뀌면 STALE',
+    );
+
+    // 기본정보(이력) 변경 → STALE
+    const withHistory = aiOpinion.analysisSourceHash({
+        ...base,
+        episode: { ...base.episode, disabilityHistory: '새로 적은 진단이력' },
+    });
+    assert.equal(aiOpinion.isResultAnalysisCurrent(analysis, withHistory), false, '기본정보가 바뀌면 STALE');
+
+    // 지문이 없는 예전 형식은 보수적으로 STALE
+    assert.equal(aiOpinion.isResultAnalysisCurrent({ text: '옛 분석', generatedAt: NOW }, hash), false);
+    assert.equal(aiOpinion.isResultAnalysisCurrent(undefined, hash), false);
+});
+
+await check('결과 분석 지문은 분석 본문·legacy claim 자체에는 영향받지 않는다', () => {
+    const base = { episode: reportEpisode(), sessions: [scoredHandSession()], documents: [], analyses: [] };
+    const hash = aiOpinion.analysisSourceHash(base);
+    // 분석 본문을 채우거나 고쳐도 "입력 자료"가 바뀐 것은 아니므로 지문은 그대로여야 한다.
+    const withAnalysis = {
+        ...base,
+        episode: { ...base.episode, resultAnalysis: { text: '평가사가 고친 분석', generatedAt: NOW, editedAt: NOW, sourceHash: hash } },
+    };
+    assert.equal(aiOpinion.analysisSourceHash(withAnalysis), hash, '분석 본문은 지문에 들어가지 않는다');
+});
+
+await check('legacy claim은 새 결과분석·종합소견 입력에 기본적으로 들어가지 않는다', () => {
+    let s = scoredHandSession();
+    const run = runModule.createInterpretationRun({
+        testPluginId: s.testPluginId,
+        sessionId: s.id,
+        evidenceHash: 'hash',
+        readiness: { status: 'READY', message: '', missing: [], usableCoreFields: 1, totalCoreFields: 1 },
+        model: 'gemini',
+        now: NOW,
+        pack: qualityPack,
+        response: {
+            overallSummary: null,
+            claims: [
+                { claimType: 'RESULT_DESCRIPTION', text: '소형핀 우세손 수행량은 10개로 나타났다.', evidenceIds: ['fact_0'], confidence: 'HIGH' },
+            ],
+            cautions: [],
+        },
+    });
+    const accepted = { ...run, claims: [runModule.acceptClaim(run.claims[0], '평가사', NOW)] };
+    const episode = { ...reportEpisode(), interpretations: [accepted] };
+    const input = { episode, sessions: [s], documents: [] };
+
+    const reference = aiOpinion.buildOpinionReference(input);
+    assert.equal(reference.includes('소형핀 우세손 수행량은 10개'), false, 'AI 문장이 다시 AI 입력이 되면 안 된다');
+    assert.ok(
+        aiOpinion.buildOpinionReference({ ...input, includeLegacyClaims: true }).includes('소형핀 우세손 수행량은 10개'),
+        '호환 경로에서는 켤 수 있다',
+    );
+    // claim 기록 자체는 보고서 조립에 그대로 남는다(삭제하지 않는다).
+    const sections = reportCompose.composeSections(input, baseReport(episode).sections);
+    assert.ok(
+        sections.find(item => item.id === 'vocational').paragraphs.some(item => item.origin === 'AI_CLAIM'),
+        'claim 기록은 보고서에서 그대로 쓸 수 있어야 한다',
+    );
+});
+
+await check('종합소견 파서: 제목과 내용이 한 줄에 붙어 와도 내용을 잃지 않는다', () => {
+    const sample = [
+        '### 1. 직업적 강점: 제한시간 내 과제를 끝까지 수행함',
+        '2) 제한점(고려사항) - 일반 속도 환경에서는 어려울 수 있음',
+        '3. 직업수준',
+        '단순 반복 작업이 적절할 것으로 보임',
+        '4. 직업목표(당사자 및 보호자/지원자 목표)',
+        '- 당사자: 확인되지 않음',
+        '- 보호자/지원자: 확인되지 않음',
+        '**5. 지원이 필요한 사항**',
+        '- 작업 속도 완화 지원이 필요할 것으로 보임',
+        '6. 추천직무 및 권고프로그램: 제조단순작업을 탐색할 수 있을 것으로 보임',
+        '7. 추천직무 세부정보',
+        '- 보호작업장 개요',
+        '8. 종합소견: 보호고용 연계를 검토할 수 있을 것으로 보임',
+    ].join('\n');
+    const parsed = aiOpinion.parseOpinionText(sample);
+    assert.equal(parsed.matchedSections, 8);
+    assert.ok(parsed.fields.strengths.includes('제한시간 내 과제'), '마크다운 헤더 + 같은 줄 본문');
+    assert.ok(parsed.fields.limitations.includes('일반 속도 환경'), '괄호 제목 + 하이픈 본문');
+    assert.ok(parsed.fields.vocationalLevel.includes('단순 반복 작업'));
+    assert.ok(parsed.fields.goalSelf.includes('확인되지 않음'));
+    assert.ok(parsed.fields.goalGuardian.includes('확인되지 않음'));
+    assert.ok(parsed.fields.supportNeeds.includes('작업 속도 완화'), '굵은 글씨 제목');
+    assert.ok(parsed.fields.recommendation.includes('제조단순작업'));
+    assert.ok(parsed.fields.recommendedPrograms.includes('보호작업장 개요'));
+    assert.ok(parsed.fields.overallOpinion.includes('보호고용 연계'));
+    // 제목의 괄호 설명이 본문으로 새어 들어가지 않는다.
+    assert.equal(parsed.fields.goalSelf.includes('보호자/지원자 목표)'), false);
+    // 제목 조각("프로그램", "정보")이 본문 첫 줄로 새지 않는다.
+    assert.equal(/^프로그램/m.test(parsed.fields.recommendation), false, `제목 꼬리가 샘: ${parsed.fields.recommendation.slice(0, 30)}`);
+    assert.equal(/^정보/m.test(parsed.fields.recommendedPrograms), false, `제목 꼬리가 샘: ${parsed.fields.recommendedPrograms.slice(0, 30)}`);
+    // "당사자:"/"보호자:" 라벨은 칸 이름이 대신하므로 본문에서 떼어 낸다(라벨 중복 방지).
+    assert.equal(/^당사자/.test(parsed.fields.goalSelf), false, parsed.fields.goalSelf);
+    assert.equal(/^보호자|^지원자/.test(parsed.fields.goalGuardian), false, parsed.fields.goalGuardian);
+});
+
+await check('종합소견은 표(칸)가 아니라 소제목+문단으로 출력되고, 빈 항목은 건너뛴다', () => {
+    const episode = reportEpisode();
+    const report = {
+        ...baseReport(episode),
+        purpose: '검증용 평가목적',
+        summary: {
+            ...baseReport(episode).summary,
+            vocationalLevel: '- 구조화된 조립 과제에서 안정적인 수행이 확인됨',
+            goalSelf: '바리스타, 사무보조',
+            goalGuardian: '', // 비어 있으면 보호자 줄 자체를 만들지 않는다
+            strengths: '- 대형 부품 조작에서 강점',
+            supportNeeds: '- (작업 페이스 조절 지원): 평가 중 관찰된 근거에 따른 지원.',
+        },
+    };
+    const html = reportDocument.buildReportHtml(report);
+    // 소제목이 문단으로 나온다.
+    assert.ok(html.includes('[직업수준]'));
+    assert.ok(html.includes('[직업목표(당사자 및 보호자/지원자)]'));
+    assert.ok(html.includes('- 당사자: 바리스타, 사무보조'));
+    // 표 칸(<td>) 안에 종합소견 항목 라벨이 들어가지 않는다.
+    assert.equal(/<td[^>]*>\s*\[?직업수준/.test(html), false, '종합소견이 여전히 표 칸으로 나뉜다');
+    assert.equal(/<td[^>]*>\s*직업적 강점/.test(html), false);
+    // 빈 항목은 건너뛴다: 보호자 줄·제한점·추천직무·종합소견 소제목이 없다.
+    assert.equal(html.includes('- 보호자/지원자:'), false, '빈 보호자 목표가 출력됨');
+    assert.equal(html.includes('[직업적 제한점(고려사항)]'), false, '빈 제한점 항목이 출력됨');
+    assert.equal(html.includes('[종합소견]'), false, '빈 종합소견 항목이 출력됨');
+    assert.ok(html.includes('[지원이 필요한 사항]'));
+});
+
+await check('항목을 못 알아보면 전문을 종합소견 칸에 담는다(내용을 잃지 않는다)', () => {
+    const parsed = aiOpinion.parseOpinionText('항목 구분 없이 쓴 소견 전문입니다.\n두 번째 줄.');
+    assert.ok(parsed.matchedSections < 4);
+    assert.ok(parsed.fields.overallOpinion.includes('소견 전문'));
+    assert.ok(parsed.fields.overallOpinion.includes('두 번째 줄'));
+    assert.equal(parsed.fields.strengths, undefined);
 });
 
 console.log(`\n직업평가 워크벤치 테스트 ${checks}건 통과`);

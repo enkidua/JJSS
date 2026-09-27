@@ -168,6 +168,7 @@ export function EpisodeDetail({
             {step === 'summary' && <SummaryStep episode={episode} sessions={sessions} />}
             {step === 'interpretation' && (
                 <InterpretationStep
+                    analyses={analysisDocuments}
                     episode={episode}
                     sessions={sessions}
                     documents={sourceDocuments}
@@ -185,6 +186,7 @@ export function EpisodeDetail({
                     reports={reports}
                     onReportsChange={setReports}
                     onEpisodeChange={updateEpisode}
+                    onGoToBasic={() => setStep('basic')}
                     locked={locked}
                 />
             )}
