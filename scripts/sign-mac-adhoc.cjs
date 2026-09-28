@@ -18,8 +18,8 @@ module.exports = async (context) => {
     preAutoEntitlements: false,
     preEmbedProvisioningProfile: false,
     gatekeeperAssess: false,
-    strictVerify: true,
-    optionsForFile: () => ({ hardenedRuntime: false }),
+    // The installed osx-sign version uses strict verification by default.
+    optionsForFile: () => ({ hardenedRuntime: false, timestamp: 'none' }),
   });
   const verified = spawnSync('codesign', ['--verify', '--deep', '--strict', '--verbose=2', app], { stdio: 'inherit' });
   if (verified.status !== 0) throw new Error('macOS ad-hoc signature verification failed');
