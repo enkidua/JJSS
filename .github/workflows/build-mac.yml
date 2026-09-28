@@ -27,14 +27,20 @@ jobs:
       - run: npm ci
       - run: npx tsc -p tsconfig.app.json --noEmit
       - run: npm run test:all
-      - run: npm run electron:build:mac
+      # Test distribution: ad-hoc integrity signature, not Developer ID/notarization.
+      - run: npm run electron:build:mac -- --config.afterPack=./scripts/sign-mac-adhoc.cjs
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Verify disk image, nested signatures and arm64 startup
+        run: |
+          node scripts/verify-mac-dmg.cjs release/JJSS-*-arm64.dmg
+          shasum -a 256 release/*.dmg release/*-mac.zip > release/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
           name: jjss-mac-arm64
           path: |
             release/*.dmg
             release/*-mac.zip
+            release/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
