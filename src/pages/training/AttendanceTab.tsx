@@ -79,7 +79,7 @@ export function AttendanceTab({
     const countKeys: AttendanceCountKey[] = ['출석', '지각', '조퇴', '결석', '미체크'];
 
     return (
-        <div className="glass-strong rounded-[2rem] p-6 border border-white/10 shadow-2xl">
+        <div className="glass-strong rounded-4xl p-6 border border-white/10 shadow-2xl">
             <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6">
                 <div>
                     <h2 className="text-2xl font-black text-white">훈련실 출석관리</h2>
@@ -118,7 +118,7 @@ export function AttendanceTab({
                 {room.trainees.map(trainee => {
                     const status = getStatus(trainee.id);
                     return (
-                        <div key={trainee.id} className="rounded-2xl bg-white/[0.03] border border-white/10 p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                        <div key={trainee.id} className="rounded-2xl bg-white/3 border border-white/10 p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                             <div className="flex items-center gap-3">
                                 <div>
                                     <p className="font-bold text-white">{trainee.name}</p>

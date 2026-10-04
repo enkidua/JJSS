@@ -1,12 +1,28 @@
 import { useEffect, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import Navbar from './Navbar';
-import { useDataStore } from '../store/dataStore';
+import { startAtRestMigration, useDataStore } from '../store/dataStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { safeErrorMetadata } from '../utils/safeError';
-import { DATA_RECOVERY_EVENT, getDataRecoveryStatus, type DataRecoveryStatus } from '../config/localDB';
+import {
+    clearRestoreJournal,
+    DATA_RECOVERY_EVENT,
+    getDataRecoveryStatus,
+    readRestoreJournal,
+    type DataRecoveryStatus,
+    type RestoreJournal,
+} from '../config/localDB';
+import {
+    DECRYPT_FAILURE_MESSAGE,
+    SECURE_STORAGE_UNAVAILABLE_EVENT,
+    SECURE_STORAGE_UNAVAILABLE_MESSAGE,
+    getEncryptionKeyInfo,
+} from '../config/crypto';
 import JjssFileSaveNotice from './JjssFileSaveNotice';
 import ApiKeyOnboarding from './ApiKeyOnboarding';
+
+const CREATOR_BLOG_URL = 'https://tilnote.io/@jang-go';
+const CREATOR_BOOK_URL = 'https://tilnote.io/users/books/69eaf0dfac767c3248a2e610';
 import ApiKeyRequiredNotice from './ApiKeyRequiredNotice';
 import PremiumUseConfirmDialog from './PremiumUseConfirmDialog';
 import AIUsageNotice from './AIUsageNotice';
@@ -27,8 +43,8 @@ const PAGE_TITLES: Record<string, string> = {
 
 function dataRecoveryMessage(status: DataRecoveryStatus): string {
     return status.dataKeyUnavailable
-        ? '이 PC의 보안 키를 불러오지 못해 암호화된 이용자 정보 일부를 표시할 수 없습니다. 다른 PC나 다른 Windows 사용자 계정으로 데이터를 옮긴 경우 생길 수 있습니다. 저장된 원본은 지우지 않았습니다. 설정 > 파일·백업에서 백업 파일로 복원해 주세요.'
-        : '암호화된 이용자 정보 일부를 읽지 못해 빈 칸으로 표시했습니다. 저장된 원본은 지우지 않았습니다. 내용이 비어 있다면 설정 > 파일·백업에서 최근 백업 파일로 복원해 주세요.';
+        ? `${DECRYPT_FAILURE_MESSAGE} 암호화된 이용자 정보 일부를 표시할 수 없습니다. 데이터 폴더를 다른 PC나 다른 사용자 계정으로 복사한 경우 생길 수 있습니다. 설정 > 파일·백업에서 암호화 백업 파일로 복원해 주세요.`
+        : `${DECRYPT_FAILURE_MESSAGE} 암호화된 이용자 정보 일부를 읽지 못해 빈 칸으로 표시했습니다. 내용이 비어 있다면 설정 > 파일·백업에서 최근 백업 파일로 복원해 주세요.`;
 }
 
 function getInitialLoadIssues() {
@@ -48,6 +64,21 @@ export default function Layout() {
     const [loadIssues, setLoadIssues] = useState<string[]>([]);
     const [dataRecovery, setDataRecovery] = useState<DataRecoveryStatus | null>(null);
     const [dataRecoveryDismissed, setDataRecoveryDismissed] = useState(false);
+    const [secureStorageBlocked, setSecureStorageBlocked] = useState(false);
+
+    useEffect(() => {
+        // 배포용 앱에서 운영체제 보안 저장소를 쓸 수 없으면 새 개인정보 저장이 막히므로 미리 알린다.
+        let active = true;
+        const showBlocked = () => setSecureStorageBlocked(true);
+        window.addEventListener(SECURE_STORAGE_UNAVAILABLE_EVENT, showBlocked);
+        void getEncryptionKeyInfo()
+            .then(info => { if (active && info.kind === 'unavailable') setSecureStorageBlocked(true); })
+            .catch(() => undefined);
+        return () => {
+            active = false;
+            window.removeEventListener(SECURE_STORAGE_UNAVAILABLE_EVENT, showBlocked);
+        };
+    }, []);
 
     useEffect(() => {
         // 암호화된 개인정보를 읽지 못했을 때(보안 키 없음 등) 복구 안내를 띄운다.
@@ -60,6 +91,12 @@ export default function Layout() {
         if (current.unreadableCount > 0) setDataRecovery(current);
         return () => window.removeEventListener(DATA_RECOVERY_EVENT, showRecovery);
     }, []);
+    // 지난 실행에서 복원이 끝나지 않았는지(강제 종료·전원 차단) 확인한다.
+    const [unfinishedRestore, setUnfinishedRestore] = useState<RestoreJournal | null>(null);
+    useEffect(() => {
+        setUnfinishedRestore(readRestoreJournal());
+    }, []);
+
     const [retrying, setRetrying] = useState(false);
     const [initialLoading, setInitialLoading] = useState(true);
 
@@ -79,6 +116,8 @@ export default function Layout() {
             } finally {
                 setInitialLoading(false);
             }
+            // 초기 화면을 띄운 뒤 백그라운드에서 오래된 평문·이전 형식 레코드를 현재 형식으로 다시 암호화한다(한 번만 실행).
+            void startAtRestMigration();
         };
         void init();
     }, [fetchData, loadSettings]); // 앱 생명주기 동안 한 번만 실행
@@ -130,7 +169,7 @@ export default function Layout() {
                     event.preventDefault();
                     focusMainContent();
                 }}
-                className="fixed left-3 top-2 z-[10000] -translate-y-20 rounded-lg bg-white px-4 py-2 text-sm font-bold text-slate-950 shadow-xl transition-transform focus:translate-y-0"
+                className="fixed left-3 top-2 z-10000 -translate-y-20 rounded-lg bg-white px-4 py-2 text-sm font-bold text-slate-950 shadow-xl transition-transform focus:translate-y-0"
             >
                 본문으로 건너뛰기
             </a>
@@ -139,11 +178,11 @@ export default function Layout() {
             <ApiKeyRequiredNotice />
             <PremiumUseConfirmDialog />
             {/* 오른쪽 아래 알림은 한 곳에 위아래로 쌓아 서로 겹치지 않게 한다. */}
-            <div className="pointer-events-none fixed bottom-4 right-4 z-[9998] flex w-[min(92vw,32rem)] flex-col items-end gap-3">
+            <div className="pointer-events-none fixed bottom-4 right-4 z-9998 flex w-[min(92vw,32rem)] flex-col items-end gap-3">
                 <AIUsageNotice />
                 <JjssFileSaveNotice />
             </div>
-            <main id="main-content" tabIndex={-1} className="pt-16 flex-1 relative focus:outline-none">
+            <main id="main-content" tabIndex={-1} className="pt-16 flex-1 relative focus:outline-hidden">
                 {initialLoading && <p role="status" className="mx-auto max-w-7xl px-6 py-3 text-sm text-white/70">저장된 데이터와 설정을 불러오는 중입니다…</p>}
                 {loadIssues.length > 0 && (
                     <section
@@ -167,6 +206,49 @@ export default function Layout() {
                         </button>
                     </section>
                 )}
+                {secureStorageBlocked && (
+                    <section
+                        role="alert"
+                        className="mx-auto mt-4 w-[min(92%,80rem)] rounded-xl border border-red-400/40 bg-red-950/80 px-4 py-3 text-sm text-red-50 shadow-lg"
+                    >
+                        <p className="font-bold">개인정보를 저장할 수 없습니다.</p>
+                        <p className="mt-1 text-xs leading-relaxed text-red-100/90">{SECURE_STORAGE_UNAVAILABLE_MESSAGE} 기존 데이터는 삭제하지 않았으며, 백업 내보내기는 계속 사용할 수 있습니다.</p>
+                    </section>
+                )}
+                {unfinishedRestore && (
+                    <section
+                        role="alert"
+                        className="mx-auto mt-4 flex w-[min(92%,80rem)] flex-col gap-3 rounded-xl border border-rose-400/40 bg-rose-950/80 px-4 py-3 text-sm text-rose-50 shadow-lg sm:flex-row sm:items-center sm:justify-between"
+                    >
+                        <div>
+                            <p className="font-bold">지난 복원이 끝나지 않았습니다.</p>
+                            <p className="mt-1 text-xs leading-relaxed text-rose-100/90">
+                                백업 복원 중에 앱이 종료된 것으로 보입니다({unfinishedRestore.startedAt.slice(0, 16).replace('T', ' ')}).
+                                일부 자료만 바뀌었을 수 있으니 <strong>같은 백업 파일로 복원을 한 번 더</strong> 실행해 주세요.
+                            </p>
+                        </div>
+                        <div className="flex shrink-0 gap-2">
+                            <button
+                                type="button"
+                                onClick={() => navigate('/settings#files-backup')}
+                                className="rounded-lg border border-rose-200/40 bg-rose-300/15 px-4 py-2 font-bold text-rose-50 hover:bg-rose-300/25"
+                            >
+                                백업·복원 설정으로
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    clearRestoreJournal();
+                                    setUnfinishedRestore(null);
+                                }}
+                                className="rounded-lg px-3 py-2 text-rose-100/80 hover:text-rose-50"
+                            >
+                                확인함
+                            </button>
+                        </div>
+                    </section>
+                )}
+
                 {dataRecovery && !dataRecoveryDismissed && (
                     <section
                         role="alert"
@@ -203,6 +285,30 @@ export default function Layout() {
                         <p className="text-white/50 text-sm font-medium tracking-wide">
                             Built by <span className="text-white font-bold tracking-widest uppercase">Jang-Go</span>
                         </p>
+                        {/* 제작자 블로그·저서. 외부 브라우저로 열린다(앱이 보내는 데이터 없음). */}
+                        <div className="flex flex-wrap items-center justify-center gap-2 text-xs sm:text-sm">
+                            <a
+                                href={CREATOR_BLOG_URL}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 text-white/70 hover:text-white transition-all"
+                            >
+                                <span aria-hidden="true">📝</span> 제작자 블로그(TILNOTE)
+                            </a>
+                            <a
+                                href={CREATOR_BOOK_URL}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title="기계의 지능, 사람의 일 : AI로 재설계하는 직업재활: 상담에서 사후관리까지, 실무와 윤리의 가이드라인"
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 text-white/70 hover:text-white transition-all max-w-full"
+                            >
+                                <span aria-hidden="true">📘</span>
+                                <span className="truncate">저서 『기계의 지능, 사람의 일』</span>
+                            </a>
+                        </div>
+                        <p className="text-white/35 text-xs max-w-lg leading-relaxed">
+                            AI로 재설계하는 직업재활: 상담에서 사후관리까지, 실무와 윤리의 가이드라인
+                        </p>
                         <p className="text-white/40 text-xs sm:text-sm max-w-lg leading-relaxed">
                             사용 중 느끼신 불편한 점, <br className="sm:hidden" />
                             혹은 <strong className="text-emerald-400/80">추가되었으면 하는 기능이나 아이디어</strong>가 있으신가요?<br />
@@ -210,7 +316,7 @@ export default function Layout() {
                         </p>
                         <a 
                             href="mailto:enkidua@naver.com" 
-                            className="inline-flex items-center gap-2 px-4 py-2 mt-2 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 text-blue-400 hover:text-blue-300 transition-all font-mono text-sm shadow-sm"
+                            className="inline-flex items-center gap-2 px-4 py-2 mt-2 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 text-blue-400 hover:text-blue-300 transition-all font-mono text-sm shadow-xs"
                         >
                             <span>✉️</span> enkidua@naver.com
                         </a>

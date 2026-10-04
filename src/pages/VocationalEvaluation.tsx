@@ -16,6 +16,7 @@ import {
   Trash2,
   Edit3,
   UserRound,
+  ClipboardCheck,
 } from 'lucide-react';
 import { analyzeTestResults, generateReport } from '../services/gemini';
 import { regenerateDocumentFromCurrent } from '../services/documentRegenerationService';
@@ -31,14 +32,15 @@ import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 import { useDataStore } from '../store/dataStore';
 import type { Seeker } from '../types/matching';
 import { getSeekerKey, isSameSeeker } from '../utils/seeker';
+import { runLegacyMigration } from '../services/legacyMigration';
+import { WorkbenchTab } from './evaluation/WorkbenchTab';
+import { EvaluationSaveStatusProvider, useEvaluationSaveStatus } from './evaluation/EvaluationSaveStatus';
 
-/** 예전 버전이 평문으로 쓰던 localStorage 키. 화면 진입 시 사례문서 저장소(암호화)로 옮긴 뒤 지웁니다. */
-const LEGACY_HISTORY_KEY = 'jjss:vocational-evaluation-history';
 const HISTORY_DOC_TYPE = 'vocational_evaluation' as const;
 const ORGANIZATION = '직업재활기관';
 
 type EvaluationKind = 'analysis' | 'report';
-type EvaluationTab = 'analyzer' | 'report' | 'history';
+type EvaluationTab = 'workbench' | 'analyzer' | 'report' | 'history';
 
 interface EvaluationHistoryDoc {
   id: string;
@@ -61,7 +63,7 @@ interface EvaluationNavigationState {
 }
 
 function isEvaluationTab(value: unknown): value is EvaluationTab {
-  return value === 'analyzer' || value === 'report' || value === 'history';
+  return value === 'workbench' || value === 'analyzer' || value === 'report' || value === 'history';
 }
 
 function findSeekerByKey(seekers: Seeker[], key: string): Seeker | null {
@@ -109,21 +111,6 @@ const KIND_TITLES: Record<EvaluationKind, string> = {
 
 // ─── 저장 이력(사례문서 저장소) 도우미 ───
 
-function hashText(text: string): string {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < text.length; index += 1) {
-    hash ^= text.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return hash.toString(36);
-}
-
-function secondsFromDateText(value: unknown): number | null {
-  if (typeof value !== 'string' || !value) return null;
-  const time = Date.parse(value);
-  return Number.isNaN(time) ? null : Math.floor(time / 1000);
-}
-
 function timestampToIso(value: unknown): string | undefined {
   if (value && typeof value === 'object' && typeof (value as { seconds?: unknown }).seconds === 'number') {
     return new Date((value as { seconds: number }).seconds * 1000).toISOString();
@@ -161,140 +148,7 @@ async function loadHistoryDocs(): Promise<EvaluationHistoryDoc[]> {
     .sort((a, b) => b.savedAt.localeCompare(a.savedAt));
 }
 
-interface LegacyHistoryItem {
-  legacyId: string;
-  type: EvaluationKind;
-  title: string;
-  content: string;
-  savedAt?: string;
-  updatedAt?: string;
-}
 
-type LegacyReadResult =
-  | { status: 'absent' }
-  | { status: 'unreadable' }
-  | { status: 'ok'; raw: string; items: LegacyHistoryItem[]; skipped: number };
-
-function readLegacyHistory(): LegacyReadResult {
-  let raw: string | null;
-  try {
-    raw = localStorage.getItem(LEGACY_HISTORY_KEY);
-  } catch {
-    return { status: 'absent' };
-  }
-  if (raw === null) return { status: 'absent' };
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return { status: 'unreadable' };
-  }
-  if (!Array.isArray(parsed)) return { status: 'unreadable' };
-
-  const items: LegacyHistoryItem[] = [];
-  let skipped = 0;
-  for (const entry of parsed) {
-    if (!entry || typeof entry !== 'object' || typeof (entry as { content?: unknown }).content !== 'string') {
-      skipped += 1;
-      continue;
-    }
-    const record = entry as Record<string, unknown>;
-    const content = record.content as string;
-    const type: EvaluationKind = record.type === 'report' ? 'report' : 'analysis';
-    const savedAt = typeof record.savedAt === 'string' ? record.savedAt : undefined;
-    const rawId = typeof record.id === 'string' || typeof record.id === 'number' ? String(record.id).trim() : '';
-    items.push({
-      legacyId: rawId || `h${hashText(`${savedAt || ''}\u0000${content}`)}`,
-      type,
-      title: typeof record.title === 'string' && record.title.trim() ? record.title : KIND_TITLES[type],
-      content,
-      savedAt,
-      updatedAt: typeof record.updatedAt === 'string' ? record.updatedAt : undefined,
-    });
-  }
-  return { status: 'ok', raw, items, skipped };
-}
-
-interface MigrationResult {
-  migrated: number;
-  failed: number;
-  /** 원본 localStorage 키를 남겨 두었는지(실패·읽을 수 없는 항목이 있을 때) */
-  keptLegacy: boolean;
-  reason?: 'unreadable' | 'failed' | 'partial';
-}
-
-/**
- * localStorage 평가 이력을 사례문서 저장소로 옮깁니다.
- * - 항목마다 고정 ID(`vocational-eval-<원래 ID>`)를 써서 다시 시도해도 중복으로 들어가지 않습니다.
- * - 같은 ID가 이미 있는데 내용이 다르면(부분 백업 복원 등) 내용 해시를 붙인 ID로 따로 보관합니다.
- * - 모든 항목을 옮긴 경우에만 원본 키를 지웁니다. 하나라도 실패하면 원본을 그대로 둡니다.
- */
-async function migrateLegacyHistory(): Promise<MigrationResult> {
-  const legacy = readLegacyHistory();
-  if (legacy.status === 'absent') return { migrated: 0, failed: 0, keptLegacy: false };
-  if (legacy.status === 'unreadable') return { migrated: 0, failed: 0, keptLegacy: true, reason: 'unreadable' };
-
-  const existing = await localDB.query<CaseDocument>('caseDocuments', doc => doc.type === HISTORY_DOC_TYPE);
-  const contentById = new Map<string, string>();
-  existing.forEach(doc => { if (doc.id) contentById.set(doc.id, doc.content); });
-
-  let migrated = 0;
-  let failed = 0;
-  for (const item of legacy.items) {
-    const baseId = `vocational-eval-${item.legacyId}`;
-    let targetId = baseId;
-    if (contentById.has(baseId)) {
-      if (contentById.get(baseId) === item.content) continue;
-      targetId = `${baseId}-${hashText(item.content)}`;
-      if (contentById.has(targetId)) continue;
-    }
-    const createdSeconds = secondsFromDateText(item.savedAt) ?? Math.floor(Date.now() / 1000);
-    const updatedSeconds = secondsFromDateText(item.updatedAt);
-    try {
-      await localDB.addDoc<CaseDocument>('caseDocuments', {
-        id: targetId,
-        seekerId: '',
-        seekerName: '',
-        type: HISTORY_DOC_TYPE,
-        tab: 'docs',
-        source: 'evaluation',
-        organization: ORGANIZATION,
-        content: item.content,
-        title: item.title,
-        evaluationKind: item.type,
-        legacyHistoryId: item.legacyId,
-        createdAt: { seconds: createdSeconds },
-        ...(updatedSeconds !== null ? { updatedAt: { seconds: updatedSeconds } } : {}),
-      });
-      contentById.set(targetId, item.content);
-      migrated += 1;
-    } catch {
-      failed += 1;
-    }
-  }
-
-  if (failed > 0) return { migrated, failed, keptLegacy: true, reason: 'failed' };
-  if (legacy.skipped > 0) return { migrated, failed, keptLegacy: true, reason: 'partial' };
-
-  try {
-    // 옮기는 동안 백업 복원 등으로 값이 바뀌었다면 지우지 않고 다음 진입 때 다시 옮깁니다.
-    if (localStorage.getItem(LEGACY_HISTORY_KEY) === legacy.raw) localStorage.removeItem(LEGACY_HISTORY_KEY);
-  } catch {
-    // 원본을 지우지 못해도 다음 진입 때 고정 ID로 중복 없이 다시 확인합니다.
-  }
-  return { migrated, failed: 0, keptLegacy: false };
-}
-
-let migrationInFlight: Promise<MigrationResult> | null = null;
-
-/** 개발 모드(StrictMode)처럼 화면이 두 번 마운트되어도 이관은 한 번만 실행합니다. */
-function runLegacyMigration(): Promise<MigrationResult> {
-  if (!migrationInFlight) {
-    migrationInFlight = migrateLegacyHistory().finally(() => { migrationInFlight = null; });
-  }
-  return migrationInFlight;
-}
 
 function SelectedFileList({ files, onRemove, className }: { files: File[]; onRemove: (index: number) => void; className: string }) {
   if (files.length === 0) return null;
@@ -327,6 +181,11 @@ function SelectedFileList({ files, onRemove, className }: { files: File[]; onRem
 }
 
 export default function VocationalEvaluation() {
+  return <EvaluationSaveStatusProvider><VocationalEvaluationContent /></EvaluationSaveStatusProvider>;
+}
+
+function VocationalEvaluationContent() {
+  const { dirty: workbenchDirty } = useEvaluationSaveStatus();
   const location = useLocation();
   const navigate = useNavigate();
   const { seekers, initialized } = useDataStore();
@@ -335,7 +194,7 @@ export default function VocationalEvaluation() {
   const showToastRef = useRef(showToast);
   showToastRef.current = showToast;
 
-  const [activeTab, setActiveTab] = useState<EvaluationTab>('analyzer');
+  const [activeTab, setActiveTab] = useState<EvaluationTab>('workbench');
   // 결과분석·종합소견서를 저장할 때 연결할 이용자(선택). 두 탭이 함께 씁니다.
   const [linkedSeekerKey, setLinkedSeekerKey] = useState('');
   const [linkingDocId, setLinkingDocId] = useState<string | null>(null);
@@ -357,6 +216,10 @@ export default function VocationalEvaluation() {
   const [isRefiningReport, setIsRefiningReport] = useState(false);
   const [reportResult, setReportResult] = useState('');
   const [savedReportContent, setSavedReportContent] = useState('');
+  // 분석·분석 보완, 소견서 작성·소견서 보완은 같은 결과칸을 고친다. 둘이 겹치면 나중에 끝난 쪽이 앞의 결과를
+  // 덮으므로 칸마다 한 번에 하나만 실행한다(같은 렌더 안의 연타까지 막도록 ref).
+  const analysisBusyRef = useRef(false);
+  const reportBusyRef = useRef(false);
 
   const [downloadError, setDownloadError] = useState('');
 
@@ -451,9 +314,17 @@ export default function VocationalEvaluation() {
   const analysisDirty = !!analyzerResult.trim() && analyzerResult !== savedAnalysisContent;
   const reportDirty = !!reportResult.trim() && reportResult !== savedReportContent;
   useUnsavedGuard(
-    analysisDirty || reportDirty || historyDraftDirty,
-    '저장하지 않은 직업평가 내용이 있습니다.\n이 화면을 떠나면 저장하지 않은 분석 결과·종합소견서·수정 내용이 사라집니다. 계속할까요?',
+    analysisDirty || reportDirty || historyDraftDirty || workbenchDirty,
+    '저장하지 않은 직업평가 내용이 있습니다.\n이 화면을 떠나면 저장하지 않은 회차·검사·보고서·분석 결과·수정 내용이 사라질 수 있습니다. 계속할까요?',
   );
+
+  const switchEvaluationTab = async (next: EvaluationTab) => {
+    if (activeTab === 'workbench' && next !== activeTab && workbenchDirty) {
+      const ok = await confirm({ title: '저장되지 않은 평가 기록', message: '아직 저장되지 않은 회차·검사·보고서 변경이 있습니다. 이동하면 마지막 입력을 잃을 수 있습니다. 계속할까요?', confirmLabel: '나가기', cancelLabel: '계속 작성', tone: 'danger' });
+      if (!ok) return;
+    }
+    setActiveTab(next);
+  };
 
   const latestSavedAnalysis = savedDocs.find(doc => doc.type === 'analysis')?.content || '';
   const selectedHistoryAnalysis = selectedHistoryDoc?.type === 'analysis' ? selectedHistoryDoc.content : '';
@@ -508,12 +379,13 @@ export default function VocationalEvaluation() {
   };
 
   const handleAnalyze = async () => {
-    if (isAnalyzing) return;
+    if (isAnalyzing || analysisBusyRef.current) return;
     if (selectedFiles.length === 0 && !analyzerInput.trim()) {
       showToast('파일을 업로드하거나 분석할 내용을 입력해 주세요.', 'error');
       return;
     }
 
+    analysisBusyRef.current = true;
     setIsAnalyzing(true);
     setDownloadError('');
 
@@ -524,17 +396,19 @@ export default function VocationalEvaluation() {
     } catch (error: any) {
       showToast(error?.message || '결과 분석 중 오류가 발생했습니다.', 'error');
     } finally {
+      analysisBusyRef.current = false;
       setIsAnalyzing(false);
     }
   };
 
   const handleGenerateReport = async () => {
-    if (isGenerating) return;
+    if (isGenerating || reportBusyRef.current) return;
     if (!canGenerateReport) {
       showToast('종합소견서 작성에 참고할 내용을 입력하거나 결과분석 내용을 먼저 생성해 주세요.', 'error');
       return;
     }
 
+    reportBusyRef.current = true;
     setIsGenerating(true);
     setDownloadError('');
 
@@ -544,6 +418,7 @@ export default function VocationalEvaluation() {
     } catch (error: any) {
       showToast(error?.message || '종합소견서 작성 중 오류가 발생했습니다.', 'error');
     } finally {
+      reportBusyRef.current = false;
       setIsGenerating(false);
     }
   };
@@ -705,6 +580,10 @@ export default function VocationalEvaluation() {
     const isSelected = doc.id === selectedHistoryId;
     const content = isSelected ? historyDraft : doc.content;
     const isAnalysis = doc.type === 'analysis';
+    if (isAnalysis ? analysisBusyRef.current : reportBusyRef.current) {
+      showToast('AI 작업이 끝난 뒤 불러와 주세요.', 'info');
+      return;
+    }
     const current = isAnalysis ? analyzerResult : reportResult;
     if (current.trim() && current !== content) {
       const unsaved = isAnalysis ? analysisDirty : reportDirty;
@@ -734,6 +613,7 @@ export default function VocationalEvaluation() {
   };
 
   const clearAnalyzer = async () => {
+    if (analysisBusyRef.current) return;
     if (!analyzerResult && !analyzerInput && selectedFiles.length === 0) return;
     const ok = await confirm({
       title: '결과분석기 초기화',
@@ -750,6 +630,7 @@ export default function VocationalEvaluation() {
   };
 
   const clearReport = async () => {
+    if (reportBusyRef.current) return;
     if (!reportResult && !reportInput && reportFiles.length === 0) return;
     const ok = await confirm({
       title: '종합 소견서 초기화',
@@ -766,7 +647,7 @@ export default function VocationalEvaluation() {
   };
 
   const refineAnalysisResult = async () => {
-    if (isRefiningAnalysis) return;
+    if (isRefiningAnalysis || analysisBusyRef.current) return;
     if (!analyzerResult.trim()) {
       showToast('먼저 보완할 분석 결과가 필요합니다.', 'error');
       return;
@@ -776,8 +657,8 @@ export default function VocationalEvaluation() {
       message: '현재 분석 결과 내용을 기준으로 보완합니다. 실패해도 기존 내용은 유지됩니다. 진행할까요?',
       confirmLabel: '보완하기',
     });
-    if (!ok) return;
-    const previous = analyzerResult;
+    if (!ok || analysisBusyRef.current) return;
+    analysisBusyRef.current = true;
     setIsRefiningAnalysis(true);
     try {
       const result = await regenerateDocumentFromCurrent('vocational_eval', {
@@ -785,19 +666,20 @@ export default function VocationalEvaluation() {
         currentContent: analyzerResult,
         userContext: analyzerInput ? `[담당자 직접 입력]\n${analyzerInput}` : '',
         additionalInstruction: '검사 결과 해석, 직업적 강점, 제한점, 추가 확인 필요사항, 지원 방향이 구분되도록 보완해 주세요.',
-      });
+      }, { featureKey: 'vocational-evaluation', documentType: 'legacy-analysis-refine' });
       setAnalyzerResult(result);
       setReportInput(prev => prev.trim() ? prev : result);
     } catch (error: any) {
-      setAnalyzerResult(previous);
+      // 보완 중에는 결과칸을 잠가 두므로 지금 값이 곧 보완 전 값이다. 되돌리지 않고 그대로 둔다.
       showToast(error?.message || '분석 결과 보완 중 오류가 발생했습니다. 기존 내용은 유지됩니다.', 'error');
     } finally {
+      analysisBusyRef.current = false;
       setIsRefiningAnalysis(false);
     }
   };
 
   const refineReportResult = async () => {
-    if (isRefiningReport) return;
+    if (isRefiningReport || reportBusyRef.current) return;
     if (!reportResult.trim()) {
       showToast('먼저 보완할 종합 소견서가 필요합니다.', 'error');
       return;
@@ -807,8 +689,8 @@ export default function VocationalEvaluation() {
       message: '현재 종합 소견서 내용을 기준으로 보완합니다. 실패해도 기존 내용은 유지됩니다. 진행할까요?',
       confirmLabel: '보완하기',
     });
-    if (!ok) return;
-    const previous = reportResult;
+    if (!ok || reportBusyRef.current) return;
+    reportBusyRef.current = true;
     setIsRefiningReport(true);
     try {
       const result = await regenerateDocumentFromCurrent('vocational_eval', {
@@ -817,12 +699,12 @@ export default function VocationalEvaluation() {
         userContext: reportInput,
         previousRecords: analyzerResult,
         additionalInstruction: '현재 작성된 종합소견서의 표현을 유지하면서 직업목표, 장단기 지원계획, 수행방법 중심으로 보완해 주세요.',
-      });
+      }, { featureKey: 'vocational-evaluation', documentType: 'legacy-report-refine' });
       setReportResult(result);
     } catch (error: any) {
-      setReportResult(previous);
       showToast(error?.message || '종합 소견서 보완 중 오류가 발생했습니다. 기존 내용은 유지됩니다.', 'error');
     } finally {
+      reportBusyRef.current = false;
       setIsRefiningReport(false);
     }
   };
@@ -843,11 +725,24 @@ export default function VocationalEvaluation() {
       <div role="group" aria-label="직업평가 메뉴" className="flex space-x-2 bg-white/5 p-1 rounded-2xl glass-strong w-fit max-w-full overflow-x-auto border border-white/10 [&>button]:shrink-0 [&>button]:whitespace-nowrap">
         <button
           type="button"
+          aria-pressed={activeTab === 'workbench'}
+          onClick={() => void switchEvaluationTab('workbench')}
+          className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold transition-all ${
+            activeTab === 'workbench'
+              ? 'bg-linear-to-r from-violet-500 to-purple-600 text-white shadow-lg'
+              : 'text-white/60 hover:text-white hover:bg-white/5'
+          }`}
+        >
+          <ClipboardCheck className="w-5 h-5" />
+          평가 진행
+        </button>
+        <button
+          type="button"
           aria-pressed={activeTab === 'analyzer'}
-          onClick={() => setActiveTab('analyzer')}
+          onClick={() => void switchEvaluationTab('analyzer')}
           className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold transition-all ${
             activeTab === 'analyzer'
-              ? 'bg-gradient-to-r from-blue-500 to-indigo-600 text-white shadow-lg'
+              ? 'bg-linear-to-r from-blue-500 to-indigo-600 text-white shadow-lg'
               : 'text-white/60 hover:text-white hover:bg-white/5'
           }`}
         >
@@ -856,11 +751,11 @@ export default function VocationalEvaluation() {
         </button>
         <button
           type="button"
-          onClick={() => setActiveTab('report')}
+          onClick={() => void switchEvaluationTab('report')}
           aria-pressed={activeTab === 'report'}
           className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold transition-all ${
             activeTab === 'report'
-              ? 'bg-gradient-to-r from-teal-500 to-emerald-600 text-white shadow-lg'
+              ? 'bg-linear-to-r from-teal-500 to-emerald-600 text-white shadow-lg'
               : 'text-white/60 hover:text-white hover:bg-white/5'
           }`}
         >
@@ -869,11 +764,11 @@ export default function VocationalEvaluation() {
         </button>
         <button
           type="button"
-          onClick={() => setActiveTab('history')}
+          onClick={() => void switchEvaluationTab('history')}
           aria-pressed={activeTab === 'history'}
           className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold transition-all ${
             activeTab === 'history'
-              ? 'bg-gradient-to-r from-slate-500 to-slate-700 text-white shadow-lg'
+              ? 'bg-linear-to-r from-slate-500 to-slate-700 text-white shadow-lg'
               : 'text-white/60 hover:text-white hover:bg-white/5'
           }`}
         >
@@ -883,6 +778,19 @@ export default function VocationalEvaluation() {
       </div>
 
       <AnimatePresence mode="wait" initial={false}>
+        {/* === Workbench Tab (평가 진행) === */}
+        {activeTab === 'workbench' && (
+          <motion.div
+            key="workbench"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.18 }}
+          >
+            <WorkbenchTab seekerKey={linkedSeekerKey} onSeekerChange={setLinkedSeekerKey} />
+          </motion.div>
+        )}
+
         {/* === Analyzer Tab === */}
         {activeTab === 'analyzer' && (
           <motion.div
@@ -899,7 +807,7 @@ export default function VocationalEvaluation() {
                 <UploadCloud className="w-5 h-5 text-blue-400" />
                 검사 결과 업로드
               </h2>
-              <p className="text-sm text-white/40 mb-6">PDF/이미지 파일과 직접 입력 텍스트를 함께 참고해서 분석할 수 있습니다.</p>
+              <p className="text-sm text-white/40 mb-6">PDF/이미지 파일과 직접 입력 텍스트를 함께 참고해서 분석할 수 있습니다. 글자가 들어 있는 PDF는 이 컴퓨터에서 글자만 추출해 비식별화한 뒤 보내고, 스캔본·이미지는 원본 전송 여부를 분석 버튼을 누를 때 따로 확인합니다.</p>
 
               <div className="space-y-6">
                 <div>
@@ -909,8 +817,8 @@ export default function VocationalEvaluation() {
                     multiple
                     onFiles={files => addFiles(files, setSelectedFiles)}
                     ariaLabel="검사 결과 파일 선택 (PDF 또는 이미지, 끌어다 놓기 가능)"
-                    className="border-2 border-dashed border-white/20 rounded-2xl p-8 hover:border-blue-400 hover:bg-blue-500/5 transition-all cursor-pointer text-center group/dropzone focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
-                    activeClassName="!border-blue-400 bg-blue-500/10"
+                    className="border-2 border-dashed border-white/20 rounded-2xl p-8 hover:border-blue-400 hover:bg-blue-500/5 transition-all cursor-pointer text-center group/dropzone focus:outline-hidden focus-visible:ring-2 focus-visible:ring-blue-400"
+                    activeClassName="border-blue-400! bg-blue-500/10"
                   >
                     <div className="w-16 h-16 rounded-2xl bg-white/5 flex items-center justify-center mx-auto mb-4 group-hover/dropzone:scale-110 transition-transform">
                       <ImageIcon className="w-8 h-8 text-blue-400" />
@@ -937,7 +845,7 @@ export default function VocationalEvaluation() {
                     value={analyzerInput}
                     onChange={(e) => setAnalyzerInput(e.target.value)}
                     placeholder="파일 없이 텍스트만 입력해도 분석할 수 있습니다. 검사명, 점수, 관찰 내용, 행동 특성 등을 자유롭게 적어주세요."
-                    className="textarea-field !bg-black/20 border-white/10 !min-h-[160px] text-sm leading-relaxed"
+                    className="textarea-field bg-black/20! border-white/10 min-h-[160px]! text-sm leading-relaxed"
                   />
                   <p className="mt-2 text-xs text-slate-400 flex justify-between">
                     <span>직접 입력 텍스트는 자동 비식별화 후 AI에 전달됩니다.</span>
@@ -961,7 +869,7 @@ export default function VocationalEvaluation() {
                     type="button"
                     onClick={handleAnalyze}
                     disabled={isAnalyzing || (selectedFiles.length === 0 && !analyzerInput.trim())}
-                    className="flex-1 h-14 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                    className="flex-1 h-14 bg-linear-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                   >
                     {isAnalyzing ? (
                       <>
@@ -1009,7 +917,7 @@ export default function VocationalEvaluation() {
                     <button
                       type="button"
                       onClick={() => { void refineAnalysisResult(); }}
-                      disabled={isRefiningAnalysis}
+                      disabled={isRefiningAnalysis || isAnalyzing}
                       className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-200 text-sm font-medium transition-colors disabled:opacity-50"
                     >
                       {isRefiningAnalysis ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
@@ -1050,8 +958,10 @@ export default function VocationalEvaluation() {
                   <textarea
                     aria-label="분석 결과"
                     value={analyzerResult}
+                    readOnly={isRefiningAnalysis}
+                    aria-busy={isRefiningAnalysis}
                     onChange={e => setAnalyzerResult(e.target.value)}
-                    className="textarea-field !bg-black/25 border-white/10 !min-h-[560px] text-[15px] leading-relaxed resize-y"
+                    className="textarea-field bg-black/25! border-white/10 min-h-[560px]! text-[15px] leading-relaxed resize-y"
                   />
                 )}
               </div>
@@ -1083,8 +993,8 @@ export default function VocationalEvaluation() {
                     multiple
                     onFiles={files => addFiles(files, setReportFiles)}
                     ariaLabel="평가결과지 또는 관련 문서 선택 (선택사항, 이미지 또는 PDF, 끌어다 놓기 가능)"
-                    className="border-2 border-dashed border-white/20 rounded-2xl p-4 hover:border-teal-400 hover:bg-teal-500/5 transition-all cursor-pointer text-center group/dropzone2 mb-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-400"
-                    activeClassName="!border-teal-400 bg-teal-500/10"
+                    className="border-2 border-dashed border-white/20 rounded-2xl p-4 hover:border-teal-400 hover:bg-teal-500/5 transition-all cursor-pointer text-center group/dropzone2 mb-4 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-teal-400"
+                    activeClassName="border-teal-400! bg-teal-500/10"
                   >
                     <div className="flex items-center justify-center gap-3">
                       <ImageIcon className="w-6 h-6 text-teal-400 group-hover/dropzone2:scale-110 transition-transform" />
@@ -1110,7 +1020,7 @@ export default function VocationalEvaluation() {
                     type="button"
                     onClick={() => { void loadLatestAnalysisToReport(); }}
                     disabled={!analyzerResult.trim() && !selectedHistoryAnalysis.trim() && !latestSavedAnalysis.trim()}
-                    className="mb-3 btn-ghost !bg-white/5 border border-white/10 text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="mb-3 btn-ghost bg-white/5! border border-white/10 text-sm disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     최근 결과분석 내용 불러오기
                   </button>
@@ -1119,7 +1029,7 @@ export default function VocationalEvaluation() {
                     value={reportInput}
                     onChange={(e) => setReportInput(e.target.value)}
                     placeholder="직접 관찰한 내용, 면담 기록, 추가 전달사항 등을 적어주세요. PDF 없이도 결과분석기 내용이나 직접 입력 내용만으로 작성할 수 있습니다."
-                    className="w-full h-48 px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/30 focus:outline-none focus:border-teal-500/50 focus:ring-1 focus:ring-teal-500/50 resize-none transition-all"
+                    className="w-full h-48 px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/30 focus:outline-hidden focus:border-teal-500/50 focus:ring-1 focus:ring-teal-500/50 resize-none transition-all"
                   />
                   <p className="mt-2 text-xs text-slate-400 flex justify-between">
                     <span>최대한 구체적으로 적을수록 더 좋은 소견서가 나옵니다.</span>
@@ -1143,7 +1053,7 @@ export default function VocationalEvaluation() {
                     type="button"
                     onClick={handleGenerateReport}
                     disabled={isGenerating || !canGenerateReport}
-                    className="w-full h-14 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 text-white rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                    className="w-full h-14 bg-linear-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 text-white rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                   >
                     {isGenerating ? (
                       <>
@@ -1183,7 +1093,7 @@ export default function VocationalEvaluation() {
                     <button
                       type="button"
                       onClick={() => { void refineReportResult(); }}
-                      disabled={isRefiningReport}
+                      disabled={isRefiningReport || isGenerating}
                       className="flex items-center gap-2 px-3 lg:px-4 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-200 text-sm font-medium transition-colors disabled:opacity-50"
                       title="현재 내용 기반 보완"
                     >
@@ -1207,7 +1117,7 @@ export default function VocationalEvaluation() {
                     <button
                       type="button"
                       onClick={handleDownloadDocx}
-                      className="flex items-center gap-2 px-3 lg:px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-sm font-medium transition-all shadow-lg"
+                      className="flex items-center gap-2 px-3 lg:px-4 py-2 rounded-xl bg-linear-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-sm font-medium transition-all shadow-lg"
                       title="Word 파일 다운로드"
                     >
                       <Download className="w-4 h-4" />
@@ -1240,8 +1150,10 @@ export default function VocationalEvaluation() {
                   <textarea
                     aria-label="종합 소견서 결과"
                     value={reportResult}
+                    readOnly={isRefiningReport}
+                    aria-busy={isRefiningReport}
                     onChange={e => setReportResult(e.target.value)}
-                    className="textarea-field !bg-black/25 border-white/10 !min-h-[560px] text-[15px] leading-relaxed resize-y"
+                    className="textarea-field bg-black/25! border-white/10 min-h-[560px]! text-[15px] leading-relaxed resize-y"
                   />
                 )}
               </div>
@@ -1267,18 +1179,18 @@ export default function VocationalEvaluation() {
               )}
             </div>
             {historyStatus === 'loading' ? (
-              <div role="status" className="rounded-2xl border border-white/10 bg-white/[0.03] p-10 text-center text-white/50 flex items-center justify-center gap-2">
+              <div role="status" className="rounded-2xl border border-white/10 bg-white/3 p-10 text-center text-white/50 flex items-center justify-center gap-2">
                 <Loader2 className="w-5 h-5 animate-spin" /> 저장 문서를 불러오는 중입니다.
               </div>
             ) : historyStatus === 'error' ? (
               <div role="alert" className="rounded-2xl border border-red-500/30 bg-red-500/10 p-6 text-center text-red-200">
                 <p>저장 문서를 불러오지 못했습니다. 기존 기록은 지우지 않았습니다.</p>
-                <button type="button" onClick={() => setHistoryReloadKey(key => key + 1)} className="btn-secondary !px-4 !py-2 text-sm mt-4">
+                <button type="button" onClick={() => setHistoryReloadKey(key => key + 1)} className="btn-secondary px-4! py-2! text-sm mt-4">
                   다시 불러오기
                 </button>
               </div>
             ) : savedDocs.length === 0 ? (
-              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-10 text-center text-white/40">
+              <div className="rounded-2xl border border-white/10 bg-white/3 p-10 text-center text-white/40">
                 아직 저장된 직업평가 문서가 없습니다.
               </div>
             ) : (
@@ -1286,7 +1198,7 @@ export default function VocationalEvaluation() {
                 {savedDocs.map(doc => {
                   const isSelected = selectedHistoryId === doc.id;
                   return (
-                  <div key={doc.id} id={`evaluation-history-${doc.id}`} className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 scroll-mt-6">
+                  <div key={doc.id} id={`evaluation-history-${doc.id}`} className="rounded-2xl border border-white/10 bg-white/3 p-5 scroll-mt-6">
                     <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-3">
                       <div>
                         <p className="text-xs font-black text-blue-300 uppercase">{doc.type === 'analysis' ? '결과분석기' : '종합소견서'}</p>
@@ -1305,7 +1217,7 @@ export default function VocationalEvaluation() {
                           <button
                             type="button"
                             onClick={() => { void cancelHistoryEdit(); }}
-                            className="btn-ghost !bg-white/5 border border-white/10 text-sm flex items-center gap-2"
+                            className="btn-ghost bg-white/5! border border-white/10 text-sm flex items-center gap-2"
                           >
                             <X className="w-4 h-4" /> 수정 닫기
                           </button>
@@ -1313,7 +1225,7 @@ export default function VocationalEvaluation() {
                           <button
                             type="button"
                             onClick={() => { void selectHistoryDoc(doc); }}
-                            className="btn-ghost !bg-white/5 border border-white/10 text-sm flex items-center gap-2"
+                            className="btn-ghost bg-white/5! border border-white/10 text-sm flex items-center gap-2"
                           >
                             <FileText className="w-4 h-4" /> 보기/수정
                           </button>
@@ -1321,13 +1233,13 @@ export default function VocationalEvaluation() {
                         <CopyButton
                           text={isSelected ? historyDraft : doc.content}
                           label="복사"
-                          className="btn-ghost !bg-white/5 border border-white/10 text-sm flex items-center gap-2 disabled:opacity-40"
+                          className="btn-ghost bg-white/5! border border-white/10 text-sm flex items-center gap-2 disabled:opacity-40"
                         />
                         <button
                           type="button"
                           onClick={() => { void saveHistoryDoc(); }}
                           disabled={!isSelected || !historyDraftDirty || savingHistory}
-                          className="btn-ghost !bg-emerald-500/10 border border-emerald-500/20 text-emerald-200 text-sm flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                          className="btn-ghost bg-emerald-500/10! border border-emerald-500/20 text-emerald-200 text-sm flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           {isSelected && savingHistory ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} 저장
                         </button>
@@ -1342,7 +1254,7 @@ export default function VocationalEvaluation() {
                         <button
                           type="button"
                           onClick={() => { void deleteHistoryDoc(doc); }}
-                          className="btn-ghost !bg-red-500/10 border border-red-500/20 text-red-200 text-sm flex items-center gap-2"
+                          className="btn-ghost bg-red-500/10! border border-red-500/20 text-red-200 text-sm flex items-center gap-2"
                         >
                           <Trash2 className="w-4 h-4" /> 삭제
                         </button>
@@ -1363,7 +1275,7 @@ export default function VocationalEvaluation() {
                       readOnly={!isSelected}
                       value={isSelected ? historyDraft : doc.content}
                       onChange={e => { if (isSelected) setHistoryDraft(e.target.value); }}
-                      className={`textarea-field !bg-black/20 border-white/10 !min-h-[280px] !max-h-[560px] text-sm leading-relaxed resize-y overflow-y-auto ${isSelected ? 'ring-1 ring-blue-400/40' : ''}`}
+                      className={`textarea-field bg-black/20! border-white/10 min-h-[280px]! max-h-[560px]! text-sm leading-relaxed resize-y overflow-y-auto ${isSelected ? 'ring-1 ring-blue-400/40' : ''}`}
                     />
                     <p className="mt-2 text-xs text-white/35 flex items-center gap-1.5">
                       <Edit3 className="w-3.5 h-3.5" />

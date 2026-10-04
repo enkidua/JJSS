@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain, safeStorage, shell } = require('electron');
 const path = require('path');
 const { fileURLToPath } = require('url');
 const { getAllowedExternalUrl } = require('./externalUrl.cjs');
@@ -119,7 +119,7 @@ function handleRendererGone(details) {
         buttons: ['확인'],
         noLink: true,
     }).then(() => {
-        if (canReload && mainWindow && !mainWindow.isDestroyed()) mainWindow.loadFile(INDEX_PATH);
+        if (canReload && mainWindow && !mainWindow.isDestroyed()) return mainWindow.loadFile(INDEX_PATH);
     }).catch(error => logMainError('renderer-crash-dialog-failed', error));
 }
 
@@ -142,8 +142,31 @@ function createWindow() {
     });
     const window = mainWindow;
 
+    // beforeunload가 막은 종료·새로고침은 명시적으로 버리기를 선택한 경우만 허용한다.
+    window.webContents.on('will-prevent-unload', event => {
+        try {
+            const choice = dialog.showMessageBoxSync(window, {
+                type: 'warning',
+                title: '저장하지 않은 내용',
+                message: '작성 중이거나 저장이 완료되지 않은 내용이 있습니다.',
+                detail: '내용을 보관하려면 화면을 유지하고 저장을 완료해 주세요.\n변경사항을 버리고 나가면 마지막 입력이나 진행 중인 작업 결과가 사라질 수 있습니다.',
+                buttons: ['계속 작성', '변경사항 버리고 나가기'],
+                defaultId: 0,
+                cancelId: 0,
+                noLink: true,
+            });
+            // Electron에서는 preventDefault가 beforeunload 차단을 무시하고 종료를 허용한다.
+            if (choice === 1) event.preventDefault();
+        } catch (error) {
+            // 확인창 실패를 저장하지 않은 내용의 폐기 승인으로 취급하지 않는다.
+            logMainError('unsaved-unload-dialog-failed', error);
+        }
+    });
+
     // 빌드된 Vite 정적 파일 로드
-    window.loadFile(INDEX_PATH);
+    window.loadFile(INDEX_PATH).catch(error => {
+        if (!window.isDestroyed()) handleFatalError('main-window-load-failed', error);
+    });
 
     // 준비되면 표시 (깜빡임 방지)
     window.once('ready-to-show', () => {
@@ -191,14 +214,20 @@ if (!hasSingleInstanceLock) {
     });
 
     app.whenReady().then(async () => {
+        // F11/새로고침 메뉴는 검사 단축키와 충돌하므로 제외한다.
+        // macOS는 표준 편집 메뉴가 있어야 Cmd+C/V/Z 같은 기본 동작을 유지한다.
+        Menu.setApplicationMenu(process.platform === 'darwin'
+            ? Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }])
+            : null);
         registerJjssFileIpc({ app, ipcMain, dialog, shell, BrowserWindow, expectedIndexPath: INDEX_PATH });
         registerDataKeyIpc({ app, ipcMain, safeStorage, expectedIndexPath: INDEX_PATH });
+        // 새 PDF 작업이 시작되기 전에 이전 실행의 임시 파일 정리를 끝낸다.
+        await cleanupStalePdfTempFiles(app).catch(error => {
+            logMainError('pdf-temp-cleanup-failed', error);
+        });
         createWindow();
         ensureJjssFolders(app).catch(error => {
             logMainError('jjss-folder-preparation-failed', error);
-        });
-        cleanupStalePdfTempFiles(app).catch(error => {
-            logMainError('pdf-temp-cleanup-failed', error);
         });
 
         app.on('activate', () => {

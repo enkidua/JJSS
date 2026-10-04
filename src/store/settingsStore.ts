@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import * as localDB from '../config/localDB';
-import { encrypt, decryptWithStatus } from '../config/crypto';
+import { encrypt, decryptWithStatus, isSecureStorageUnavailableError } from '../config/crypto';
 import { safeErrorMetadata } from '../utils/safeError';
 import {
     AI_MODEL_OPTIONS,
@@ -87,6 +87,12 @@ const DEFAULT_SETTINGS: AppSettings = {
 interface SettingsState {
     settings: AppSettings;
     loaded: boolean;
+    /**
+     * 저장된 설정을 읽지 못했다. 화면은 기본값으로 계속 쓰되 **저장은 막는다** —
+     * 이 상태에서 무엇이든 저장하면 기본값(빈 API 키)으로 설정 문서 전체가 교체되어 저장된 키가 모두 사라진다.
+     * 다시 불러오기에 성공하면 풀린다.
+     */
+    loadFailed: boolean;
     error: string | null;
     recoveryNotice: string | null;
     loadSettings: () => Promise<void>;
@@ -217,15 +223,39 @@ function stableStringify(value: unknown): string {
 
 function keyRecoveryMessage(dataKeyUnavailable: boolean): string {
     return dataKeyUnavailable
-        ? '이 PC의 보안 키를 불러오지 못해 저장된 API 키를 읽을 수 없습니다. 다른 PC나 다른 Windows 사용자 계정으로 데이터를 옮긴 경우 생길 수 있습니다. 설정 화면에서 해당 API 키를 다시 입력해 주세요.'
+        ? '보안 키를 불러오지 못했습니다. 기존 데이터를 삭제하지 않았습니다. 다른 PC나 다른 사용자 계정으로 데이터 폴더를 옮긴 경우 생길 수 있습니다. 설정 화면에서 해당 API 키를 다시 입력해 주세요.'
         : '저장된 API 키 일부를 복호화하지 못했습니다. 앱은 계속 사용할 수 있지만, 설정 화면에서 해당 API 키를 다시 입력해 주세요.';
 }
 
 let loadInFlight: Promise<void> | null = null;
 
+/** 설정을 읽지 못한 상태에서 저장을 시도했을 때의 안내 */
+export const SETTINGS_LOAD_FAILED_SAVE_MESSAGE =
+    '저장된 설정을 불러오지 못해 변경을 저장하지 않았습니다. 기존 API 키를 보호하기 위해서입니다. 설정 화면에서 "설정 다시 불러오기"를 눌러 주세요.';
+
+/**
+ * 설정 변경을 한 줄로 세운다. 각 변경은 앞 저장이 끝난 뒤의 최신 설정 위에 만들어진다 —
+ * 키를 입력하자마자 모델을 바꾸면 두 변경이 같은 옛 설정에서 출발해 앞의 키가 사라지던 문제를 막는다.
+ */
+let mutationChain: Promise<void> = Promise.resolve();
+function enqueueMutation(run: () => Promise<void>): Promise<void> {
+    // 저장된 설정을 다 읽기 전의 기본값 위에서 변경을 만들면 다른 제공업체의 API 키가 지워진다.
+    // 읽기(형식 보정 저장 포함)가 끝난 뒤에 변경을 만든다.
+    const guarded = async () => {
+        const store = useSettingsStore.getState();
+        if (!store.loaded) await store.loadSettings();
+        return run();
+    };
+    const next = mutationChain.then(guarded, guarded);
+    // 실패한 변경이 뒤의 변경을 막지 않도록 체인에는 결과만 이어 둔다(오류는 호출자에게 그대로 전달).
+    mutationChain = next.catch(() => undefined);
+    return next;
+}
+
 export const useSettingsStore = create<SettingsState>((set, get) => ({
     settings: DEFAULT_SETTINGS,
     loaded: false,
+    loadFailed: false,
     error: null,
     recoveryNotice: null,
 
@@ -280,6 +310,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
                     set({
                         settings: decrypted,
                         loaded: true,
+                        loadFailed: false,
                         error: null,
                         recoveryNotice: recoveryMessages.length ? recoveryMessages.join(' ') : null,
                     });
@@ -287,19 +318,25 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
                     // 이전 키·형식으로 저장된 키가 있거나 모델명·자동 전환 설정 보정이 있을 때만 다시 저장한다.
                     // 평소 실행 때는 읽기만 한다. 복호화하지 못한 암호문은 지우지 않고 보존한다.
                     if (needsReEncrypt || modelMigrated || failoverMigrated) {
-                        const encrypted = await encryptSettings(decrypted);
-                        await localDB.addDoc<AppSettings>('settings', { ...encrypted, id: 'app-settings' });
+                        try {
+                            const encrypted = await encryptSettings(decrypted);
+                            await localDB.addDoc<AppSettings>('settings', { ...encrypted, id: 'app-settings' });
+                        } catch (migrationError) {
+                            // 보정 저장에 실패해도(보안 저장소 사용 불가 등) 기존 저장값은 그대로 두고, 읽은 설정으로 계속 사용한다.
+                            console.warn('[Settings] 설정 형식 보정 저장 실패(기존 값 유지):', safeErrorMetadata(migrationError, 'settings-migration'));
+                        }
                     }
                 } else {
                     unreadableKeySlots.clear();
                     await localDB.addDoc<AppSettings>('settings', DEFAULT_SETTINGS);
-                    set({ settings: DEFAULT_SETTINGS, loaded: true, error: null, recoveryNotice: null });
+                    set({ settings: DEFAULT_SETTINGS, loaded: true, loadFailed: false, error: null, recoveryNotice: null });
                 }
             } catch (err: any) {
                 console.error('Settings load error:', safeErrorMetadata(err, 'settings-load'));
                 set({
                     settings: DEFAULT_SETTINGS,
                     loaded: true,
+                    loadFailed: true,
                     error: '설정을 불러오지 못했습니다. 기존 데이터는 삭제하지 않았습니다. 앱을 재실행하거나 설정 화면에서 API 키를 다시 확인해 주세요.',
                     recoveryNotice: null,
                 });
@@ -313,6 +350,15 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     },
 
     saveSettings: async (settings) => {
+        if (!get().loaded) {
+            // 아직 읽기 전이면 지금 설정은 기본값이다. 이대로 저장하면 저장된 API 키가 모두 지워진다.
+            throw new Error('설정을 아직 불러오는 중입니다. 잠시 후 다시 저장해 주세요.');
+        }
+        if (get().loadFailed) {
+            // 기본값 위에 만든 설정으로 저장하면 저장된 API 키가 모두 지워진다. 저장하지 않는다.
+            set({ error: SETTINGS_LOAD_FAILED_SAVE_MESSAGE });
+            throw new Error(SETTINGS_LOAD_FAILED_SAVE_MESSAGE);
+        }
         try {
             const normalizedSettings = {
                 ...settings,
@@ -329,12 +375,17 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
             }));
         } catch (err: any) {
             console.error('Settings save error:', safeErrorMetadata(err, 'settings-save'));
-            set({ error: '설정 저장에 실패했습니다. API 키가 저장되지 않았을 수 있습니다.' });
+            set({
+                error: isSecureStorageUnavailableError(err)
+                    ? `${err.message} API 키는 저장되지 않았습니다.`
+                    : '설정 저장에 실패했습니다. API 키가 저장되지 않았을 수 있습니다.',
+            });
             throw err;
         }
     },
 
-    updateApiKey: async (provider, apiKey) => {
+    // 아래 변경들은 모두 enqueueMutation 안에서 "그 시점의 최신 설정"을 읽어 만든다(동시 변경 유실 방지).
+    updateApiKey: (provider, apiKey) => enqueueMutation(async () => {
         const { settings, saveSettings } = get();
         const normalizedKey = apiKey.trim();
         const updated = {
@@ -351,9 +402,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
             if (hadUnreadable) unreadableKeySlots.add(provider);
             throw error;
         }
-    },
+    }),
 
-    updateModel: async (provider, model) => {
+    updateModel: (provider, model) => enqueueMutation(async () => {
         const { settings, saveSettings } = get();
         const updated = {
             ...settings,
@@ -366,9 +417,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
             ),
         };
         await saveSettings(updated);
-    },
+    }),
 
-    updateReasoningLevel: async (provider, level) => {
+    updateReasoningLevel: (provider, level) => enqueueMutation(async () => {
         const { settings, saveSettings } = get();
         const updated = {
             ...settings,
@@ -380,14 +431,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
             ),
         };
         await saveSettings(updated);
-    },
+    }),
 
-    setSelectedProvider: async (provider) => {
+    setSelectedProvider: (provider) => enqueueMutation(async () => {
         const { settings, saveSettings } = get();
         await saveSettings({ ...settings, selectedProvider: provider });
-    },
+    }),
 
-    updateVisionApiKey: async (apiKey: string) => {
+    updateVisionApiKey: (apiKey: string) => enqueueMutation(async () => {
         const { settings, saveSettings } = get();
         const hadUnreadable = unreadableKeySlots.delete('vision');
         try {
@@ -396,9 +447,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
             if (hadUnreadable) unreadableKeySlots.add('vision');
             throw error;
         }
-    },
+    }),
 
-    updateAIFailover: async (updates) => {
+    updateAIFailover: (updates) => enqueueMutation(async () => {
         const { settings, saveSettings } = get();
         await saveSettings({
             ...settings,
@@ -407,7 +458,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
                 ...updates,
             }),
         });
-    },
+    }),
 
     getActiveConfig: () => {
         const { settings } = get();

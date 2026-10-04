@@ -1,0 +1,135 @@
+/**
+ * 저장을 한 줄로 세우는 작은 큐.
+ *
+ * 왜 필요한가: 수행량을 빠르게 10 → 11 → 12로 고치면 저장 요청 세 개가 동시에 날아가고,
+ * 끝나는 순서가 뒤바뀌면 예전 값이 최신 값을 덮을 수 있다.
+ * 요청을 앞의 것이 끝난 뒤에 보내 순서를 지키고, 대기 중인 요청은 마지막 것만 남긴다.
+ *
+ * 함께 쓰는 것: 저장소의 revision 비교(예전 상태 저장 거부)와 `flush()`(화면을 떠나기 전에 강제 저장).
+ */
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEvaluationSaveTracker } from './EvaluationSaveStatus';
+
+export type SaveState = 'SAVED' | 'SAVING' | 'ERROR';
+
+export interface SaveQueue<T> {
+    saveState: SaveState;
+    saveError: string;
+    /** 바로 저장한다(앞의 저장이 끝난 뒤 실행). */
+    save: (value: T) => void;
+    /** 지연 저장. 같은 지연이 이미 걸려 있으면 마지막 값만 남는다. */
+    saveDebounced: (value: T, delayMs: number) => void;
+    /** 대기 중인 지연 저장을 즉시 실행하고 끝날 때까지 기다린다. */
+    flush: () => Promise<boolean>;
+}
+
+export function useSaveQueue<T>(
+    persist: (value: T) => Promise<unknown>,
+    onError?: (message: string) => void,
+): SaveQueue<T> {
+    const [saveState, setSaveState] = useState<SaveState>('SAVED');
+    const [saveError, setSaveError] = useState('');
+    useEvaluationSaveTracker(saveState !== 'SAVED');
+    const chainRef = useRef<Promise<void>>(Promise.resolve());
+    const pendingRef = useRef<T | null>(null);
+    const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const persistRef = useRef(persist);
+    const errorRef = useRef(onError);
+    const latestRef = useRef<T | null>(null);
+    const succeededRef = useRef(true);
+    const requestRef = useRef(0);
+    persistRef.current = persist;
+    errorRef.current = onError;
+
+    const enqueue = useCallback((value: T) => {
+        const request = ++requestRef.current;
+        latestRef.current = value;
+        setSaveState('SAVING');
+        chainRef.current = chainRef.current.then(async () => {
+            try {
+                await persistRef.current(value);
+                if (request === requestRef.current) {
+                    succeededRef.current = true;
+                    setSaveState('SAVED');
+                    setSaveError('');
+                }
+            } catch (error) {
+                const message = error instanceof Error ? error.message : '저장하지 못했습니다.';
+                if (request === requestRef.current) {
+                    succeededRef.current = false;
+                    setSaveState('ERROR');
+                    setSaveError(message);
+                    // 알림 콜백 오류가 이후 저장 큐까지 끊지 않도록 한다.
+                    try { errorRef.current?.(message); } catch { /* 저장 실패 상태는 유지 */ }
+                }
+            }
+        });
+        return chainRef.current;
+    }, []);
+
+    const save = useCallback(
+        (value: T) => {
+            if (timerRef.current) {
+                clearTimeout(timerRef.current);
+                timerRef.current = null;
+            }
+            pendingRef.current = null;
+            void enqueue(value);
+        },
+        [enqueue],
+    );
+
+    const saveDebounced = useCallback(
+        (value: T, delayMs: number) => {
+            requestRef.current += 1;
+            setSaveState('SAVING');
+            pendingRef.current = value;
+            if (timerRef.current) clearTimeout(timerRef.current);
+            timerRef.current = setTimeout(() => {
+                timerRef.current = null;
+                const next = pendingRef.current;
+                pendingRef.current = null;
+                if (next !== null) void enqueue(next);
+            }, delayMs);
+        },
+        [enqueue],
+    );
+
+    const flush = useCallback(async () => {
+        let attempted = false;
+        for (;;) {
+            if (timerRef.current) {
+                clearTimeout(timerRef.current);
+                timerRef.current = null;
+            }
+            const next = pendingRef.current;
+            pendingRef.current = null;
+            if (next !== null) { attempted = true; void enqueue(next); }
+            const chain = chainRef.current;
+            await chain;
+            if (chain === chainRef.current && pendingRef.current === null) break;
+        }
+        if (!attempted && !succeededRef.current && latestRef.current !== null) {
+            await enqueue(latestRef.current);
+        }
+        return succeededRef.current;
+    }, [enqueue]);
+
+    // 화면을 떠날 때 대기 중인 저장을 흘려보낸다(타이머만 지우면 마지막 수정이 사라진다).
+    useEffect(
+        () => () => {
+            if (timerRef.current) {
+                clearTimeout(timerRef.current);
+                timerRef.current = null;
+            }
+            const next = pendingRef.current;
+            pendingRef.current = null;
+            if (next !== null) void enqueue(next);
+        },
+        [enqueue],
+    );
+
+    // 돌려주는 객체를 고정한다. 매 렌더 새 객체를 주면 이 값을 의존성으로 쓰는 효과(화면 닫을 때 정리 등)가
+    // 렌더마다 다시 돌아, 측정 중 타이머 기준점을 지우고 일시정지본을 저장하는 사고가 난다.
+    return useMemo(() => ({ saveState, saveError, save, saveDebounced, flush }), [saveState, saveError, save, saveDebounced, flush]);
+}

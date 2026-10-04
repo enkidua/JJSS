@@ -63,7 +63,7 @@ export function BasicInfoSection({ draft, update, applySchedule, seekers, jobs, 
     };
 
     return <div className="space-y-5">
-        <section aria-labelledby="se-basic-title" className="glass-card !p-5">
+        <section aria-labelledby="se-basic-title" className="glass-card p-5!">
             <h3 id="se-basic-title" className="text-lg font-bold text-white">기본정보</h3>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 mt-3">
                 <label className={label} htmlFor="se-round">회차
@@ -154,7 +154,7 @@ export function BasicInfoSection({ draft, update, applySchedule, seekers, jobs, 
                         min={draft.period.start || undefined} max={draft.period.end || undefined}
                         onChange={e => setClosedInput(e.target.value)} />
                 </label>
-                <button type="button" className="btn-secondary !px-3 !py-2 text-sm" onClick={addClosedDate} disabled={!closedInput}>휴무일 추가</button>
+                <button type="button" className="btn-secondary px-3! py-2! text-sm" onClick={addClosedDate} disabled={!closedInput}>휴무일 추가</button>
                 {draft.extraClosedDates.map(date => <span key={date} className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-1 text-xs text-white/80">
                     {date}
                     <button type="button" aria-label={`${date} 휴무일 삭제`} className="hover:text-red-200"
@@ -176,12 +176,12 @@ export function BasicInfoSection({ draft, update, applySchedule, seekers, jobs, 
             </div>
         </section>
 
-        <section aria-labelledby="se-coach-title" className="glass-card !p-5">
+        <section aria-labelledby="se-coach-title" className="glass-card p-5!">
             <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 id="se-coach-title" className="text-lg font-bold text-white">직무지도원</h3>
                 {previousCoaches.length > 0 && <label className="text-sm text-white/70 flex items-center gap-2" htmlFor="se-coach-import">
                     이전 지도원 불러오기
-                    <select id="se-coach-import" className="input-field !w-auto" value=""
+                    <select id="se-coach-import" className="input-field w-auto!" value=""
                         onChange={e => {
                             const coach = previousCoaches.find(item => item.name === e.target.value);
                             if (coach) update(c => ({ ...c, coach: { ...coach } }));
@@ -210,7 +210,7 @@ export function BasicInfoSection({ draft, update, applySchedule, seekers, jobs, 
             </div>
         </section>
 
-        <section aria-labelledby="se-payee-title" className="glass-card !p-5">
+        <section aria-labelledby="se-payee-title" className="glass-card p-5!">
             <h3 id="se-payee-title" className="text-lg font-bold text-white">수령 계좌</h3>
             <p className="text-xs text-white/55 mt-1 flex items-center gap-1"><Lock className="w-3.5 h-3.5" aria-hidden="true" /> 계좌번호는 이 PC에 암호화되어 저장됩니다.</p>
             <div className="grid gap-3 mt-3">
@@ -221,7 +221,7 @@ export function BasicInfoSection({ draft, update, applySchedule, seekers, jobs, 
             </div>
         </section>
 
-        <section aria-labelledby="se-rates-title" className="glass-card !p-5">
+        <section aria-labelledby="se-rates-title" className="glass-card p-5!">
             <h3 id="se-rates-title" className="text-lg font-bold text-white">단가 ({draft.rates.year}년 기준)</h3>
             <p className="text-xs text-white/55 mt-1">회차를 만들 때의 기본 단가를 복사해 둡니다. 나중에 단가표가 바뀌어도 이 회차 서류는 바뀌지 않습니다.</p>
             <div className="grid gap-3 sm:grid-cols-3 mt-3">

@@ -152,7 +152,7 @@ export default function ExpenseDocument({ data, onClose }: ExpenseDocumentProps)
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4"
             onClick={onClose}
         >
             <motion.div
@@ -194,7 +194,7 @@ export default function ExpenseDocument({ data, onClose }: ExpenseDocumentProps)
                             </span>
                         </div>
                     )}
-                    <div ref={printRef} className="document bg-white p-10 rounded shadow-sm mx-auto" style={{ maxWidth: '210mm', fontFamily: "'Noto Sans KR', 'Malgun Gothic', sans-serif", color: '#000' }}>
+                    <div ref={printRef} className="document bg-white p-10 rounded-sm shadow-xs mx-auto" style={{ maxWidth: '210mm', fontFamily: "'Noto Sans KR', 'Malgun Gothic', sans-serif", color: '#000' }}>
                         {/* 센터명 */}
                         <div className="header" style={{ textAlign: 'center', fontSize: '24px', fontWeight: 'bold', marginBottom: '30px', paddingBottom: '15px', borderBottom: '3px solid #000', color: '#000' }}>
                             {data.centerName || '○○ 센터'}

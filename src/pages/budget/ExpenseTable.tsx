@@ -66,7 +66,7 @@ export default function ExpenseTable({
                                         checked={allVisibleSelected}
                                         onChange={e => onToggleAllVisible(e.target.checked)}
                                         aria-label="현재 화면의 지출 항목 전체 선택"
-                                        className="rounded"
+                                        className="rounded-sm"
                                     />
                                 </th>
                                 <th className="px-4 py-3 text-left text-white/40 font-medium">날짜</th>
@@ -89,7 +89,7 @@ export default function ExpenseTable({
                                             checked={Boolean(e.id && selectedIds.has(e.id))}
                                             aria-label={`${e.date} ${e.description} 지출 선택`}
                                             onChange={() => onToggle(e.id!)}
-                                            className="rounded"
+                                            className="rounded-sm"
                                         />
                                     </td>
                                     <td className="px-4 py-3 text-white/60 whitespace-nowrap">{formatExpenseDate(e.date)}</td>

@@ -142,6 +142,64 @@ test('호칭·역할 탐지: "김철수 님", "이도훈 이용자"; 직함·일
     for (const word of ['김선생님', '박팀장님', '선생님', '고객님', '장애인 이용자']) assert.ok(maskedText.includes(word), word);
 });
 
+test('쌍점 없이 칸만 띄운 이름 칸(공단 결과지 서식)도 가리고, 본문 반복 등장까지 함께 가린다', () => {
+    // 공단 작업표본검사 결과지를 글로 옮기면 "이 름: 홍길동"이 아니라 "이 름 홍길동"이 된다.
+    const sheet = [
+        '이 름 서하람 성 별 남성 생년월일 1988.01.02 나 이 만 38세',
+        '소 속 장애인복지관 장애유형 지체장애 우세손 왼손 검사일 2026.09.06',
+        '평가사 도경한 담당기관',
+        '( 서하람 )님은 1분 30초동안 ( 20 )개를 조립하였고',
+    ].join(String.fromCharCode(10));
+    const { maskedText } = anonymizeText(sheet);
+    assert.equal(maskedText.includes('서하람'), false, '이름 칸 값이 남았다');
+    assert.equal(maskedText.includes('도경한'), false, '평가사 이름이 남았다');
+    // 괄호 안에 다시 나오는 이름도 같이 가려야 한다(본문 반복 등장).
+    assert.equal((maskedText.match(/⟦이름\d+⟧/g) || []).length >= 3, true, '본문 반복 등장 이름이 남았다');
+    // 검사에 필요한 값은 그대로 둔다.
+    for (const keep of ['남성', '지체장애', '왼손', '2026.09.06', '1분 30초', '20']) {
+        assert.ok(maskedText.includes(keep), keep);
+    }
+});
+
+test('자간을 벌려 쓴 이름(결재란·서명란)도 가리고, 붙여 쓴 형태와 같은 토큰을 쓴다', () => {
+    // 공식 서식 결재란은 글자마다 띄어 쓴다: "직업평가사 이 지 영".
+    const text = [
+        '작 성 일 : 2025년 10월 30일   직업평가사 서 하 람 (서명)',
+        '팀 장 도 경 한 (서명)',
+        '부 서 장 남 시 우 (서명)',
+        '상담 중 서하람 평가사가 직접 확인함.',
+    ].join(String.fromCharCode(10));
+    const { maskedText, mapping } = anonymizeText(text);
+    for (const spaced of ['서 하 람', '도 경 한', '남 시 우']) {
+        assert.equal(maskedText.includes(spaced), false, spaced);
+    }
+    assert.equal(maskedText.includes('서하람'), false, '붙여 쓴 형태도 함께 가려야 한다');
+    // 같은 사람은 띄어 쓰든 붙여 쓰든 같은 토큰이어야 복원이 어긋나지 않는다.
+    const tokens = [...maskedText.matchAll(/⟦이름\d+⟧/g)].map(m => m[0]);
+    assert.equal(new Set(tokens).size, 3, `이름 토큰 3개여야 함: ${tokens.join(',')}`);
+    assert.equal(tokens.filter(t => t === tokens[0]).length, 2, '같은 이름은 같은 토큰');
+    assert.ok(Object.values(mapping).includes('서하람'));
+    // 직함·날짜 같은 서식 글자는 그대로 둔다.
+    for (const keep of ['작 성 일', '직업평가사', '팀 장', '부 서 장', '2025년 10월 30일', '(서명)']) {
+        assert.ok(maskedText.includes(keep), keep);
+    }
+});
+
+test('자간 벌림 오탐 방지: 띄어 쓴 일반 낱말과 줄바꿈 너머 글자는 이름으로 보지 않는다', () => {
+    const text = [
+        '평가사 소 견 은 다음과 같다.',
+        '작성자',
+        '하 람 은 이 문서와 관계없는 다음 줄 글자다.',
+        '팀 장 회 의 결과를 공유함.',
+    ].join(String.fromCharCode(10));
+    assert.equal(anonymizeText(text).maskedText, text);
+});
+
+test('쌍점 없는 이름 칸 오탐 방지: 값이 아닌 일반 낱말은 가리지 않는다', () => {
+    const text = '이름 확인이 필요합니다. 성명 미상으로 접수됨. 평가사 소견 작성 예정. 이름표시 방식 협의.';
+    assert.equal(anonymizeText(text).maskedText, text);
+});
+
 test('이미 가린 토큰은 다시 가리지 않고, 기존 토큰 번호와 충돌하지 않음', () => {
     const first = anonymizeText('이름: 문가온 010-2222-3333');
     const second = anonymizeText(first.maskedText, { knownNames: ['문가온'] });
@@ -158,6 +216,51 @@ test('이미 가린 토큰은 다시 가리지 않고, 기존 토큰 번호와 �
 test('장애유형·일반 업무 문장은 그대로 유지', () => {
     const text = '지적장애 중증, 바리스타 직무 희망. 출퇴근 지원 필요.';
     assert.equal(anonymizeText(text).maskedText, text);
+});
+
+test('건강정보 최소화: 의료기관 고유 이름·의사 이름·진단/입원일은 토큰, 진료과·장애유형은 유지, 복원 가능', () => {
+    const text = '행복정신건강의학과의원에서 김민준 전문의에게 2020년 3월 진단받음. 진단일: 2020.03.02, 2021.05.01 입원. 지적장애 중증.';
+    const { maskedText, mapping } = anonymizeText(text);
+    for (const value of ['행복', '김민준', '2020년 3월', '2020.03.02', '2021.05.01']) assert.equal(maskedText.includes(value), false, value);
+    for (const kept of ['정신건강의학과의원', '전문의', '진단받음', '입원', '지적장애 중증']) assert.ok(maskedText.includes(kept), kept);
+    assert.ok(Object.keys(mapping).some(token => token.startsWith('⟦의료기관')));
+    assert.ok(Object.keys(mapping).some(token => token.startsWith('⟦진단일')));
+    assert.equal(deanonymizeText(maskedText, mapping), text);
+    assert.match(anonymizeText('주치의: 박서연').maskedText, /^주치의: ⟦이름\d+⟧$/);
+});
+
+test('건강정보 오탐 방지: 일반 의료 표현과 진료과 이름은 그대로', () => {
+    for (const text of ['요양병원 입원 경험 있음', '대학병원 외래 진료', '동네 의원 방문', '정신건강의학과 진료 중', '정신과 전문의 소견서 참고', '국회의원 선거', '의사소통 지원 필요', '2022년 입사']) {
+        assert.equal(anonymizeText(text).maskedText, text, text);
+    }
+});
+
+test('⟦ ⟧로 감싼 임의의 글은 가린 자리로 보지 않는다(실제 토큰 모양만 건너뜀)', () => {
+    const { maskedText } = anonymizeText('메모 ⟦홍가람 010-3333-4444⟧ 참고');
+    assert.equal(maskedText.includes('010-3333-4444'), false, '괄호 안 전화번호도 가려야 함');
+    const twice = anonymizeText(anonymizeText('이름: 홍가람 연락처 010-1111-2222').maskedText);
+    assert.match(twice.maskedText, /⟦이름1⟧/, '이미 가린 토큰은 그대로 둠');
+    assert.match(twice.maskedText, /⟦전화1⟧/);
+});
+
+test('머리말에 붙여 쓴 이름과 두 글자 성', () => {
+    for (const [text, name] of [['이름홍가람 성별 남', '홍가람'], ['성명남궁다온', '남궁다온'], ['독고나래 님과 상담함', '독고나래'], ['남궁다온 이용자가 참여함', '남궁다온'], ['황보은결 씨가 동행함', '황보은결']]) {
+        assert.equal(anonymizeText(text).maskedText.includes(name), false, text);
+    }
+    // 붙여 쓴 낱말·네 글자 일반어는 이름으로 보지 않는다.
+    for (const text of ['성명서를 발표함', '이름표를 붙임', '사회복지사님께 전달', '선생님께 드림', '김치찌개 님']) {
+        assert.equal(anonymizeText(text).maskedText, text, text);
+    }
+});
+
+test('등록된 이름은 조사 목록에 없는 어미가 붙거나 역할 말에 붙여 써도 가린다', () => {
+    const knownNames = ['홍가람', '이다온'];
+    for (const text of ['홍가람라는 이용자가 왔다', '홍가람야, 오늘 출근', '홍가람네 집', '보호자홍가람 동행', '어머니홍가람', '작성자이다온', '주치의이다온 소견']) {
+        const { maskedText } = anonymizeText(text, { knownNames });
+        assert.equal(maskedText.includes('홍가람') || maskedText.includes('이다온'), false, text);
+    }
+    // 두 글자 이름은 더 긴 이름의 일부일 수 있어 조사·호칭이 이어질 때만 가린다.
+    assert.equal(anonymizeText('김수현과 상담함', { knownNames: ['김수'] }).maskedText.includes('김수현'), true);
 });
 
 console.log(`anonymizer tests passed (${passed}) — synthetic data only, no network.`);

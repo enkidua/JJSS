@@ -159,8 +159,9 @@ export function DocumentChatView({ onBack, onDirtyChange }: DocumentChatViewProp
             // 화면의 전체 대화는 유지하되, API에는 최근 5턴 또는 10,000자 이내만 전송합니다.
             const history = buildLimitedApiHistory(messages);
 
-            // 첨부 파일은 질문할 때마다 함께 다시 전송됩니다(화면에 안내).
-            const fileData = files.map(f => ({ mimeType: f.mimeType, data: f.data }));
+            // 첨부 파일은 질문할 때마다 다시 처리됩니다. 글자가 있는 PDF는 PC에서 추출한 글을 비식별화해 보내고,
+            // 스캔본·이미지는 질문마다 원본 전송 확인을 받습니다(파일 이름은 확인창에만 표시).
+            const fileData = files.map(f => ({ mimeType: f.mimeType, data: f.data, name: f.name }));
 
             const response = await generateText(
                 'summary',
@@ -224,7 +225,7 @@ export function DocumentChatView({ onBack, onDirtyChange }: DocumentChatViewProp
                 {/* Chat Header */}
                 <div className="px-8 py-4 border-b border-white/10 bg-white/5 flex items-center justify-between shrink-0 gap-3">
                     <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-lg">
+                        <div className="w-10 h-10 rounded-xl bg-linear-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-lg">
                             <MessageSquare className="w-5 h-5 text-white" />
                         </div>
                         <div>
@@ -252,9 +253,9 @@ export function DocumentChatView({ onBack, onDirtyChange }: DocumentChatViewProp
                     </div>
                 )}
                 <div className="mx-6 mt-4 rounded-xl border border-violet-400/20 bg-violet-500/10 px-4 py-3 text-xs leading-relaxed text-violet-100/80">
-                    <strong className="text-violet-50">사용량 안내:</strong> 질문할 때마다 첨부한 파일 전체가 AI로 다시 전송됩니다. 파일이 크거나 많을수록 질문 한 번마다 사용량(비용)이 늘어나니, 필요한 파일만 남겨 두세요.
+                    <strong className="text-violet-50">전송·사용량 안내:</strong> 질문할 때마다 첨부 파일 내용이 AI로 다시 전송됩니다. 글자가 들어 있는 PDF는 이 컴퓨터에서 글자만 추출해 이름·연락처 등을 가린 뒤 보내고, 스캔한 PDF나 이미지는 원본을 보내야 하므로 질문할 때마다 전송 여부를 따로 확인합니다. 파일이 크거나 많을수록 사용량(비용)이 늘어나니, 필요한 파일만 남겨 두세요.
                     {files.length > 0 && <span className="block mt-1">현재 첨부: {files.length}개, 약 {formatSize(totalFileBytes)} (질문마다 함께 전송)</span>}
-                    <span className="block mt-1 text-violet-100/60">대화 기록은 화면에 모두 남지만, AI에는 최근 5턴 또는 10,000자 이내의 대화만 함께 보냅니다. 문서 내용은 외부 AI 서비스(Gemini)로 전송됩니다.</span>
+                    <span className="block mt-1 text-violet-100/60">대화 기록은 화면에 모두 남지만, AI에는 최근 5턴 또는 10,000자 이내의 대화만 함께 보냅니다. 문서 내용은 외부 AI 서비스(Google Gemini)로 전송됩니다.</span>
                     {files.some(file => file.size > LARGE_DOCUMENT_BYTES) && (
                         <span className="block mt-1 text-amber-100">큰 파일이 첨부되어 있습니다. 부담되면 필요한 페이지만 이미지/PDF로 나누어 질문해 주세요.</span>
                     )}
@@ -272,7 +273,7 @@ export function DocumentChatView({ onBack, onDirtyChange }: DocumentChatViewProp
                     }`}
                 >
                     {isDragging && (
-                        <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-[#1e293b]/80 backdrop-blur-sm border-2 border-dashed border-violet-500 rounded-2xl m-4">
+                        <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-[#1e293b]/80 backdrop-blur-xs border-2 border-dashed border-violet-500 rounded-2xl m-4">
                             <div className="text-center">
                                 <FileUp className="w-16 h-16 text-violet-400 mx-auto mb-4 animate-bounce" />
                                 <p className="text-xl font-bold text-white">여기에 파일을 놓아주세요</p>
@@ -285,7 +286,7 @@ export function DocumentChatView({ onBack, onDirtyChange }: DocumentChatViewProp
                             multiple
                             onFiles={addUploadedFiles}
                             ariaLabel="질문할 문서 파일 선택"
-                            className="h-full flex flex-col items-center justify-center text-center opacity-60 hover:opacity-100 transition-opacity cursor-pointer group rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400"
+                            className="h-full flex flex-col items-center justify-center text-center opacity-60 hover:opacity-100 transition-opacity cursor-pointer group rounded-2xl focus:outline-hidden focus-visible:ring-2 focus-visible:ring-violet-400"
                             activeClassName="opacity-100"
                         >
                             <div className="w-24 h-24 rounded-full border-2 border-dashed border-white/20 flex items-center justify-center mb-6 group-hover:border-violet-400/50 group-hover:bg-violet-500/10 transition-all">
@@ -313,7 +314,7 @@ export function DocumentChatView({ onBack, onDirtyChange }: DocumentChatViewProp
                                     {msg.role === 'user' ? <User className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
                                 </div>
                                 <div className={`flex flex-col max-w-[80%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-                                    <div className={`p-5 rounded-2xl text-sm leading-relaxed shadow-sm ${
+                                    <div className={`p-5 rounded-2xl text-sm leading-relaxed shadow-xs ${
                                         msg.role === 'user'
                                             ? 'bg-blue-600 text-white rounded-tr-none'
                                             : 'bg-white/5 text-white/90 border border-white/10 rounded-tl-none font-sans'
@@ -358,7 +359,7 @@ export function DocumentChatView({ onBack, onDirtyChange }: DocumentChatViewProp
                             multiple
                             onFiles={addUploadedFiles}
                             ariaLabel="문서 파일 첨부"
-                            className="p-3 text-white/40 hover:text-white hover:bg-white/10 rounded-xl transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400"
+                            className="p-3 text-white/40 hover:text-white hover:bg-white/10 rounded-xl transition-all cursor-pointer focus:outline-hidden focus-visible:ring-2 focus-visible:ring-violet-400"
                             activeClassName="bg-violet-500/20 text-white"
                         >
                             <Paperclip className="w-5 h-5" aria-hidden="true" />

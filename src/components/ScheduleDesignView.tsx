@@ -131,7 +131,7 @@ export function ScheduleDesignView({ onBack, onDirtyChange }: ScheduleDesignView
     return (
         <ToolPageShell onBack={onBack}>
             <div className="glass-strong rounded-3xl overflow-hidden border border-white/10 shadow-2xl">
-                <div className="p-8 md:p-12 text-center bg-gradient-to-b from-blue-500/10 to-transparent">
+                <div className="p-8 md:p-12 text-center bg-linear-to-b from-blue-500/10 to-transparent">
                     <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-bold mb-4 border border-emerald-500/30">
                         <Sparkles className="w-3 h-3" /> 이미지 생성(Gemini) 디자인 일정표
                     </div>
@@ -186,7 +186,7 @@ export function ScheduleDesignView({ onBack, onDirtyChange }: ScheduleDesignView
                                                 : 'bg-white/5 border-white/10 hover:bg-white/10'
                                             }`}
                                         >
-                                            <div className={`aspect-video w-full rounded-lg bg-gradient-to-br ${t.gradient} mb-2 shadow-inner`} />
+                                            <div className={`aspect-video w-full rounded-lg bg-linear-to-br ${t.gradient} mb-2 shadow-inner`} />
                                             <p className="text-[11px] font-bold text-white truncate">{t.title}</p>
                                         </button>
                                     ))}
@@ -197,7 +197,7 @@ export function ScheduleDesignView({ onBack, onDirtyChange }: ScheduleDesignView
                                 type="button"
                                 onClick={handleGenerate}
                                 disabled={!selectedTemplate || !details.trim() || isLoading}
-                                className="btn-primary w-full flex items-center justify-center gap-2 !py-4"
+                                className="btn-primary w-full flex items-center justify-center gap-2 py-4!"
                             >
                                 {isLoading ? <><Loader2 className="w-5 h-5 animate-spin" /> 디자인 생성 중...</> : <><Zap className="w-5 h-5" /> {resultImage ? '다시 생성하기' : '디자인 생성하기'}</>}
                             </button>
@@ -234,7 +234,7 @@ export function ScheduleDesignView({ onBack, onDirtyChange }: ScheduleDesignView
                                                 </div>
                                             )}
                                             <div className="absolute bottom-6 right-6 flex gap-2">
-                                                <button type="button" onClick={() => void handleSave()} disabled={isLoading} className="btn-primary flex items-center gap-2 !px-4 !py-2 text-sm shadow-2xl">
+                                                <button type="button" onClick={() => void handleSave()} disabled={isLoading} className="btn-primary flex items-center gap-2 px-4! py-2! text-sm shadow-2xl">
                                                     <Download className="w-4 h-4" /> 파일로 저장
                                                 </button>
                                             </div>

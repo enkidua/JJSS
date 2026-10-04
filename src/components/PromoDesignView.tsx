@@ -117,7 +117,7 @@ export function PromoDesignView({ onBack, onDirtyChange }: PromoDesignViewProps)
 
     return (
         <ToolPageShell onBack={onBack}>
-            <div className="glass-strong rounded-[2rem] shadow-2xl overflow-hidden border border-white/10 relative">
+            <div className="glass-strong rounded-4xl shadow-2xl overflow-hidden border border-white/10 relative">
                 {/* Header section */}
                 <div className="pt-16 pb-12 px-8 flex flex-col items-center text-center bg-transparent">
                     <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-500/20 text-blue-300 text-xs font-bold mb-6 border border-blue-500/30">
@@ -127,7 +127,7 @@ export function PromoDesignView({ onBack, onDirtyChange }: PromoDesignViewProps)
                     <h1 className="text-4xl md:text-5xl font-black text-white tracking-tight leading-tight mb-4 flex items-center justify-center gap-3">
                         <div>
                             직업재활 디자인, <br className="md:hidden" />
-                            <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-teal-300 to-amber-400 text-glow">
+                            <span className="text-transparent bg-clip-text bg-linear-to-r from-emerald-400 via-teal-300 to-amber-400 text-glow">
                                 AI와 함께 완성하세요.
                             </span>
                         </div>
@@ -177,7 +177,7 @@ export function PromoDesignView({ onBack, onDirtyChange }: PromoDesignViewProps)
                                 onClick={() => openTemplate(t)}
                             >
                                 {/* Thumbnail Box */}
-                                <div className={`aspect-[4/3] w-full bg-gradient-to-br ${t.gradient} relative flex items-center justify-center overflow-hidden`}>
+                                <div className={`aspect-4/3 w-full bg-linear-to-br ${t.gradient} relative flex items-center justify-center overflow-hidden`}>
                                     {t.image ? (
                                         <img src={t.image} alt={t.title} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />
                                     ) : (
@@ -192,7 +192,7 @@ export function PromoDesignView({ onBack, onDirtyChange }: PromoDesignViewProps)
                                     </div>
 
                                     <div className="absolute top-4 left-4">
-                                        <span className="px-3 py-1 bg-white/90 backdrop-blur-sm text-slate-700 text-xs font-bold rounded-lg shadow-sm">
+                                        <span className="px-3 py-1 bg-white/90 backdrop-blur-xs text-slate-700 text-xs font-bold rounded-lg shadow-xs">
                                             {t.badge}
                                         </span>
                                     </div>
@@ -208,7 +208,7 @@ export function PromoDesignView({ onBack, onDirtyChange }: PromoDesignViewProps)
                                     </p>
                                     <div className="flex flex-wrap gap-1.5 mt-auto">
                                         {t.tags.map(tag => (
-                                            <span key={tag} className="text-xs font-medium text-white/30 bg-white/5 px-2 py-1 rounded border border-white/5">
+                                            <span key={tag} className="text-xs font-medium text-white/30 bg-white/5 px-2 py-1 rounded-sm border border-white/5">
                                                 {tag}
                                             </span>
                                         ))}
@@ -224,7 +224,7 @@ export function PromoDesignView({ onBack, onDirtyChange }: PromoDesignViewProps)
             <AnimatePresence>
                 {selectedTemplate && (
                     <div
-                        className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 lg:p-10"
+                        className="fixed inset-0 z-100 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 lg:p-10"
                         onClick={() => { void closeTemplate(); }}
                     >
                         <motion.div
@@ -236,11 +236,11 @@ export function PromoDesignView({ onBack, onDirtyChange }: PromoDesignViewProps)
                             initial={{ opacity: 0, scale: 0.95, y: 20 }}
                             animate={{ opacity: 1, scale: 1, y: 0 }}
                             exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                            className="bg-[#1e293b] border border-white/10 p-6 md:p-8 rounded-[2rem] shadow-2xl max-w-5xl w-full max-h-[90vh] overflow-y-auto overflow-x-hidden flex flex-col md:flex-row gap-8 relative"
+                            className="bg-[#1e293b] border border-white/10 p-6 md:p-8 rounded-4xl shadow-2xl max-w-5xl w-full max-h-[90vh] overflow-y-auto overflow-x-hidden flex flex-col md:flex-row gap-8 relative"
                             onClick={(e) => e.stopPropagation()}
                         >
                             {/* Background glow */}
-                            <div className="pointer-events-none absolute top-0 right-0 w-[30rem] h-[30rem] bg-indigo-500/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
+                            <div className="pointer-events-none absolute top-0 right-0 w-120 h-120 bg-indigo-500/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
 
                             <button
                                 type="button"
@@ -256,7 +256,7 @@ export function PromoDesignView({ onBack, onDirtyChange }: PromoDesignViewProps)
                                 <button
                                     type="button"
                                     aria-label="이미지 크게 보기"
-                                    className="rounded-2xl overflow-hidden shadow-2xl shadow-black/50 border border-white/10 bg-black/40 aspect-[4/3] flex items-center justify-center relative cursor-pointer group"
+                                    className="rounded-2xl overflow-hidden shadow-2xl shadow-black/50 border border-white/10 bg-black/40 aspect-4/3 flex items-center justify-center relative cursor-pointer group"
                                     onClick={() => setPreviewImage(resultImage || selectedTemplate.image || null)}
                                 >
                                     {resultImage ? (
@@ -330,7 +330,7 @@ export function PromoDesignView({ onBack, onDirtyChange }: PromoDesignViewProps)
                                     </div>
                                     <textarea
                                         id="promo-prompt"
-                                        className="w-full flex-1 min-h-[160px] bg-black/30 border border-white/10 rounded-2xl p-5 text-white placeholder-white/30 focus:outline-none focus:border-blue-500/50 resize-none transition-colors shadow-inner text-lg"
+                                        className="w-full flex-1 min-h-[160px] bg-black/30 border border-white/10 rounded-2xl p-5 text-white placeholder-white/30 focus:outline-hidden focus:border-blue-500/50 resize-none transition-colors shadow-inner text-lg"
                                         placeholder={`예) 발달장애인 바리스타 훈련생 모집\n- 대상: 19세 이상 발달장애인\n- 모집기간: 9월 1일까지\n- 문의: 02-123-4567\n이 템플릿 디자인에 맞게 문구를 수정하고 배치해줘.`}
                                         value={prompt}
                                         onChange={e => setPrompt(e.target.value)}
@@ -343,7 +343,7 @@ export function PromoDesignView({ onBack, onDirtyChange }: PromoDesignViewProps)
                                         type="button"
                                         onClick={handleGenerateForTemplate}
                                         disabled={isLoading || !prompt.trim()}
-                                        className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:from-blue-900 disabled:to-indigo-900 disabled:text-white/40 disabled:cursor-not-allowed text-white text-lg font-black py-4 rounded-xl flex justify-center items-center gap-3 transition-all shadow-[0_0_20px_rgba(59,130,246,0.3)] hover:shadow-[0_0_30px_rgba(59,130,246,0.5)] active:scale-95"
+                                        className="w-full bg-linear-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:from-blue-900 disabled:to-indigo-900 disabled:text-white/40 disabled:cursor-not-allowed text-white text-lg font-black py-4 rounded-xl flex justify-center items-center gap-3 transition-all shadow-[0_0_20px_rgba(59,130,246,0.3)] hover:shadow-[0_0_30px_rgba(59,130,246,0.5)] active:scale-95"
                                     >
                                         {isLoading ? (
                                             <><Loader2 className="w-6 h-6 animate-spin" /> 이미지를 생성하고 있습니다...</>
@@ -397,7 +397,7 @@ export function PromoDesignView({ onBack, onDirtyChange }: PromoDesignViewProps)
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
-                        className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/95 backdrop-blur-3xl cursor-zoom-out"
+                        className="fixed inset-0 z-200 flex items-center justify-center p-4 bg-black/95 backdrop-blur-3xl cursor-zoom-out"
                         onClick={() => setPreviewImage(null)}
                     >
                         <button

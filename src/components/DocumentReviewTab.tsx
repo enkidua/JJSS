@@ -242,7 +242,7 @@ ${counselText || '(입력 없음)'}
                                 onFiles={handleFiles}
                                 disabled={isOcrLoading}
                                 ariaLabel="직업재활계획서 이미지 또는 PDF 선택"
-                                className="cursor-pointer px-4 py-2 text-xs font-bold text-white bg-white/10 hover:bg-white/15 border border-dashed border-white/20 rounded-xl flex items-center gap-2 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400"
+                                className="cursor-pointer px-4 py-2 text-xs font-bold text-white bg-white/10 hover:bg-white/15 border border-dashed border-white/20 rounded-xl flex items-center gap-2 transition-colors focus:outline-hidden focus-visible:ring-2 focus-visible:ring-accent-400"
                                 activeClassName="border-accent-400 bg-accent-500/20"
                             >
                                 <ImageIcon className="w-4 h-4" aria-hidden="true" />
@@ -260,7 +260,7 @@ ${counselText || '(입력 없음)'}
                         value={ocrText}
                         onChange={e => setOcrText(e.target.value)}
                         placeholder="직업재활계획서 내용을 입력하거나 이미지/PDF로 업로드하세요. 계획 수립일, 목표, 수행방법을 기준으로 상담일지와 현장지원일지 반영 여부를 점검합니다."
-                        className="textarea-field !bg-black/40 border-white/5 !min-h-[260px] text-sm leading-relaxed"
+                        className="textarea-field bg-black/40! border-white/5 min-h-[260px]! text-sm leading-relaxed"
                     />
                 </div>
 
@@ -274,7 +274,7 @@ ${counselText || '(입력 없음)'}
                         value={counselText}
                         onChange={e => setCounselText(e.target.value)}
                         placeholder="작성해 둔 상담일지, 현장지원일지, 이용자상담, 보호자상담 기록을 붙여넣어 주세요. 상담일자와 장소는 유지하고, 계획 수립 전/직후/후/유지지원 흐름에 맞게 수행방법 반영 여부를 점검합니다."
-                        className="textarea-field !bg-black/40 border-white/5 !min-h-[360px] text-sm leading-relaxed"
+                        className="textarea-field bg-black/40! border-white/5 min-h-[360px]! text-sm leading-relaxed"
                     />
                 </div>
 
@@ -284,7 +284,7 @@ ${counselText || '(입력 없음)'}
                     type="button"
                     onClick={() => void handleGenerateReview()}
                     disabled={isGenerating}
-                    className="w-full btn-primary !py-4 rounded-2xl flex items-center justify-center gap-2 font-bold shadow-xl shadow-accent-500/20 text-lg"
+                    className="w-full btn-primary py-4! rounded-2xl flex items-center justify-center gap-2 font-bold shadow-xl shadow-accent-500/20 text-lg"
                 >
                     {isGenerating ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
                     {isGenerating ? 'AI가 수행방법 반영 여부와 시간 흐름을 점검하고 있습니다...' : '수행방법 반영 점검하기'}

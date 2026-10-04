@@ -1,5 +1,45 @@
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
+import ts from 'typescript';
+import './test-legacy-migration.mjs';
+import './test-confirm-queue.mjs';
+import './test-electron-startup.cjs';
+import './test-connection-timeout.mjs';
+import './test-data-store-order.mjs';
+import './test-evaluation-save-queue.mjs';
+import './test-training-save-order.mjs';
+import './test-before-unload.mjs';
+import './test-client-context-lifetime.mjs';
+import './test-bulk-registration.mjs';
+import './test-settings-store.mjs';
+import './test-workflow-guards.mjs';
+
+const packageConfig = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+assert.match(packageConfig.scripts['electron:build:mac'], /--config\.afterPack=\.\/scripts\/sign-mac-adhoc\.cjs/);
+assert.equal(packageConfig.scripts['electron:build:mac-m1'], 'npm run electron:build:mac');
+console.log('PASS local mac build and alias retain the verified signing hook');
+
+const dateSource = await readFile(new URL('../src/utils/date.ts', import.meta.url), 'utf8');
+const dateModule = ts.transpileModule(dateSource, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+}).outputText;
+const { parseLocalDate, localDateKey, storedTimestampToIso } = await import(`data:text/javascript;base64,${Buffer.from(dateModule).toString('base64')}`);
+for (const value of [undefined, null, {}, { seconds: null }, { seconds: NaN }, { seconds: Infinity }, { seconds: 1e30 }, { seconds: -1e30 }, { seconds: 'broken' }]) {
+    assert.equal(storedTimestampToIso(value), undefined, 'invalid stored time must not throw during document listing');
+}
+assert.equal(storedTimestampToIso({ seconds: 0 }), '1970-01-01T00:00:00.000Z');
+assert.equal(storedTimestampToIso({ seconds: '1700000000' }), '2023-11-14T22:13:20.000Z');
+console.log('PASS malformed document timestamps cannot throw RangeError');
+for (const value of ['2026-02-29', '2026-02-31', '2026-04-31', '2026-00-01', '2026-13-01', '2026-01-00', '2026-01-32', 'not-a-date']) {
+    assert.equal(parseLocalDate(value), null, `Impossible date must not roll over: ${value}`);
+}
+for (const value of ['2024-02-29', '2026-09-30', '2000-02-29']) {
+    assert.equal(localDateKey(parseLocalDate(value)), value);
+    assert.equal(parseLocalDate(value).getHours(), 0);
+}
+assert.equal(parseLocalDate('0099-01-01').getFullYear(), 99);
+assert.equal(localDateKey(parseLocalDate(' 2026-09-30 ')), '2026-09-30');
+console.log('PASS local calendar parsing rejects overflow dates and preserves valid leap days');
 
 // 예산 화면은 src/pages/budget/* 로 나뉘었으므로 페이지와 하위 파일을 함께 검사합니다.
 const budgetDir = new URL('../src/pages/budget/', import.meta.url);

@@ -5,6 +5,7 @@ import {
     ChevronRight, Sparkles, Loader2
 } from 'lucide-react';
 import { useDataStore } from '../store/dataStore';
+import { verifyEncryptedField } from '../config/localDB';
 import { matchCandidates } from '../services/matching';
 import { JobOpening, MatchResult } from '../types/matching';
 import { generateText } from '../services/gemini';
@@ -131,7 +132,7 @@ export function MatchingView({ onBack, onDirtyChange }: MatchingViewProps) {
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
                 {/* 구인처 선택 (Job Openings) */}
                 <div className="lg:col-span-4 space-y-6">
-                    <div className="glass-strong rounded-[2rem] p-6 border border-white/10 shadow-2xl overflow-hidden relative">
+                    <div className="glass-strong rounded-4xl p-6 border border-white/10 shadow-2xl overflow-hidden relative">
                         <div className="absolute top-0 right-0 p-8 opacity-5">
                             <Briefcase className="w-32 h-32" />
                         </div>
@@ -148,7 +149,7 @@ export function MatchingView({ onBack, onDirtyChange }: MatchingViewProps) {
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
                             <input
                                 aria-label="사업체 또는 직무 검색"
-                                className="input-field !pl-10 !py-2.5 text-sm !bg-white/5 border-white/10 focus:border-emerald-500/50"
+                                className="input-field pl-10! py-2.5! text-sm bg-white/5! border-white/10 focus:border-emerald-500/50"
                                 placeholder="사업체 이름 또는 직무 검색..."
                                 value={jobSearch}
                                 onChange={e => setJobSearch(e.target.value)}
@@ -359,8 +360,11 @@ function MatchItem({ itemKey, result, rank, onDirtyChange }: MatchItemProps) {
                         jobRole: result.job.jobRole,
                         content: legacy.content,
                     });
-                    removeLegacyProfile(storageKey);
-                    migratedAt = readTimestamp(migrated.updatedAt || migrated.createdAt) || legacy.updatedAt;
+                    // 암호화 저장을 다시 읽어 내용이 같을 때만 평문 사본을 지웁니다(아니면 다음 진입 때 다시 시도).
+                    if (migrated.id && await verifyEncryptedField('caseDocuments', migrated.id, 'content', legacy.content)) {
+                        removeLegacyProfile(storageKey);
+                        migratedAt = readTimestamp(migrated.updatedAt || migrated.createdAt) || legacy.updatedAt;
+                    }
                 } catch (error) {
                     console.warn('[MatchingView] 이전 매칭 의견 이관 실패(원본 유지):', safeErrorMetadata(error, 'matching-opinion-migrate'));
                 } finally {
@@ -428,7 +432,7 @@ function MatchItem({ itemKey, result, rank, onDirtyChange }: MatchItemProps) {
                 userContext: buildMatchingContext(result, rank),
                 additionalInstruction: '추천 요약, 추천 사유, 직무 적합성, 이용자 강점, 우려 지점, 사업체 배려사항, 초기 적응 지원계획, 담당자 확인 체크포인트, 최종 추천 등급을 모두 포함해 주세요.',
             });
-            const refined = await generateText('summary', prompt);
+            const refined = await generateText('summary', prompt, undefined, { featureKey: 'matching', documentType: 'matching-refine' });
             setProfileText(refined);
         } catch (error: unknown) {
             showToast(error instanceof Error && error.message ? error.message : '매칭 의견 보완 중 오류가 발생했습니다. 기존 내용은 유지됩니다.', 'error');
@@ -500,15 +504,15 @@ function MatchItem({ itemKey, result, rank, onDirtyChange }: MatchItemProps) {
                                     value={profileText}
                                     onChange={e => setProfileText(e.target.value)}
                                     disabled={isRefining}
-                                    className="textarea-field !bg-white/5 border-white/10 !min-h-[260px] text-sm leading-relaxed text-white/75 font-sans resize-y"
+                                    className="textarea-field bg-white/5! border-white/10 min-h-[260px]! text-sm leading-relaxed text-white/75 font-sans resize-y"
                                 />
                                 <div className="flex gap-2 justify-end">
                                     {savedAt && <span className="mr-auto text-[11px] text-white/25 self-center">{savedSource === 'db' ? '저장됨' : '이전 임시저장'}: {new Date(savedAt).toLocaleString('ko-KR')}</span>}
-                                    <button type="button" onClick={() => void refineProfile()} disabled={isRefining || isSaving} className="btn-ghost !text-xs !bg-amber-500/10 !text-amber-300 border border-amber-500/20 font-bold px-4 py-2 rounded-xl flex items-center gap-2 disabled:opacity-50">
+                                    <button type="button" onClick={() => void refineProfile()} disabled={isRefining || isSaving} className="btn-ghost text-xs! bg-amber-500/10! text-amber-300! border border-amber-500/20 font-bold px-4 py-2 rounded-xl flex items-center gap-2 disabled:opacity-50">
                                         {isRefining ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
                                         현재 내용 기반 보완
                                     </button>
-                                    <button type="button" onClick={() => void saveProfile()} disabled={isSaving || isRefining} className="btn-ghost !text-xs !bg-emerald-500/10 !text-emerald-400 border border-emerald-500/20 font-bold px-4 py-2 rounded-xl flex items-center gap-2 disabled:opacity-50">
+                                    <button type="button" onClick={() => void saveProfile()} disabled={isSaving || isRefining} className="btn-ghost text-xs! bg-emerald-500/10! text-emerald-400! border border-emerald-500/20 font-bold px-4 py-2 rounded-xl flex items-center gap-2 disabled:opacity-50">
                                         {isSaving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                                         저장
                                     </button>

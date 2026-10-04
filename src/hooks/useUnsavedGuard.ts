@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useBlocker } from 'react-router-dom';
 import { useConfirm } from '../components/common/ConfirmProvider';
+import { useBeforeUnloadGuard } from './useBeforeUnloadGuard';
 
 const DEFAULT_MESSAGE = '저장하지 않은 내용이 있습니다.\n이 화면을 떠나면 작성한 내용이 사라집니다. 계속할까요?';
 
@@ -13,6 +14,7 @@ const DEFAULT_MESSAGE = '저장하지 않은 내용이 있습니다.\n이 화면
  * 반환하는 confirmDiscard()는 탭 전환·뒤로가기·이용자 전환처럼 라우트 이동이 아닌 동작 전에 호출합니다.
  */
 export function useUnsavedGuard(dirty: boolean, message: string = DEFAULT_MESSAGE) {
+    useBeforeUnloadGuard(dirty);
     const confirm = useConfirm();
     const blocker = useBlocker(({ currentLocation, nextLocation }) => dirty && currentLocation.pathname !== nextLocation.pathname);
     const blockerRef = useRef(blocker);

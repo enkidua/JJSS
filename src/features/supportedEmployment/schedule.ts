@@ -50,7 +50,7 @@ export function timeRangeHours(start: string, end: string): number {
         if (!match) return null;
         const h = Number(match[1]);
         const m = Number(match[2]);
-        return h <= 24 && m < 60 ? h * 60 + m : null;
+        return (h < 24 && m < 60) || (h === 24 && m === 0) ? h * 60 + m : null;
     };
     const s = toMinutes(start);
     const e = toMinutes(end);

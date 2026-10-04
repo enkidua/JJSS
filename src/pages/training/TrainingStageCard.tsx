@@ -42,8 +42,8 @@ export function TrainingStageCard({
     return (
         <motion.div
             layout
-            className={`glass-strong rounded-[2rem] border overflow-hidden transition-all ${
-                hasResult ? 'border-emerald-500/30 bg-emerald-500/[0.04]' : 'border-emerald-400/20'
+            className={`glass-strong rounded-4xl border overflow-hidden transition-all ${
+                hasResult ? 'border-emerald-500/30 bg-emerald-500/4' : 'border-emerald-400/20'
             }`}
         >
             <div className="p-6 md:p-8">
@@ -73,7 +73,7 @@ export function TrainingStageCard({
                 </div>
 
                 {!hasResult ? (
-                    <div className="rounded-3xl bg-white/[0.025] border border-white/10 p-5">
+                    <div className="rounded-3xl bg-white/2.5 border border-white/10 p-5">
                         <div className="space-y-4">{children}</div>
                         <div className="mt-5">{actions}</div>
                     </div>
@@ -91,7 +91,7 @@ export function TrainingStageCard({
                             onChange={e => setResult(e.target.value)}
                             placeholder={resultPlaceholder}
                             aria-label={`${title} 작성 결과`}
-                            className="textarea-field !bg-black/30 border-white/10 flex-1 min-h-[360px] text-sm leading-relaxed resize-y"
+                            className="textarea-field bg-black/30! border-white/10 flex-1 min-h-[360px] text-sm leading-relaxed resize-y"
                         />
                     </div>
                 )}
@@ -124,7 +124,7 @@ export function InsightResult({
 }) {
     const hasValue = !!value.trim();
     return (
-        <div className="glass-strong rounded-[2rem] p-5 border border-white/10 shadow-2xl min-h-[520px] flex flex-col">
+        <div className="glass-strong rounded-4xl p-5 border border-white/10 shadow-2xl min-h-[520px] flex flex-col">
             <div className="flex flex-col gap-3 mb-3">
                 <h3 className="font-black text-white">{title}</h3>
                 <div className="grid grid-cols-2 gap-2">
@@ -137,7 +137,7 @@ export function InsightResult({
                     <button type="button" onClick={onReset} disabled={!hasValue || isRewriting} className="px-3 py-2 rounded-xl bg-rose-500/10 text-rose-200 hover:bg-rose-500/20 disabled:opacity-35 disabled:cursor-not-allowed text-xs font-bold flex items-center justify-center gap-1.5" title="초기화"><RotateCcw className="w-3.5 h-3.5" />초기화</button>
                 </div>
             </div>
-            <textarea value={value} onChange={e => onChange(e.target.value)} placeholder={`${title} 결과가 여기에 표시됩니다.`} aria-label={title} className="textarea-field !bg-black/30 flex-1 text-sm leading-relaxed resize-none" />
+            <textarea value={value} onChange={e => onChange(e.target.value)} placeholder={`${title} 결과가 여기에 표시됩니다.`} aria-label={title} className="textarea-field bg-black/30! flex-1 text-sm leading-relaxed resize-none" />
         </div>
     );
 }

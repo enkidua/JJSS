@@ -51,7 +51,7 @@ export function ToolPageShell({
             {title && (
                 <div className="mb-6 flex items-center gap-4">
                     {Icon && (
-                        <div className={`w-12 h-12 shrink-0 rounded-2xl bg-gradient-to-br ${iconGradient} flex items-center justify-center shadow-lg`}>
+                        <div className={`w-12 h-12 shrink-0 rounded-2xl bg-linear-to-br ${iconGradient} flex items-center justify-center shadow-lg`}>
                             <Icon className="w-6 h-6 text-white" />
                         </div>
                     )}

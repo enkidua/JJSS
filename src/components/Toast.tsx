@@ -82,9 +82,9 @@ export function GlobalToastProvider({ children }: { children: ReactNode }) {
 
 export function ToastContainer({ toasts, removeToast }: { toasts: Toast[]; removeToast: (id: number) => void }) {
     const icons = {
-        success: <CheckCircle2 className="w-5 h-5 text-green-400 flex-shrink-0" />,
-        error: <XCircle className="w-5 h-5 text-red-400 flex-shrink-0" />,
-        info: <Info className="w-5 h-5 text-blue-400 flex-shrink-0" />,
+        success: <CheckCircle2 className="w-5 h-5 text-green-400 shrink-0" />,
+        error: <XCircle className="w-5 h-5 text-red-400 shrink-0" />,
+        info: <Info className="w-5 h-5 text-blue-400 shrink-0" />,
     };
 
     const borderColors = {
@@ -94,7 +94,7 @@ export function ToastContainer({ toasts, removeToast }: { toasts: Toast[]; remov
     };
 
     return (
-        <div className="fixed top-20 right-4 z-[9999] flex flex-col gap-3 w-[calc(100vw-2rem)] max-w-sm pointer-events-none">
+        <div className="fixed top-20 right-4 z-9999 flex flex-col gap-3 w-[calc(100vw-2rem)] max-w-sm pointer-events-none">
             <AnimatePresence>
                 {toasts.map(toast => (
                     <motion.div

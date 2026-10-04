@@ -44,11 +44,12 @@ export function useEmploymentDocuments() {
     const jobAnalysisPhotosRef = useRef<JobAnalysisPhoto[]>([]);
     const [employmentGenerating, setEmploymentGenerating] = useState<EmploymentTask | null>(null);
     const [employmentSaving, setEmploymentSaving] = useState<EmploymentKind | null>(null);
+    const [interviewLoading, setInterviewLoading] = useState(false);
     // 생성·보완·저장 중 하나라도 진행 중이면 true (같은 렌더 안의 연타까지 막기 위해 ref 사용)
     const employmentBusyRef = useRef(false);
     // 이용자를 바꿀 때마다 증가. 늦게 도착한 이전 이용자의 결과를 버리는 데 사용합니다.
     const employmentSelectionRequestRef = useRef(0);
-    const employmentBusy = employmentGenerating !== null || employmentSaving !== null;
+    const employmentBusy = interviewLoading || employmentGenerating !== null || employmentSaving !== null;
 
     const selectedEmploymentSeeker = employmentSeekerId
         ? seekers.find(s => getSeekerKey(s) === employmentSeekerId) || null
@@ -68,35 +69,46 @@ export function useEmploymentDocuments() {
     }, [jobAnalysisPhotos]);
 
     useEffect(() => () => {
+        employmentSelectionRequestRef.current += 1;
         jobAnalysisPhotosRef.current.forEach(photo => URL.revokeObjectURL(photo.previewUrl));
     }, []);
 
     const currentInterviewPrompt = () => buildInterviewPrompt(selectedEmploymentSeeker, interviewForm, employmentContextSummary);
-    const currentJobAnalysisPrompt = () => buildJobAnalysisPrompt(selectedJobAnalysisJob, jobAnalysisForm, jobAnalysisPhotos.map(photo => photo.file.name));
+    const currentJobAnalysisPrompt = () => buildJobAnalysisPrompt(selectedJobAnalysisJob, jobAnalysisForm, jobAnalysisPhotos.length);
 
     const handleSelectJobAnalysisJob = async (jobId: string) => {
         if (employmentBusyRef.current) { showToast('진행 중인 문서 작업이 끝난 뒤 사업체를 변경해 주세요.', 'info'); return; }
         if (jobId === jobAnalysisJobId) return;
-        if (jobAnalysisText.trim() && jobAnalysisText !== (jobAnalysisDoc?.content || '')) {
+        // 사진·관찰 입력은 이전 사업체 것이다. 남겨 두면 새 사업체 직무분석지에 이전 사업체 사진이 함께 분석·저장된다.
+        const hasUnsavedResult = jobAnalysisText.trim() && jobAnalysisText !== (jobAnalysisDoc?.content || '');
+        const hasInputs = hasAnyText(jobAnalysisForm, ['companyName', 'jobRole']) || jobAnalysisPhotos.length > 0;
+        if (hasUnsavedResult || hasInputs) {
+            const lost = [
+                hasUnsavedResult ? '저장하지 않은 직무분석지 작성 결과' : '',
+                hasInputs ? '이 사업체에 입력한 관찰 내용·사진' : '',
+            ].filter(Boolean).join('와 ');
             const ok = await confirm({
-                title: '저장하지 않은 직무분석지',
-                message: '사업체를 바꾸면 저장하지 않은 직무분석지 작성 결과가 사라집니다. 되돌릴 수 없습니다. 계속할까요?',
+                title: '사업체 변경',
+                message: `사업체를 바꾸면 ${lost}이 사라집니다. 되돌릴 수 없습니다. 계속할까요?`,
                 confirmLabel: '버리고 변경',
                 cancelLabel: '취소',
                 tone: 'danger',
             });
             if (!ok) return;
+            if (employmentBusyRef.current) return;
         }
         setJobAnalysisJobId(jobId);
         setJobAnalysisDoc(null);
         setJobAnalysisText('');
+        jobAnalysisPhotosRef.current.forEach(photo => URL.revokeObjectURL(photo.previewUrl));
+        jobAnalysisPhotosRef.current = [];
+        setJobAnalysisPhotos([]);
         const job = jobs.find(item => item.id === jobId);
-        if (!job) return;
-        setJobAnalysisForm(prev => ({
-            ...prev,
-            companyName: job.companyName || '',
-            jobRole: job.jobRole || '',
-        }));
+        setJobAnalysisForm({
+            ...EMPTY_JOB_ANALYSIS_FORM,
+            companyName: job?.companyName || '',
+            jobRole: job?.jobRole || '',
+        });
     };
 
     const handleSelectEmploymentSeeker = async (seekerKey: string) => {
@@ -112,6 +124,7 @@ export function useEmploymentDocuments() {
             });
             if (!ok) return;
         }
+        if (employmentBusyRef.current) return;
         const requestId = ++employmentSelectionRequestRef.current;
         setEmploymentSeekerId(seekerKey);
         setInterviewDoc(null);
@@ -120,6 +133,8 @@ export function useEmploymentDocuments() {
         // 직무분석지는 사업체 기준 문서라 이용자를 바꿔도 유지합니다.
         const seeker = seekers.find(s => getSeekerKey(s) === seekerKey);
         if (!seeker) return;
+        employmentBusyRef.current = true;
+        setInterviewLoading(true);
         try {
             // 문서 매칭은 fetchCaseDocuments가 식별자로 합니다(이름으로만 저장된 옛 문서는 같은 이름이 한 명뿐일 때만 읽음).
             const docs = await fetchCaseDocuments(seeker);
@@ -131,6 +146,9 @@ export function useEmploymentDocuments() {
         } catch (error: any) {
             if (requestId !== employmentSelectionRequestRef.current) return;
             showToast(error?.message || '고용지원 문서를 불러오지 못했습니다.', 'error');
+        } finally {
+            employmentBusyRef.current = false;
+            if (requestId === employmentSelectionRequestRef.current) setInterviewLoading(false);
         }
     };
 
@@ -138,6 +156,8 @@ export function useEmploymentDocuments() {
         return Promise.all(jobAnalysisPhotos.map(async photo => ({
             mimeType: photo.file.type || 'image/png',
             data: await fileToBase64(photo.file),
+            // 파일 이름은 원본 전송 확인창에만 표시하고 외부로 보내지 않습니다.
+            name: photo.file.name,
         })));
     };
 
@@ -198,7 +218,7 @@ export function useEmploymentDocuments() {
                 userContext: kind === 'interview' ? currentInterviewPrompt() : currentJobAnalysisPrompt(),
                 contextSummary: employmentContextSummary,
                 additionalInstruction: EMPLOYMENT_REFINE_INSTRUCTION,
-            });
+            }, { featureKey: 'workmate', documentType: kind === 'interview' ? 'interview-note-refine' : 'job-analysis-refine' });
             if (kind === 'interview' && requestId !== employmentSelectionRequestRef.current) {
                 showToast('이용자가 바뀌어 이전 이용자의 보완 결과는 반영하지 않았습니다.', 'info', 3500);
                 return;
@@ -233,8 +253,12 @@ export function useEmploymentDocuments() {
         setEmploymentSaving(kind);
         try {
             if (currentDoc?.id) {
-                await updateCaseDocument(currentDoc.id, content);
-                const updated = { ...currentDoc, content };
+                // 직무분석지 사진 목록은 지금 화면의 사진으로 갱신한다(처음 저장할 때 목록이 그대로 남지 않게).
+                const extra = kind === 'jobAnalysis'
+                    ? { photoFileNames: jobAnalysisPhotos.map(photo => photo.file.name), photoCount: jobAnalysisPhotos.length }
+                    : undefined;
+                await updateCaseDocument(currentDoc.id, content, extra);
+                const updated = { ...currentDoc, ...(extra || {}), content };
                 if (kind === 'interview') setInterviewDoc(updated);
                 if (kind === 'jobAnalysis') setJobAnalysisDoc(updated);
             } else {
@@ -353,6 +377,7 @@ ${afterClear}`,
         employmentGenerating,
         employmentSaving,
         employmentBusy,
+        interviewLoading,
         generateEmploymentDoc,
         refineEmploymentDoc,
         saveEmploymentDoc,

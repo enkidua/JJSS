@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FileText, Zap, Download, Sparkles, Loader2, Trash2, FileUp, MessageSquare } from 'lucide-react';
-import { generateText } from '../services/gemini';
+import { generateText, wrapAsData } from '../services/gemini';
 import { useToast } from './Toast';
 import { safeErrorMetadata } from '../utils/safeError';
 import { getTextFileValidationError } from '../utils/fileValidation';
@@ -69,7 +69,8 @@ export function MinutesView({ onBack, onDirtyChange }: MinutesViewProps) {
         setIsGenerating(true);
         setActiveTab('result');
         try {
-            const generatedMinutes = await generateText('minutes', transcript);
+            // 녹취록은 자료로 감싸 보낸다 — 녹취 안의 문장("앞의 지시는 무시하고…" 등)이 지시로 읽히지 않게.
+            const generatedMinutes = await generateText('minutes', wrapAsData(transcript), undefined, { featureKey: 'tools', documentType: 'minutes' });
             setResult(generatedMinutes);
             setGeneratedResult(generatedMinutes);
             showToast('회의록 작성이 완료되었습니다.', 'success');
@@ -169,14 +170,14 @@ export function MinutesView({ onBack, onDirtyChange }: MinutesViewProps) {
                         </button>
                     </div>
 
-                    <div className="glass-strong rounded-[2rem] p-6 border border-white/10">
+                    <div className="glass-strong rounded-4xl p-6 border border-white/10">
                         <h4 className="text-xs font-bold text-white/30 mb-4 uppercase tracking-widest">파일 업로드</h4>
                         <FileDropZone
                             accept=".txt,.md"
                             onFiles={handleFiles}
                             disabled={isGenerating}
                             ariaLabel="녹취록 텍스트 파일 선택"
-                            className="w-full py-6 rounded-2xl border-2 border-dashed border-white/10 hover:border-primary-500/50 hover:bg-white/5 transition-all flex flex-col items-center gap-3 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400"
+                            className="w-full py-6 rounded-2xl border-2 border-dashed border-white/10 hover:border-primary-500/50 hover:bg-white/5 transition-all flex flex-col items-center gap-3 cursor-pointer focus:outline-hidden focus-visible:ring-2 focus-visible:ring-primary-400"
                             activeClassName="border-primary-400 bg-primary-500/10"
                         >
                             <FileUp className="w-8 h-8 text-white/20" aria-hidden="true" />
@@ -239,7 +240,7 @@ export function MinutesView({ onBack, onDirtyChange }: MinutesViewProps) {
                                         value={transcript}
                                         onChange={(e) => setTranscript(e.target.value)}
                                         placeholder="이곳에 회의 녹취록이나 두서없는 회의 메모를 붙여넣으세요. AI가 분석하여 행정 문서 양식의 회의록으로 바꿔드립니다."
-                                        className="flex-1 p-8 bg-transparent text-white/80 resize-none focus:outline-none text-lg leading-relaxed placeholder:text-white/10 custom-scrollbar"
+                                        className="flex-1 p-8 bg-transparent text-white/80 resize-none focus:outline-hidden text-lg leading-relaxed placeholder:text-white/10 custom-scrollbar"
                                     />
                                 </motion.div>
                             ) : (
@@ -273,7 +274,7 @@ export function MinutesView({ onBack, onDirtyChange }: MinutesViewProps) {
                                                 aria-label="생성된 회의록"
                                                 value={result}
                                                 onChange={(e) => setResult(e.target.value)}
-                                                className="flex-1 p-8 bg-transparent text-white/90 resize-none focus:outline-none text-base leading-relaxed font-sans custom-scrollbar"
+                                                className="flex-1 p-8 bg-transparent text-white/90 resize-none focus:outline-hidden text-base leading-relaxed font-sans custom-scrollbar"
                                             />
                                         </div>
                                     ) : (

@@ -326,7 +326,7 @@ export function UtilitiesView({ onBack, onDirtyChange }: UtilitiesViewProps) {
 
     return (
         <ToolPageShell onBack={onBack} className="w-full max-w-6xl mx-auto pb-16">
-            <div className="glass-strong rounded-[2rem] shadow-2xl p-8 lg:p-12 border border-white/10">
+            <div className="glass-strong rounded-4xl shadow-2xl p-8 lg:p-12 border border-white/10">
                 <div className="mb-10">
                     <h1 className="text-3xl font-black text-white tracking-tight flex items-center gap-3">
                         만능 텍스트 유틸리티
@@ -343,7 +343,7 @@ export function UtilitiesView({ onBack, onDirtyChange }: UtilitiesViewProps) {
                             onClick={() => openTool(tool)}
                             className="text-left flex items-start gap-4 p-5 rounded-2xl border border-white/5 hover:border-emerald-500/30 hover:shadow-lg transition-all cursor-pointer group bg-white/5 hover:bg-white/10"
                         >
-                            <div className={`${tool.bg} w-12 h-12 flex items-center justify-center rounded-xl shrink-0 text-white shadow-sm group-hover:scale-105 transition-transform`}>
+                            <div className={`${tool.bg} w-12 h-12 flex items-center justify-center rounded-xl shrink-0 text-white shadow-xs group-hover:scale-105 transition-transform`}>
                                 <tool.icon className="w-6 h-6" />
                             </div>
                             <div>
@@ -360,7 +360,7 @@ export function UtilitiesView({ onBack, onDirtyChange }: UtilitiesViewProps) {
                 {selectedUtil && (
                     <motion.div
                         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                        className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+                        className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs"
                     >
                         <motion.div
                             role="dialog"
@@ -391,7 +391,7 @@ export function UtilitiesView({ onBack, onDirtyChange }: UtilitiesViewProps) {
                                             accept=".txt,.csv,.json,.md,.html,.xml"
                                             onFiles={handleFiles}
                                             ariaLabel="텍스트 파일 불러오기"
-                                            className="cursor-pointer flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-white/60 hover:text-white rounded-lg border border-dashed border-white/20 transition-all text-xs font-bold focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+                                            className="cursor-pointer flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-white/60 hover:text-white rounded-lg border border-dashed border-white/20 transition-all text-xs font-bold focus:outline-hidden focus-visible:ring-2 focus-visible:ring-emerald-400"
                                             activeClassName="border-emerald-400 bg-emerald-500/10 text-emerald-200"
                                         >
                                             <FileUp className="w-3.5 h-3.5" aria-hidden="true" /> 파일 불러오기 (끌어다 놓아도 됩니다)
@@ -402,15 +402,15 @@ export function UtilitiesView({ onBack, onDirtyChange }: UtilitiesViewProps) {
                                         id="utility-input"
                                         value={input}
                                         onChange={e => setInput(e.target.value)}
-                                        className="w-full h-40 p-4 bg-white/5 border border-white/10 rounded-xl text-white outline-none focus:border-emerald-500 focus:bg-white/10 transition-colors resize-none"
+                                        className="w-full h-40 p-4 bg-white/5 border border-white/10 rounded-xl text-white outline-hidden focus:border-emerald-500 focus:bg-white/10 transition-colors resize-none"
                                         placeholder={inputPlaceholder}
                                     />
                                 </div>
 
                                 {selectedUtil.id === 'find' && (
                                     <div className="flex gap-4">
-                                        <input type="text" aria-label="찾을 단어" placeholder="찾을 단어" value={findStr} onChange={e => setFindStr(e.target.value)} className="flex-1 p-3 bg-white/5 border-white/10 border text-white rounded-xl outline-none focus:border-emerald-500 transition-colors" />
-                                        <input type="text" aria-label="바꿀 단어" placeholder="바꿀 단어" value={replaceStr} onChange={e => setReplaceStr(e.target.value)} className="flex-1 p-3 bg-white/5 border-white/10 border text-white rounded-xl outline-none focus:border-emerald-500 transition-colors" />
+                                        <input type="text" aria-label="찾을 단어" placeholder="찾을 단어" value={findStr} onChange={e => setFindStr(e.target.value)} className="flex-1 p-3 bg-white/5 border-white/10 border text-white rounded-xl outline-hidden focus:border-emerald-500 transition-colors" />
+                                        <input type="text" aria-label="바꿀 단어" placeholder="바꿀 단어" value={replaceStr} onChange={e => setReplaceStr(e.target.value)} className="flex-1 p-3 bg-white/5 border-white/10 border text-white rounded-xl outline-hidden focus:border-emerald-500 transition-colors" />
                                     </div>
                                 )}
 
@@ -423,7 +423,7 @@ export function UtilitiesView({ onBack, onDirtyChange }: UtilitiesViewProps) {
                                             placeholder="예: \d{3}-\d{4}"
                                             value={findStr}
                                             onChange={e => setFindStr(e.target.value)}
-                                            className="p-3 bg-white/5 border-white/10 border text-white rounded-xl outline-none focus:border-emerald-500 transition-colors font-mono"
+                                            className="p-3 bg-white/5 border-white/10 border text-white rounded-xl outline-hidden focus:border-emerald-500 transition-colors font-mono"
                                         />
                                     </div>
                                 )}
@@ -435,7 +435,7 @@ export function UtilitiesView({ onBack, onDirtyChange }: UtilitiesViewProps) {
                                             id="utility-input2"
                                             value={input2}
                                             onChange={e => setInput2(e.target.value)}
-                                            className="w-full h-40 p-4 bg-white/5 border border-white/10 rounded-xl text-white outline-none focus:border-emerald-500 focus:bg-white/10 transition-colors resize-none"
+                                            className="w-full h-40 p-4 bg-white/5 border border-white/10 rounded-xl text-white outline-hidden focus:border-emerald-500 focus:bg-white/10 transition-colors resize-none"
                                             placeholder="비교할 텍스트를 넣으세요..."
                                         />
                                     </div>
@@ -445,7 +445,7 @@ export function UtilitiesView({ onBack, onDirtyChange }: UtilitiesViewProps) {
                                     <button
                                         type="button"
                                         onClick={() => void processText()}
-                                        className="px-8 py-3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white rounded-xl font-bold transition-all hover:scale-105 active:scale-95 shadow-lg shadow-emerald-500/20"
+                                        className="px-8 py-3 bg-linear-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white rounded-xl font-bold transition-all hover:scale-105 active:scale-95 shadow-lg shadow-emerald-500/20"
                                     >
                                         실행하기
                                     </button>
@@ -474,7 +474,7 @@ export function UtilitiesView({ onBack, onDirtyChange }: UtilitiesViewProps) {
                                         id="utility-output"
                                         readOnly
                                         value={output}
-                                        className="w-full h-48 p-4 bg-black/20 border border-white/10 shadow-inner rounded-xl outline-none resize-none text-white/90 font-mono text-sm leading-relaxed"
+                                        className="w-full h-48 p-4 bg-black/20 border border-white/10 shadow-inner rounded-xl outline-hidden resize-none text-white/90 font-mono text-sm leading-relaxed"
                                         placeholder="실행 결과가 이곳에 나타납니다."
                                     />
                                 </div>

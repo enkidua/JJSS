@@ -58,14 +58,14 @@ export function ParticipantPlanSection({ record, onDirtyChange }: Props) {
             </select></label>
             <label className="text-sm text-white/75">확인일<input type="date" className="input-field mt-1" value={participant.reviewedAt} onChange={e => setField('reviewedAt', e.target.value)} disabled={unavailable || participant.reviewStatus === 'not_reviewed'} /></label>
             <label className="text-sm text-white/75 sm:col-span-2">확인 방법·상황<input className="input-field mt-1" value={participant.reviewMethod} maxLength={300} onChange={e => setField('reviewMethod', e.target.value)} placeholder="예: 대면 상담에서 본인이 직접 확인" disabled={unavailable || participant.reviewStatus === 'not_reviewed'} /></label>
-            <button type="submit" className="btn-primary !px-4 !py-2 justify-self-start" disabled={unavailable}>참여 기록 저장</button>
+            <button type="submit" className="btn-primary px-4! py-2! justify-self-start" disabled={unavailable}>참여 기록 저장</button>
         </form>
         {(workflow.participantPlan.plainSummary || workflow.participantPlan.desiredGoal) &&
             <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 mt-5 text-sm">
                 <p className="font-semibold text-amber-200">함께 읽는 계획 · {STATUS_LABELS[workflow.participantPlan.reviewStatus]}</p>
-                <p className="text-white/80 whitespace-pre-wrap break-words mt-2">{workflow.participantPlan.plainSummary}</p>
-                <p className="text-white/75 whitespace-pre-wrap break-words mt-2">내가 원하는 목표: {workflow.participantPlan.desiredGoal || '미기록'}</p>
-                {workflow.participantPlan.revisionRequest && <p className="text-white/75 whitespace-pre-wrap break-words mt-1">수정 의견: {workflow.participantPlan.revisionRequest}</p>}
+                <p className="text-white/80 whitespace-pre-wrap wrap-break-word mt-2">{workflow.participantPlan.plainSummary}</p>
+                <p className="text-white/75 whitespace-pre-wrap wrap-break-word mt-2">내가 원하는 목표: {workflow.participantPlan.desiredGoal || '미기록'}</p>
+                {workflow.participantPlan.revisionRequest && <p className="text-white/75 whitespace-pre-wrap wrap-break-word mt-1">수정 의견: {workflow.participantPlan.revisionRequest}</p>}
                 {workflow.participantPlan.reviewedAt && <p className="text-white/50 mt-2">확인: {workflow.participantPlan.reviewedAt} · {workflow.participantPlan.reviewMethod}</p>}
             </div>}
         {error && <p role="alert" className="text-sm text-red-300 mt-2">{error}</p>}

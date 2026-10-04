@@ -392,13 +392,16 @@ async function chooseSavePath({ app, dialog, category, fileName, browserWindow, 
     } catch (error) {
         throw toFileWriteError(error);
     }
-    lastSaveDirectories.set(category, selectedDirectory);
+    return { canceled: false, filePath: selectedPath, paths };
+}
+
+async function rememberSuccessfulSave(app, category, filePath) {
+    lastSaveDirectories.set(category, path.dirname(filePath));
     try {
         await persistSavePreferences(app);
     } catch (error) {
         warnInDevelopment(app, '[JJSS file preferences]', 'save', error);
     }
-    return { canceled: false, filePath: selectedPath, paths };
 }
 
 function toFileWriteError(error) {
@@ -430,15 +433,42 @@ async function verifyWrittenFile(filePath, expectedSize) {
     }
 }
 
+/**
+ * OneDrive 동기화·백신 검사가 방금 만든 파일이나 기존 문서를 잠시 잡고 있으면 교체(rename)가 EPERM/EBUSY/EACCES로
+ * 실패하는 일이 흔하다. 잠깐 기다렸다 몇 번 다시 시도한다. 그래도 안 되면 원래 오류를 그대로 던진다(원본은 그대로 남는다).
+ */
+const RENAME_RETRY_CODES = new Set(['EPERM', 'EBUSY', 'EACCES']);
+const RENAME_RETRY_DELAYS_MS = [100, 200, 400];
+
+async function renameWithRetry(from, to, delays = RENAME_RETRY_DELAYS_MS, rename = fsp.rename) {
+    for (let attempt = 0; ; attempt += 1) {
+        try {
+            await rename(from, to);
+            return;
+        } catch (error) {
+            if (!RENAME_RETRY_CODES.has(error?.code) || attempt >= delays.length) throw error;
+            await new Promise(resolve => setTimeout(resolve, delays[attempt]));
+        }
+    }
+}
+
 async function writeVerifiedFile(app, filePath, bytes) {
+    // Write beside the destination so rename stays on the same volume. Never
+    // truncate an existing document before the replacement is fully written.
+    const tempPath = path.join(path.dirname(filePath), `.jjss-save-${crypto.randomUUID()}.tmp`);
     try {
         await fsp.mkdir(path.dirname(filePath), { recursive: true });
-        await fsp.writeFile(filePath, bytes);
-        await verifyWrittenFile(filePath, bytes.length);
+        await fsp.writeFile(tempPath, bytes, { flag: 'wx', mode: 0o600 });
+        await verifyWrittenFile(tempPath, bytes.length);
+        await renameWithRetry(tempPath, filePath);
     } catch (error) {
         warnInDevelopment(app, '[JJSS file save]', 'file-write', error);
         if (error?.code === VERIFY_FAILED_CODE) throw error;
         throw toFileWriteError(error);
+    } finally {
+        await fsp.rm(tempPath, { force: true }).catch(error => {
+            warnInDevelopment(app, '[JJSS file save]', 'write-temp-cleanup', error);
+        });
     }
 }
 
@@ -451,6 +481,7 @@ async function saveBuffer({ app, dialog, category, fileName, data, browserWindow
     const destination = await chooseSavePath({ app, dialog, category, fileName, browserWindow, rootOptions });
     if (destination.canceled || destination.error) return destination;
     await writeVerifiedFile(app, destination.filePath, buffer);
+    await rememberSuccessfulSave(app, category, destination.filePath);
     return { canceled: false, filePath: destination.filePath, category, openToken: registerSavedDirectory(destination.filePath) };
 }
 
@@ -500,6 +531,7 @@ async function savePdf({ app, dialog, BrowserWindow, category, fileName, html, b
         });
         if (!pdf.length || pdf.length > MAX_SAVE_BYTES || !hasPdfSignature(pdf)) throw new Error('생성된 PDF 파일의 형식이 올바르지 않습니다.');
         await writeVerifiedFile(app, destination.filePath, pdf);
+        await rememberSuccessfulSave(app, category, destination.filePath);
         return { canceled: false, filePath: destination.filePath, category, openToken: registerSavedDirectory(destination.filePath) };
     } finally {
         if (printWindow && !printWindow.isDestroyed()) printWindow.destroy();
@@ -509,8 +541,16 @@ async function savePdf({ app, dialog, BrowserWindow, category, fileName, html, b
     }
 }
 
-// 앱이 PDF 생성 도중 강제 종료되면 개인정보가 담긴 임시 HTML이 남을 수 있어 시작할 때 정리한다.
-async function cleanupStalePdfTempFiles(app, maxAgeMs = 60 * 60 * 1000) {
+/**
+ * 앱이 PDF 생성 도중 강제 종료되면 개인정보가 담긴 임시 HTML이 남는다.
+ *
+ * 시작 시점에는 **나이를 따지지 않고 전부 지운다**(maxAgeMs = 0). 이 시점에 살아 있는
+ * `jjss-pdf-xxxxxx` 폴더는 모두 지난 실행이 남긴 것이고, 지금 실행에는 아직 만든 것이 없기 때문이다.
+ * 이름 형식이 정확히 맞는 폴더만 지우므로 다른 프로그램의 임시 파일은 건드리지 않는다.
+ *
+ * maxAgeMs를 주면 그보다 오래된 것만 지운다(앱이 도는 중에 청소할 때 쓴다).
+ */
+async function cleanupStalePdfTempFiles(app, maxAgeMs = 0) {
     const tempParent = app.getPath('temp');
     let entries;
     try {
@@ -524,8 +564,10 @@ async function cleanupStalePdfTempFiles(app, maxAgeMs = 60 * 60 * 1000) {
         if (!entry.isDirectory() || !/^jjss-pdf-[A-Za-z0-9]{6}$/.test(entry.name)) continue;
         const directory = path.join(tempParent, entry.name);
         try {
-            const info = await fsp.stat(directory);
-            if (now - info.mtimeMs < maxAgeMs) continue;
+            if (maxAgeMs > 0) {
+                const info = await fsp.stat(directory);
+                if (now - info.mtimeMs < maxAgeMs) continue;
+            }
             await fsp.rm(directory, { recursive: true, force: true });
             removed += 1;
         } catch {

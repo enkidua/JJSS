@@ -18,7 +18,7 @@ export function SeekerPicker({ seekers, ready, selectedId, selectedFound, onSele
         || `${seeker.name} ${seeker.seekerId || ''}`.toLocaleLowerCase().includes(keyword)));
     const select = (id: string) => { setSearch(''); onSelect(id); };
 
-    return <div className="glass-card !p-5">
+    return <div className="glass-card p-5!">
         <div className="grid gap-3 sm:grid-cols-2">
             <div>
                 <label htmlFor="workflow-seeker-search" className="block text-sm font-semibold text-white/80 mb-1">이용자 찾기</label>

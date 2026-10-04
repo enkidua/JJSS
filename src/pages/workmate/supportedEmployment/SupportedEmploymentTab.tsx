@@ -62,6 +62,9 @@ interface Editing {
 
 const isClosedStatus = (status: SupportedEmploymentCase['status'] | null) => status === '수료' || status === '취업';
 const isPlausibleDate = (value: string) => /^20\d{2}-\d{2}-\d{2}$/.test(value);
+// 지출 초안 만들기는 화면이 다시 그려지거나(탭 이동 후 복귀) 두 곳에서 열려도 한 번에 하나만 실행한다.
+// 컴포넌트 ref는 다시 마운트되면 새로 생겨, 앞의 생성이 끝나기 전에 같은 초안을 또 만들 수 있었다.
+let expenseCreationInFlight = false;
 
 /** 고용지원 > 지원고용 관리 탭(계획서 D-2·D-4·D-5) */
 export function SupportedEmploymentTab({ seekers, jobs, request, onDirtyChange }: Props) {
@@ -232,27 +235,27 @@ export function SupportedEmploymentTab({ seekers, jobs, request, onDirtyChange }
     /** 저장한 회차를 화면에 반영. 저장 중에 더 고친 내용이 있으면 그 내용은 유지합니다. */
     const applySaved = (saved: SupportedEmploymentCase, sentSerialized: string) => {
         setEditing(current => {
-            if (!current) return current;
+            if (!current || current.session !== editing?.session) return current;
             const unchanged = serializeCase(current.draft) === sentSerialized;
             const draft = unchanged ? saved : { ...current.draft, id: saved.id, createdAt: saved.createdAt, updatedAt: saved.updatedAt, expenseIds: saved.expenseIds };
             return { ...current, draft, baseline: serializeCase(saved), savedStatus: saved.status };
         });
     };
 
-    /** 예산 관리의 최신 지출 목록(실패하면 화면에 있는 목록). */
+    /** 중복 초안 판정에는 반드시 저장소의 최신 지출 목록을 사용한다. */
     const loadLatestExpenses = async () => {
         try {
             const latest = await fetchExpenses();
             setExpensesLoaded(true);
             return latest;
         } catch {
-            return useDataStore.getState().expenses;
+            setExpensesLoaded(false);
+            throw new Error('기존 지출을 확인하지 못해 초안을 만들지 않았습니다. 잠시 후 다시 시도해 주세요.');
         }
     };
 
     /** 표식([지원고용:회차ID:항목])으로 이미 만든 초안을 찾아 빠진 항목만 만들고, 만든 ID는 항상 회차에 저장합니다. */
     const createExpenses = async (target: SupportedEmploymentCase, project: BudgetProject, plan: ExpenseDraftPlan) => {
-        setCreatingExpenses(true);
         const createdIds: string[] = [];
         let failed = false;
         try {
@@ -265,9 +268,11 @@ export function SupportedEmploymentTab({ seekers, jobs, request, onDirtyChange }
             showToast(error instanceof Error ? error.message : '지출 초안을 만들지 못했습니다.', 'error');
         }
         try {
-            const known = target.expenseIds || [];
+            // 예산 관리에서 지워진 지출 ID는 연결 목록에서 뺀다(남아 있으면 "이미 있음" 판단이 틀어진다).
+            const stale = new Set(plan.staleLinkedIds);
+            const known = (target.expenseIds || []).filter(id => !stale.has(id));
             const linkIds = [...plan.existingIds, ...createdIds].filter(id => !known.includes(id));
-            if (linkIds.length || target.budgetProjectId !== project.id) {
+            if (linkIds.length || stale.size || target.budgetProjectId !== project.id) {
                 const next = { ...target, budgetProjectId: project.id, expenseIds: [...known, ...linkIds] };
                 const saved = await saveCase(next);
                 applySaved(saved, serializeCase(target));
@@ -281,12 +286,10 @@ export function SupportedEmploymentTab({ seekers, jobs, request, onDirtyChange }
             }
         } catch {
             showToast('지출 초안은 만들었지만 회차에 연결 정보를 저장하지 못했습니다. 다시 시도하면 이미 만든 초안은 건너뜁니다.', 'error');
-        } finally {
-            setCreatingExpenses(false);
         }
     };
 
-    const offerExpenses = async (target: SupportedEmploymentCase) => {
+    const prepareExpenseOffer = async (target: SupportedEmploymentCase) => {
         const project = loadBudgetProjects().find(item => item.id === target.budgetProjectId);
         if (!project) {
             showToast('예산 연동: "5. 결과 확정·예산"에서 예산 사업을 고르면 지출 초안 3건을 만들 수 있습니다.', 'info');
@@ -314,7 +317,25 @@ ${lines}${skipped}
 초안은 예산 관리에서 확인·수정할 수 있습니다.`,
             confirmLabel: '초안 만들기', cancelLabel: '나중에',
         });
-        if (ok) await createExpenses(target, project, plan);
+        if (ok) {
+            // 확인창이 열려 있는 동안 다른 경로에서 추가된 초안도 다시 확인한다.
+            const latestPlan = planExpenseDrafts(target, project, await loadLatestExpenses());
+            await createExpenses(target, project, latestPlan);
+        }
+    };
+
+    const offerExpenses = async (target: SupportedEmploymentCase) => {
+        if (expenseCreationInFlight) { showToast('다른 지출 초안을 만드는 중입니다. 끝난 뒤 다시 눌러 주세요.', 'info'); return; }
+        expenseCreationInFlight = true;
+        setCreatingExpenses(true);
+        try {
+            await prepareExpenseOffer(target);
+        } catch (error) {
+            showToast(error instanceof Error ? error.message : '지출 초안을 준비하지 못했습니다. 다시 시도해 주세요.', 'error');
+        } finally {
+            expenseCreationInFlight = false;
+            setCreatingExpenses(false);
+        }
     };
 
     const handleSave = async () => {
@@ -352,7 +373,7 @@ ${lines}${skipped}
         return <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-3">
                 <label className="text-sm text-white/75 flex items-center gap-2" htmlFor="se-seeker-filter">이용자
-                    <select id="se-seeker-filter" className="input-field !w-auto" value={seekerFilter} onChange={e => setSeekerFilter(e.target.value)}>
+                    <select id="se-seeker-filter" className="input-field w-auto!" value={seekerFilter} onChange={e => setSeekerFilter(e.target.value)}>
                         <option value="">전체</option>
                         {seekers.map(seeker => <option key={getSeekerKey(seeker)} value={getSeekerKey(seeker)}>{seeker.name}</option>)}
                     </select>
@@ -371,9 +392,9 @@ ${lines}${skipped}
     const otherCases = cases.filter(item => item.id !== draft.id);
 
     return <div className="space-y-4" key={editing.session}>
-        <div className="glass-card !p-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="glass-card p-4! flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-                <button type="button" className="btn-ghost !px-3 !py-2 text-sm flex items-center gap-1" onClick={() => void handleBack()}>
+                <button type="button" className="btn-ghost px-3! py-2! text-sm flex items-center gap-1" onClick={() => void handleBack()}>
                     <ArrowLeft className="w-4 h-4" aria-hidden="true" /> 목록으로
                 </button>
                 <div>
@@ -383,7 +404,7 @@ ${lines}${skipped}
             </div>
             <div className="flex items-center gap-3">
                 {dirty && <span className="text-sm text-amber-200" role="status">저장하지 않은 변경 있음</span>}
-                <button type="button" className="btn-primary !px-5 !py-2 flex items-center gap-2" onClick={() => void handleSave()} disabled={saving || creatingExpenses}>
+                <button type="button" className="btn-primary px-5! py-2! flex items-center gap-2" onClick={() => void handleSave()} disabled={saving || creatingExpenses}>
                     <Save className="w-4 h-4" aria-hidden="true" /> {saving ? '저장 중...' : '회차 저장'}
                 </button>
             </div>

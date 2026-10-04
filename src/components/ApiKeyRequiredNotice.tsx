@@ -29,7 +29,7 @@ export default function ApiKeyRequiredNotice() {
     if (!visible) return null;
 
     return (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/65 p-4">
+        <div className="fixed inset-0 z-120 flex items-center justify-center bg-black/65 p-4">
             <div
                 ref={dialogRef}
                 role="dialog"
@@ -37,7 +37,7 @@ export default function ApiKeyRequiredNotice() {
                 aria-labelledby="api-key-required-title"
                 aria-describedby="api-key-required-desc"
                 tabIndex={-1}
-                className="glass-card w-full max-w-md !p-6 shadow-2xl focus:outline-none"
+                className="glass-card w-full max-w-md p-6! shadow-2xl focus:outline-hidden"
             >
                 <div className="mb-4 flex items-center gap-3">
                     <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/20">
@@ -49,12 +49,12 @@ export default function ApiKeyRequiredNotice() {
                     {apiKeyRequiredMessage(provider)}
                 </p>
                 <div className="mt-6 flex justify-end gap-2">
-                    <button type="button" className="btn-ghost !px-4 !py-2" onClick={() => setVisible(false)}>
+                    <button type="button" className="btn-ghost px-4! py-2!" onClick={() => setVisible(false)}>
                         취소
                     </button>
                     <button
                         type="button"
-                        className="btn-primary !px-4 !py-2 flex items-center gap-2"
+                        className="btn-primary px-4! py-2! flex items-center gap-2"
                         onClick={() => {
                             setVisible(false);
                             navigate('/settings');

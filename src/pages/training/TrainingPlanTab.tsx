@@ -141,6 +141,14 @@ export function TrainingPlanTab({
     };
 
     const seekerContext = buildSeekerContext(selectedTrainee, selectedSeeker, room);
+    // 현재 훈련생·담당자에 더해 같은 훈련실의 다른 훈련생·담당 교사 이름도 가린다
+    // (일지·관찰 메모에 다른 훈련생이 언급될 수 있다). 앱 전체 사전은 trainingNamesCache가 따로 채운다.
+    const requestKnownNames = [
+        selectedTrainee?.name,
+        manager,
+        room?.teacher,
+        ...(room?.trainees ?? []).map(trainee => trainee.name),
+    ];
 
     /** AI 작업 시작. 이미 다른 작업이 실행 중이면 호출하지 않습니다(각 핸들러 첫 줄에서 확인). */
     const beginGeneration = (kind: GeneratingKind) => {
@@ -164,7 +172,7 @@ export function TrainingPlanTab({
         if (!traineeId) return;
         try {
             const prompt = buildPlanPrompt({ seekerContext, record: currentRecord, manager, contextSummary: clientContextSummary });
-            const generated = await generateText('rehab_plan', prompt, undefined, { featureKey: 'training', documentType: 'training-plan' });
+            const generated = await generateText('rehab_plan', prompt, undefined, { featureKey: 'training', documentType: 'training-plan', knownNames: requestKnownNames });
             updateRecordFor(traineeId, { plan: generated });
             showToast('훈련계획서가 생성되었습니다.', 'success');
         } catch (error: any) {
@@ -180,7 +188,7 @@ export function TrainingPlanTab({
         if (!traineeId) return;
         try {
             const prompt = buildCounselingPrompt({ seekerContext, record: currentRecord, manager, contextSummary: clientContextSummary });
-            const generated = await generateText('counseling', prompt, undefined, { featureKey: 'training', documentType: 'training-counseling' });
+            const generated = await generateText('counseling', prompt, undefined, { featureKey: 'training', documentType: 'training-counseling', knownNames: requestKnownNames });
             updateRecordFor(traineeId, { counselingDraft: generated });
             showToast('훈련 상담일지가 생성되었습니다.', 'success');
         } catch (error: any) {
@@ -211,7 +219,7 @@ export function TrainingPlanTab({
         if (!traineeId) return;
         try {
             const prompt = buildEvaluationPrompt({ seekerContext, record: currentRecord, manager, contextSummary: clientContextSummary });
-            const generated = await generateText('evaluation', prompt, undefined, { featureKey: 'training', documentType: 'training-evaluation' });
+            const generated = await generateText('evaluation', prompt, undefined, { featureKey: 'training', documentType: 'training-evaluation', knownNames: requestKnownNames });
             updateRecordFor(traineeId, { evaluation: generated });
             showToast('훈련 정기평가서가 생성되었습니다.', 'success');
         } catch (error: any) {
@@ -234,7 +242,7 @@ export function TrainingPlanTab({
                 progressYear,
                 progressEntry,
             });
-            const generated = await generateText(mode === 'share' ? 'summary' : 'evaluation', prompt, undefined, { featureKey: 'training', documentType: `training-${mode}` });
+            const generated = await generateText(mode === 'share' ? 'summary' : 'evaluation', prompt, undefined, { featureKey: 'training', documentType: `training-${mode}`, knownNames: requestKnownNames });
             if (mode === 'checklist') updateRecordFor(traineeId, { checklist: generated });
             if (mode === 'field') updateRecordFor(traineeId, { fieldNote: generated });
             if (mode === 'share') updateRecordFor(traineeId, { shareSummary: generated });
@@ -248,7 +256,7 @@ export function TrainingPlanTab({
 
     if (!selectedTrainee) {
         return (
-            <div className="glass-strong rounded-[2rem] p-6 border border-white/10 shadow-2xl">
+            <div className="glass-strong rounded-4xl p-6 border border-white/10 shadow-2xl">
                 <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6">
                     <div>
                         <h2 className="text-2xl font-black text-white">훈련계획 수립 대상 선택</h2>
@@ -258,7 +266,7 @@ export function TrainingPlanTab({
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                     {room.trainees.map(trainee => (
-                        <button key={trainee.id} type="button" onClick={() => setSelectedTraineeId(trainee.id)} className="text-left rounded-3xl bg-white/[0.03] border border-white/10 p-5 hover:bg-emerald-500/10 hover:border-emerald-400/30 transition-all">
+                        <button key={trainee.id} type="button" onClick={() => setSelectedTraineeId(trainee.id)} className="text-left rounded-3xl bg-white/3 border border-white/10 p-5 hover:bg-emerald-500/10 hover:border-emerald-400/30 transition-all">
                             <p className="text-lg font-black text-white">{trainee.name}</p>
                             <p className="text-sm text-white/45 mt-1">{room.name} · {trainee.memo || '메모 없음'}</p>
                             <p className="text-xs text-white/30 mt-3">출석·진도·문서 작성이 이 훈련생 기준으로 연결됩니다.</p>
@@ -272,7 +280,7 @@ export function TrainingPlanTab({
 
     return (
         <div className="space-y-6">
-            <div className="glass-strong rounded-[2rem] p-5 border border-emerald-400/20 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div className="glass-strong rounded-4xl p-5 border border-emerald-400/20 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                 <div>
                     <p className="text-xs font-bold text-emerald-300 mb-1">선택된 훈련생</p>
                     <h2 className="text-2xl font-black text-white">{selectedTrainee.name}</h2>
@@ -285,10 +293,10 @@ export function TrainingPlanTab({
                             value={manager}
                             onChange={event => setManager(event.target.value)}
                             placeholder="비워 두면 문서에 넣지 않습니다"
-                            className="input-field !py-2 w-full sm:w-64"
+                            className="input-field py-2! w-full sm:w-64"
                         />
                     </label>
-                    <button type="button" onClick={() => setSelectedTraineeId('')} className="btn-ghost !bg-white/5 border border-white/10">다른 훈련생 선택</button>
+                    <button type="button" onClick={() => setSelectedTraineeId('')} className="btn-ghost bg-white/5! border border-white/10">다른 훈련생 선택</button>
                 </div>
             </div>
 
@@ -354,7 +362,7 @@ export function TrainingPlanTab({
                 onCopy={text => copy(text, '문서가 복사되었습니다.')}
             />
 
-            <div className="glass-strong rounded-[2rem] p-6 border border-emerald-400/15 shadow-2xl">
+            <div className="glass-strong rounded-4xl p-6 border border-emerald-400/15 shadow-2xl">
                 <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 mb-5">
                     <div>
                         <h3 className="text-xl font-black text-white">STEP 4. 성과·공유관리</h3>

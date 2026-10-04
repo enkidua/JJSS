@@ -114,6 +114,7 @@ export function isOverBudget(totalBudget: number, spent: number): boolean {
 // ── 부가세 ──────────────────────────────────────────────────────────────────
 
 export const VAT_RATE = 0.1;
+const VAT_PERCENT = 10;
 export type VatRounding = 'floor' | 'round';
 /** 기본 반올림 규칙: 세금계산서 관행에 맞춰 원 미만은 버립니다(절사). */
 export const DEFAULT_VAT_ROUNDING: VatRounding = 'floor';
@@ -132,7 +133,9 @@ export function vatFromSupply(supplyAmount: number, rounding: VatRounding = DEFA
 /** 부가세 포함 총액을 공급가액과 부가세로 나눕니다. supply + vat === total 이 항상 성립합니다. */
 export function splitVatIncludedTotal(totalAmount: number, rounding: VatRounding = DEFAULT_VAT_ROUNDING): { supplyAmount: number; vat: number } {
     const total = toWon(totalAmount);
-    const vat = applyRounding(total / (1 + VAT_RATE) * VAT_RATE, rounding);
+    // total / 1.1 * 0.1 은 부동소수 오차로 3300 → 299.9999…(버림 299)가 됩니다. 정수끼리 곱한 뒤 한 번만 나눠
+    // 나누어떨어지는 금액은 정확히 떨어지게 합니다(10% → total × 10 / 110).
+    const vat = applyRounding((total * VAT_PERCENT) / (100 + VAT_PERCENT), rounding);
     return { supplyAmount: total - vat, vat };
 }
 

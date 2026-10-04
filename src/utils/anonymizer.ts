@@ -3,6 +3,8 @@
  *
  * - 복원이 필요한 값(이름, 전화번호, 주민·외국인등록번호, 이메일, 생년월일)은 `⟦이름1⟧`처럼
  *   일반 글에 나오지 않는 고유 토큰으로 바꾸고, mapping에는 이 토큰만 담는다.
+ * - 의료기관 이름(예: "행복정신건강의학과"의 "행복")과 진단·입원일 같은 건강 관련 날짜도 토큰으로 가린다.
+ *   진료과·기관 종류(병원/의원/정신건강의학과)와 장애유형·장애 정도는 업무에 필요하므로 남긴다.
  * - 나이(32세 → 30대)와 상세 주소(→ 시·군·구까지)는 일반화만 하고 복원하지 않는다.
  *   AI가 쓴 "30대 이용자", "마포구 소재" 같은 일반 표현이 원문 값으로 바뀌는 일을 막기 위해서다.
  * - 이미 토큰으로 가린 부분(⟦…⟧)은 다시 건드리지 않는다. 같은 글을 두 번 가려도 안전하다.
@@ -13,7 +15,7 @@ export interface AnonymizeOptions {
   knownNames?: string[];
 }
 
-export type AnonymizedCategory = '이름' | '전화' | '주민번호' | '이메일' | '생년월일' | '나이' | '주소';
+export type AnonymizedCategory = '이름' | '전화' | '주민번호' | '이메일' | '생년월일' | '진단일' | '의료기관' | '나이' | '주소';
 
 export interface AnonymizedItem {
   category: AnonymizedCategory;
@@ -33,7 +35,9 @@ export interface AnonymizeResult {
 
 const TOKEN_OPEN = '⟦';
 const TOKEN_CLOSE = '⟧';
-const TOKEN_SPLIT_PATTERN = /(⟦[^⟦⟧]*⟧)/;
+// 이 모듈이 만든 토큰 모양(⟦이름1⟧ 등)과 메시지 구분선만 "이미 가린 자리"로 보고 건너뛴다.
+// ⟦ ⟧ 안이면 무엇이든 건너뛰면, 사용자가 붙여 넣은 "⟦홍길동 010-1234-5678⟧" 같은 글이 가리지 않은 채 나간다.
+const TOKEN_SPLIT_PATTERN = /(⟦(?:(?:이름|전화|주민번호|이메일|생년월일|진단일|의료기관|나이|주소)\d+|JJSS-MESSAGE-BOUNDARY)⟧)/;
 const TOKEN_KEY_PATTERN = /^⟦[^⟦⟧\s]+⟧$/;
 const EXISTING_TOKEN_PATTERN = /⟦([^⟦⟧\d\s]+)(\d+)⟧/g;
 
@@ -47,9 +51,23 @@ const NAME_FOLLOWERS = [
 ];
 const NAME_FOLLOWER_PATTERN = NAME_FOLLOWERS.slice().sort((a, b) => b.length - a.length).join('|');
 
+// 이름 바로 앞에 공백 없이 붙어도 이름으로 보는 머리말·역할 말(표를 글로 옮기면 칸 사이 공백이 사라진다).
+const NAME_PREFIX_WORDS = [
+  '이름', '성명', '성함', '보호자', '어머니', '아버지', '어머님', '아버님', '작성자', '담당자', '주치의', '이용자',
+  '대상자', '훈련생', '참여자', '당사자', '상담자', '내담자', '구직자', '평가사', '선생님', '팀장', '과장',
+].sort((a, b) => b.length - a.length).join('|');
+
 const COMMON_SURNAMES = new Set(Array.from(
   '김이박최정강조윤장임한오서신권황안송류유전홍고문양손배백허남심노하곽성차주우구민진지엄채원천방공현함변염여추도소석선설마길연위표명기반왕금옥육인맹제모탁국어은편용예경봉',
 ));
+
+// 두 글자 성(남궁민수, 독고영재). 한 글자 성 목록만 보면 "독고"처럼 첫 글자가 목록에 없거나,
+// 네 글자 이름이 세 글자 규칙에 걸려 이름으로 보지 못한다.
+const COMPOUND_SURNAMES = ['남궁', '황보', '제갈', '선우', '독고', '사공', '서문', '동방', '어금', '망절'];
+
+function startsWithSurname(name: string): boolean {
+  return COMMON_SURNAMES.has(name[0]) || COMPOUND_SURNAMES.some(surname => name.startsWith(surname));
+}
 
 // 이름처럼 보이지만 사람 이름이 아닌 흔한 낱말(라벨·호칭 탐지 오탐 방지)
 const NAME_STOPWORDS = new Set([
@@ -59,6 +77,9 @@ const NAME_STOPWORDS = new Set([
   '운영자', '작성자', '담당자', '부원장', '부회장', '고령자', '근로자', '참여자', '대상자', '내담자',
   '미정', '없음', '본인', '해당', '미기재', '미입력', '확인', '필요', '확인필요', '담당', '팀장', '직원',
   '어머니', '아버지', '부모', '보호', '이용', '대상', '기관', '센터', '복지관', '작성', '상담', '가족',
+  // 의료 관련 일반 낱말(의사 이름 탐지 오탐 방지)
+  '소견서', '진단서', '의견서', '처방전', '진료비', '정신과', '신경과', '소아과', '재활과', '한의사', '전문의',
+  '주치의', '담당의', '진료의', '수련의', '전공의', '간호사', '치료사', '상담의', '의사', '소견', '진료',
 ]);
 
 // "김선생님", "박팀장님"처럼 성+직함은 사람 이름으로 보지 않는다.
@@ -69,14 +90,66 @@ const TITLE_SUFFIXES = new Set([
   '군수', '시장', '구청', '의원', '변호', '세무', '노무', '원생', '학생', '센터', '복지',
 ]);
 
-const NAME_LABEL_PATTERN = /(?:이\s?름|성\s?명|성함|이용자명|대상자명|내담자명|참여자명|훈련생명|보호자\s?성명|보호자명|담당자명|작성자|상담자|상담사|담당자|보호자|사례관리자|이용자|대상자|내담자|참여자|훈련생|구직자|당사자)\s*[:：]\s*([가-힣]{2,8})/g;
-const HONORIFIC_NAME_PATTERN = /(?<![가-힣])([가-힣]{3})\s?(?:님|씨)/g;
-const ROLE_NAME_PATTERN = /(?<![가-힣])([가-힣]{3})\s(?:이용자|보호자|당사자|훈련생|참여자|구직자|근로자|팀장|과장|대리|주임|선생님|사원|직원|원장|실장|부장|사장|대표|사회복지사|직업재활사|상담사|복지사)/g;
+const NAME_LABEL_PATTERN = /(?:이\s?름|성\s?명|성함|이용자명|대상자명|내담자명|참여자명|훈련생명|보호자\s?성명|보호자명|담당자명|작성자|상담자|상담사|담당자|보호자|사례관리자|이용자|대상자|내담자|참여자|훈련생|구직자|당사자|주치의|담당의|담당\s?의사|진료의|의사명|의사|전문의)\s*[:：]\s*([가-힣]{2,8})/g;
+/**
+ * 쌍점 없이 칸만 띄우는 서식용 이름 칸("이 름   홍길동  성 별  남성").
+ * 공단 작업표본검사 결과지처럼 표를 글로 옮기면 쌍점이 사라져 위 패턴이 놓친다.
+ *
+ * 쌍점이 없으면 뒤에 오는 말이 값인지 확신할 수 없으므로 두 가지로 범위를 좁힌다.
+ *  - 이름 칸임이 분명한 머리말만 쓴다("담당자", "보호자"처럼 문장에도 흔히 쓰는 말은 넣지 않는다).
+ *  - 성씨로 시작하는 값만 이름으로 본다(아래 detectedNames 수집부에서 확인).
+ * 한글 세 글자를 무조건 이름으로 보지 않는다.
+ */
+const NAME_FIELD_LABEL_PATTERN =
+  /(?:이\s?름|성\s?명|성함|이용자명|대상자명|내담자명|참여자명|훈련생명|보호자\s?성명|보호자명|담당자명|의사명|평가사|평가자|검사자)(?:\s*[:：]\s*|\s+)([가-힣]{2,8})/g;
+/**
+ * 자간을 벌려 쓴 이름 칸("직업평가사  이 지 영", "팀 장  김 경 은").
+ * 공식 서식 결재란·서명란에서 흔하다. 글자마다 띄어 쓰므로 위 패턴들이 모두 놓친다.
+ *
+ * 쌍점이 없을 수 있으므로 **성씨로 시작하는 값만** 이름으로 본다(아래 수집부에서 확인).
+ * 줄바꿈은 건너뛰지 않는다(`[ 	]`) — 다음 줄의 글자를 이름으로 잘못 묶지 않기 위해서다.
+ */
+const SPACED_NAME_LABEL_PATTERN =
+  /(?:이\s?름|성\s?명|성함|이용자명|대상자명|내담자명|참여자명|훈련생명|보호자\s?성명|보호자명|담당자명|의사명|직업평가사|평가사|평가자|검사자|작성자|팀\s?장|부\s?서\s?장|과\s?장|관\s?장|센\s?터\s?장)[ 	]*[:：]?[ 	]*((?:[가-힣][ 	]{1,3}){1,3}[가-힣])/g;
+
+/**
+ * 머리말에 이름을 바로 붙여 쓴 칸("이름홍길동", "성명남궁민수"). 표를 글로 옮길 때 칸 사이 공백까지 사라지는 경우다.
+ * 붙여 쓰면 낱말("성명서", "이름표")과 구분하기 어려우므로 이름 칸이 분명한 머리말만 쓰고,
+ * 뒤가 바로 끝나는 세·네 글자이면서 성으로 시작하는 값만 이름으로 본다(아래 수집부의 looksLikePersonName).
+ */
+const ATTACHED_NAME_LABEL_PATTERN = /(?<![가-힣])(?:이름|성명|성함)([가-힣]{3,4})(?![가-힣])/g;
+/** 서식상 이름 뒤에 붙는 글자("… 이 지 영  인 / 서명"). 이름에서 떼어 낸다. */
+const NAME_TRAILING_MARKERS = new Set(['인', '님', '외', '등', '및', '씨']);
+// 네 글자는 두 글자 성일 때만 이름으로 본다(looksLikePersonName).
+const HONORIFIC_NAME_PATTERN = /(?<![가-힣])([가-힣]{3,4})\s?(?:님|씨)/g;
+const ROLE_NAME_PATTERN = /(?<![가-힣])([가-힣]{3,4})\s(?:이용자|보호자|당사자|훈련생|참여자|구직자|근로자|팀장|과장|대리|주임|선생님|사원|직원|원장|실장|부장|사장|대표|사회복지사|직업재활사|상담사|복지사)/g;
+// 의사 이름: "홍길동 전문의", "홍길동 의사", "홍길동 주치의", "홍길동 교수님"
+const DOCTOR_NAME_PATTERN = /(?<![가-힣])([가-힣]{3,4})\s?(?:전문의|주치의|담당의|의사(?!소통|결정|표현|표시)|교수|원장)/g;
 
 const EMAIL_PATTERN = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 // 주민등록번호·외국인등록번호: 앞 6자리는 날짜로 검증, 뒷자리 첫 숫자 1~8, 하이픈 선택, 일부 * 가림 허용
 const RRN_PATTERN = /(?<![\d*])(\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01]))\s*-?\s*([1-8][\d*]{6})(?![\d*])/g;
 const BIRTH_DATE_PATTERN = /((?:생년월일|생일|출생일)\s*[:：]?\s*)(\d{4}\s*[.\-/년]\s*\d{1,2}\s*[.\-/월]\s*\d{1,2}\s*일?|\d{2}\s*[.\-/]\s*\d{1,2}\s*[.\-/]\s*\d{1,2}|\d{8}(?!\d)|\d{6}(?!\d))/g;
+// 진단·확진·발병·수술·입원·퇴원 날짜: "진단일: 2020.03.02", "2020년 3월 진단"
+const HEALTH_DATE_VALUE = String.raw`\d{4}\s*[.\-/년]\s*\d{1,2}(?:\s*[.\-/월]\s*(?:\d{1,2}\s*일?)?)?|\d{4}\s*년`;
+const HEALTH_EVENT = '(?:진단|확진|발병|수술|입원|퇴원)';
+const LABELED_HEALTH_DATE_PATTERN = new RegExp(String.raw`(${HEALTH_EVENT}\s?(?:일자|일|날짜|시기|연월일)\s*[:：]?\s*)(${HEALTH_DATE_VALUE})`, 'g');
+const DATED_HEALTH_EVENT_PATTERN = new RegExp(String.raw`(?<![\d])(${HEALTH_DATE_VALUE})(?=\s*(?:에|경|쯤)?\s*${HEALTH_EVENT})`, 'g');
+
+// 의료기관 이름: 고유한 앞부분만 가리고 기관 종류(병원·의원·정신건강의학과 등)는 남긴다.
+const MEDICAL_SUFFIX = '(?:대학교병원|대학병원|종합병원|요양병원|재활병원|정신병원|어린이병원|한방병원|병원|한의원|치과의원|치과병원|정신건강의학과의원|정신건강의학과|신경정신과의원|신경정신과|정신과의원|재활의학과의원|소아청소년과의원|의원|클리닉|보건소|정신건강복지센터)';
+const MEDICAL_INSTITUTION_PATTERN = new RegExp(`(?<![가-힣A-Za-z0-9])([가-힣A-Za-z0-9]{2,15})(${MEDICAL_SUFFIX})`, 'g');
+// 기관 이름이 아닌 일반 표현(예: "대학병원", "요양병원", "동네 의원", "국회의원")은 그대로 둔다.
+const GENERIC_MEDICAL_PREFIXES = new Set([
+  '대학', '대학교', '종합', '요양', '재활', '정신', '개인', '동네', '인근', '근처', '해당', '지역', '다른', '같은',
+  '담당', '협력', '지정', '전문', '대형', '일반', '소아', '한방', '치과', '동물', '주변', '가까운', '이전', '기존',
+  '현재', '상급', '국립', '시립', '도립', '구립', '공공', '민간', '거점', '관할', '여러', '어느', '협약', '연계',
+  '입원', '외래', '주치', '부속', '대학부속', '정신건강', '국회', '지방', '광역', '기초', '다니는', '다니던', '큰',
+  '작은', '대형종합', '상급종합', '1차', '2차', '3차', '각', '타', '본', '모', '의료', '치료', '진료', '방문',
+]);
+
+const MEDICAL_DEPARTMENT_TAIL = /(?:정신건강의학과|신경정신과|정신과|재활의학과|소아청소년과|가정의학과|신경과|내과|정형외과|신경외과|외과|이비인후과|안과|피부과|비뇨의학과|산부인과)$/;
+
 const PHONE_PATTERN = /(?<![\d-])\(?(?:\+82[-.\s]?0?|0)(?:1[016789]|2|[3-6][1-5]|70|50\d?|80)\)?[-.\s]?\d{3,4}[-.\s]?\d{4}(?![\d-])/g;
 
 // 나이: "32세", "35세 남성", "나이: 32세", "만 32세", "32살". "3세대", "21세기", "65세 이상" 같은 표현은 제외.
@@ -102,6 +175,10 @@ function mapOutsideTokens(text: string, transform: (segment: string) => string):
     .join('');
 }
 
+function trailingSpace(value: string): string {
+  return value.match(/\s*$/)?.[0] || '';
+}
+
 function ageBand(value: string): string {
   const age = Number.parseInt(value, 10);
   if (!Number.isFinite(age) || age < 10) return '10대 미만';
@@ -124,8 +201,11 @@ function cleanLabeledName(raw: string): string | null {
 }
 
 function looksLikePersonName(candidate: string): boolean {
-  if (candidate.length !== 3) return false;
-  if (!COMMON_SURNAMES.has(candidate[0])) return false;
+  if (candidate.length === 4) {
+    if (!COMPOUND_SURNAMES.some(surname => candidate.startsWith(surname))) return false;
+  } else if (candidate.length !== 3 || !startsWithSurname(candidate)) {
+    return false;
+  }
   if (NAME_STOPWORDS.has(candidate)) return false;
   if (TITLE_SUFFIXES.has(candidate.slice(1))) return false;
   if (/[의을를에께와과도로는]$/.test(candidate)) return false;
@@ -192,6 +272,11 @@ export function anonymizeText(text: string, options: AnonymizeOptions = {}): Ano
     `${label}${tokenFor('생년월일', value.trim())}`
   )));
 
+  // 3-1. 진단·입원 등 건강 관련 날짜
+  maskedText = mapOutsideTokens(maskedText, segment => segment
+    .replace(LABELED_HEALTH_DATE_PATTERN, (_match, label: string, value: string) => `${label}${tokenFor('진단일', value.trim())}${trailingSpace(value)}`)
+    .replace(DATED_HEALTH_EVENT_PATTERN, (match: string) => `${tokenFor('진단일', match.trim())}${trailingSpace(match)}`));
+
   // 4. 전화번호
   maskedText = mapOutsideTokens(maskedText, segment => segment.replace(PHONE_PATTERN, match => tokenFor('전화', match)));
 
@@ -206,6 +291,19 @@ export function anonymizeText(text: string, options: AnonymizeOptions = {}): Ano
       recordGeneralized('주소', match.trim(), district);
       return district;
     }));
+
+  // 5-1. 의료기관 이름(고유한 앞부분만 토큰으로)
+  maskedText = mapOutsideTokens(maskedText, segment => segment.replace(
+    MEDICAL_INSTITUTION_PATTERN,
+    (match: string, prefix: string, suffix: string) => {
+      // "행복정신건강의학과의원"처럼 앞부분에 진료과가 붙어 있으면 진료과는 남기고 고유한 이름만 가린다.
+      const department = prefix.match(MEDICAL_DEPARTMENT_TAIL);
+      const namePart = department ? prefix.slice(0, -department[0].length) : prefix;
+      const kept = department ? department[0] : '';
+      if (!namePart || GENERIC_MEDICAL_PREFIXES.has(namePart) || /^\d+$/.test(namePart)) return match;
+      return `${tokenFor('의료기관', namePart)}${kept}${suffix}`;
+    },
+  ));
 
   // 6. 나이: 10년 단위로 일반화(복원하지 않음).
   maskedText = mapOutsideTokens(maskedText, segment => segment
@@ -227,7 +325,26 @@ export function anonymizeText(text: string, options: AnonymizeOptions = {}): Ano
       const name = cleanLabeledName(match[1]);
       if (name) detectedNames.add(name);
     }
-    for (const pattern of [HONORIFIC_NAME_PATTERN, ROLE_NAME_PATTERN]) {
+    for (const match of segment.matchAll(NAME_FIELD_LABEL_PATTERN)) {
+      const name = cleanLabeledName(match[1]);
+      // 쌍점이 있으면 값이 분명하다. 없으면 성씨로 시작하는 값만 이름으로 본다.
+      if (!name) continue;
+      if (/[:：]/.test(match[0]) || startsWithSurname(name)) detectedNames.add(name);
+    }
+    for (const match of segment.matchAll(ATTACHED_NAME_LABEL_PATTERN)) {
+      if (looksLikePersonName(match[1])) detectedNames.add(match[1]);
+    }
+    for (const match of segment.matchAll(SPACED_NAME_LABEL_PATTERN)) {
+      // 띄어 쓴 글자를 붙여 이름으로 만들고("이 지 영" → "이지영"),
+      // 뒤에 딸려 온 서식 글자("… 영 인")를 떼어 낸다.
+      let candidate = match[1].replace(/[ 	]+/g, '');
+      while (candidate.length > 2 && NAME_TRAILING_MARKERS.has(candidate[candidate.length - 1])) {
+        candidate = candidate.slice(0, -1);
+      }
+      const name = cleanLabeledName(candidate);
+      if (name && startsWithSurname(name)) detectedNames.add(name);
+    }
+    for (const pattern of [HONORIFIC_NAME_PATTERN, ROLE_NAME_PATTERN, DOCTOR_NAME_PATTERN]) {
       for (const match of segment.matchAll(pattern)) {
         if (looksLikePersonName(match[1])) detectedNames.add(match[1]);
       }
@@ -235,18 +352,39 @@ export function anonymizeText(text: string, options: AnonymizeOptions = {}): Ano
     return segment;
   });
 
+  // 붙여 쓴 형태와 자간을 벌려 쓴 형태를 한 번에 찾는다("이지영" / "이 지 영").
+  // 글자 사이 공백은 한 칸까지만, 줄바꿈은 허용하지 않는다(다음 줄 글자를 이름에 붙이지 않기 위해).
+  const spacedName = (name: string) => [...name].map(escapeRegExp).join('[ 	]?');
   const namesInText = [...detectedNames]
-    .filter(name => maskedText.includes(name))
+    .filter(name => new RegExp(spacedName(name)).test(maskedText))
     .sort((a, b) => b.length - a.length);
   if (namesInText.length) {
+    // 등록된 이름(knownNames) 중 세 글자 이상은 뒤에 어떤 말이 붙어도 가린다("김영희라는", "김영희야", "김영희네").
+    // 조사 목록에 없는 어미가 붙었다고 이름이 그대로 나가면 안 된다. 더 긴 낱말의 일부를 가리는 일은 개인정보 쪽으로 안전하다.
+    // 두 글자 이름("김수현" 속 "김수")과 글 속 머리말로 추정한 이름(띄어 쓴 "소 견 은 다" 같은 오탐 가능)은
+    // 조사·호칭 목록이 이어질 때만 가린다.
+    const knownSet = new Set(normalizeKnownNames(options.knownNames).map(name => name.replace(/\s+/g, '')));
+    const isConfidentLongName = (name: string) => knownSet.has(name.replace(/\s+/g, '')) && name.replace(/\s+/g, '').length >= 3;
+    const longNames = namesInText.filter(isConfidentLongName).map(spacedName);
+    const shortNames = namesInText.filter(name => !isConfidentLongName(name)).map(spacedName);
+    const nameAlternatives = [
+      ...longNames,
+      ...(shortNames.length ? [`(?:${shortNames.join('|')})(?=$|[^가-힣A-Za-z0-9]|(?:${NAME_FOLLOWER_PATTERN}))`] : []),
+    ];
     const namePattern = new RegExp(
-      `(?<![가-힣A-Za-z0-9])(${namesInText.map(escapeRegExp).join('|')})(?=$|[^가-힣A-Za-z0-9]|(?:${NAME_FOLLOWER_PATTERN}))`,
+      // 앞에 글자가 붙어 있으면 다른 낱말의 일부로 보되, 이름 칸 머리말이나 역할 말에 붙여 쓴 경우
+      // ("이름홍길동", "보호자김영희", "작성자이수민" — 표를 글로 옮기며 칸 사이 공백이 사라진 경우)는 이름으로 본다.
+      `(?:(?<![가-힣A-Za-z0-9])|(?<=(?:${NAME_PREFIX_WORDS})))(${nameAlternatives.join('|')})`,
       'g',
     );
-    maskedText = mapOutsideTokens(maskedText, segment => segment.replace(namePattern, (name: string) => tokenFor('이름', name)));
+    // 띄어 쓴 이름과 붙여 쓴 이름은 같은 사람이므로 같은 토큰을 준다(AI가 두 사람으로 보지 않게).
+    // 복원은 붙여 쓴 형태로 한다 — AI 답변에 들어온 토큰을 자연스러운 이름으로 되돌리기 위해서다.
+    maskedText = mapOutsideTokens(maskedText, segment =>
+      segment.replace(namePattern, (name: string) => tokenFor('이름', name.replace(/[ 	]+/g, ''))),
+    );
   }
 
-  // 장애유형(예: 지적장애, 자폐성장애)과 장애 정도는 업무에 필요하므로 변환하지 않는다.
+  // 장애유형(예: 지적장애, 자폐성장애)과 장애 정도, 진료과·기관 종류는 업무에 필요하므로 변환하지 않는다.
   return { maskedText, mapping, items };
 }
 

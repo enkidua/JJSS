@@ -61,8 +61,9 @@ for (const [run, code] of [
 const source = await readFile(new URL('../src/services/gemini.ts', import.meta.url), 'utf8');
 const parsed = ts.createSourceFile('gemini.ts', source, ts.ScriptTarget.Latest, true);
 const adapters = parsed.statements.filter(node => ts.isFunctionDeclaration(node)
-    && ['callGemini', 'callOpenAI', 'callAnthropic', 'generateDocumentText'].includes(node.name?.text));
-assert.equal(adapters.length, 4);
+    && ['callGemini', 'callOpenAI', 'callAnthropic', 'generateDocumentText', 'isAssistantRole'].includes(node.name?.text));
+// isAssistantRole: 대화 기록의 'model'·'assistant'를 모두 AI 답변으로 보내는 공용 판정(세 어댑터가 함께 쓴다).
+assert.equal(adapters.length, 5);
 // 출력 한도 상수와 자료 처리 지침은 실제 소스의 선언을 그대로 가져와 검증한다.
 const sharedConstants = parsed.statements.filter(node => ts.isVariableStatement(node)
     && node.declarationList.declarations.some(declaration => [
@@ -137,6 +138,9 @@ try {
         assert.equal(call.body.tools, undefined);
         assert.deepEqual(call.body.messages.map(message => message.role), ['system', 'user', 'assistant', 'user']);
     }
+    // 화면에 따라 AI 답변을 'assistant'로 저장한 기록도 사용자 말로 바뀌지 않는다.
+    await callOpenAI('synthetic-not-a-key', 'gpt-5.6-luna', '시스템', '현재 질문', [{ role: 'user', content: '질문' }, { role: 'assistant', content: '답변' }], controller.signal);
+    assert.deepEqual(calls.at(-1).body.messages.map(message => message.role), ['system', 'user', 'assistant', 'user']);
     responseBody = { choices: [{ finish_reason: 'stop', message: { content: '보통 응답' } }] };
     await callOpenAI('synthetic-not-a-key', 'gpt-5.6-luna', '시스템', '질문', [], controller.signal, 'medium');
     assert.equal(calls.at(-1).body.reasoning_effort, 'medium');

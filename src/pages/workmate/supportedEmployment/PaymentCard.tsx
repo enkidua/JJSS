@@ -12,7 +12,7 @@ interface Props {
 /** 수당 계산 카드(D-2 #5). 편집 화면 오른쪽에 항상 보입니다. 계산은 엔진(calculatePayments) 결과를 그대로 보여 줍니다. */
 export function PaymentCard({ payments, logs, coachDaysBasis }: Props) {
     const a = payments.attendance;
-    return <section className="glass-card !p-5" aria-labelledby="se-payment-title" aria-live="polite">
+    return <section className="glass-card p-5!" aria-labelledby="se-payment-title" aria-live="polite">
         <h3 id="se-payment-title" className="text-lg font-bold text-white flex items-center gap-2">
             <Calculator className="w-5 h-5 text-emerald-300" aria-hidden="true" /> 수당 계산
         </h3>
@@ -35,7 +35,7 @@ export function PaymentCard({ payments, logs, coachDaysBasis }: Props) {
             <span className="text-sm text-white/70">계</span>
             <span className="text-xl font-black text-emerald-200" data-testid="se-payment-total">{formatWon(payments.total)}원</span>
         </div>
-        <p className="text-xs text-white/55 mt-2 break-words">출결 환산: {attendanceRuleNote(logs)}</p>
+        <p className="text-xs text-white/55 mt-2 wrap-break-word">출결 환산: {attendanceRuleNote(logs)}</p>
         <p className="text-xs text-white/45 mt-1">
             훈련수당은 사전+현장 지급일, 사업주보조금은 현장 지급일만, 직무지도원수당은 {coachDaysBasis === 'attended' ? '훈련생 출석일' : '편성된 훈련일 전체'} 기준입니다.
         </p>

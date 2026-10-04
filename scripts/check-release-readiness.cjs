@@ -9,7 +9,8 @@ const EXPECTED_WINDOWS_EXECUTABLE = 'JJSS-Pro';
 const PRIVATE_CERT_EXTENSIONS = new Set(['.pfx', '.p12', '.pem', '.key']);
 const SKIP_SCAN_DIRECTORIES = new Set(['.git', 'node_modules']);
 // 이 두 파일이 없으면 빌드는 성공해도 Tailwind가 적용되지 않아 화면 스타일이 전부 깨진다.
-const REQUIRED_BUILD_FILES = ['tailwind.config.cjs', 'postcss.config.cjs', 'index.html', 'vite.config.ts'];
+// Tailwind 4부터 설정은 src/index.css의 @theme에 있다(tailwind.config.cjs 없음).
+const REQUIRED_BUILD_FILES = ['postcss.config.cjs', 'src/index.css', 'index.html', 'vite.config.ts'];
 const NODE_BUILTIN_MODULES = new Set(require('node:module').builtinModules);
 
 function readJson(relativePath) {

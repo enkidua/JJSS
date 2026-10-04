@@ -93,7 +93,7 @@ export default function ProjectEditor({
                         onChange={e => onFormChange({ notes: e.target.value })}
                         className="input-field sm:col-span-4"
                     />
-                    <div className="sm:col-span-4 rounded-2xl bg-white/[0.03] border border-white/10 p-4">
+                    <div className="sm:col-span-4 rounded-2xl bg-white/3 border border-white/10 p-4">
                         <div className="flex items-center justify-between mb-3">
                             <div>
                                 <p className="text-white font-bold">세부 예산 항목</p>
@@ -109,7 +109,7 @@ export default function ProjectEditor({
                         </div>
                         <div className="space-y-2">
                             {budgetItems.length === 0 ? (
-                                <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] p-3">
+                                <div className="rounded-xl border border-dashed border-white/10 bg-white/2 p-3">
                                     <p className="text-xs text-white/45">세부 항목 없이도 사업 등록이 가능합니다. 필요하면 항목 추가를 눌러 인건비, 사업비, 회의비처럼 사업 안의 예산 분류를 입력하세요.</p>
                                 </div>
                             ) : budgetItems.map((item, idx) => (
@@ -165,7 +165,7 @@ export default function ProjectEditor({
                     </div>
                 </div>
             </div>
-            <div className="w-full lg:w-80 rounded-2xl bg-white/[0.03] border border-white/10 p-4">
+            <div className="w-full lg:w-80 rounded-2xl bg-white/3 border border-white/10 p-4">
                 <p className="text-white/40 text-sm">선택 사업 잔액</p>
                 <p className="text-lg font-bold text-white mt-1">{selectedProject?.name || '전체/사업 미지정'}</p>
                 {selectedProject ? (

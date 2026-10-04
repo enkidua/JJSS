@@ -45,7 +45,7 @@ export function FollowUpTasks({ record, onDirtyChange }: Props) {
                 {CATEGORY_ORDER.map(key => <option key={key} value={key}>{CATEGORY_LABELS[key]}</option>)}
             </select></label>
             <label className="text-sm text-white/70">예정일<input className="input-field mt-1" type="date" value={dueDate} onChange={event => setDueDate(event.target.value)} required disabled={unavailable} /></label>
-            <button type="submit" className="btn-primary !px-4 !py-3" disabled={unavailable}>일정 추가</button>
+            <button type="submit" className="btn-primary px-4! py-3!" disabled={unavailable}>일정 추가</button>
         </form>
         <div className="mt-5 space-y-2">
             {openTasks.length === 0 && <p className="text-sm text-white/50 py-3">진행 중인 후속 일정이 없습니다.</p>}
@@ -53,9 +53,9 @@ export function FollowUpTasks({ record, onDirtyChange }: Props) {
                 const timing = getTaskTiming(task.dueDate, today);
                 return <div key={task.id} className="flex flex-wrap items-center gap-3 rounded-xl bg-white/5 border border-white/10 p-3">
                     <span className={`text-xs font-bold rounded-full px-2 py-1 ${timing === 'overdue' ? 'bg-red-500/20 text-red-200' : timing === 'today' ? 'bg-amber-500/20 text-amber-200' : 'bg-accent-500/10 text-accent-200'}`}>{TIMING_LABELS[timing]}</span>
-                    <span className="text-white flex-1 min-w-40 break-words"><span className="text-white/50 text-xs mr-2">{CATEGORY_LABELS[task.category || 'other']}</span>{task.title}</span>
+                    <span className="text-white flex-1 min-w-40 wrap-break-word"><span className="text-white/50 text-xs mr-2">{CATEGORY_LABELS[task.category || 'other']}</span>{task.title}</span>
                     <time className="text-sm text-white/60" dateTime={task.dueDate}>{task.dueDate}</time>
-                    <button type="button" className="btn-secondary !px-3 !py-1.5 text-xs" disabled={unavailable} onClick={() => setDone(task.id, true)}>완료</button>
+                    <button type="button" className="btn-secondary px-3! py-1.5! text-xs" disabled={unavailable} onClick={() => setDone(task.id, true)}>완료</button>
                 </div>;
             })}
             {doneTasks.length > 0 && <details className="text-sm text-white/60 pt-2"><summary className="cursor-pointer">완료한 일정 {doneTasks.length}건</summary>

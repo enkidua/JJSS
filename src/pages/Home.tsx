@@ -126,7 +126,7 @@ export default function Home() {
                         transition={{ duration: 0.6, delay: 0.3 }}
                         className="flex flex-col sm:flex-row items-center justify-center gap-4"
                     >
-                        <Link to="/manage" className="btn-primary flex items-center gap-2 text-base !px-8 !py-4">
+                        <Link to="/manage" className="btn-primary flex items-center gap-2 text-base px-8! py-4!">
                             시작하기
                             <ArrowRight className="w-5 h-5" />
                         </Link>
@@ -152,8 +152,8 @@ export default function Home() {
                         viewport={{ once: true }}
                         className="grid grid-cols-1 sm:grid-cols-2 gap-4"
                     >
-                        <div className="glass-card !p-6 flex items-center gap-5 group hover:border-accent-500/30 transition-all">
-                            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-accent-500 to-emerald-500 flex items-center justify-center shadow-lg shadow-accent-500/20 group-hover:scale-110 transition-transform">
+                        <div className="glass-card p-6! flex items-center gap-5 group hover:border-accent-500/30 transition-all">
+                            <div className="w-14 h-14 rounded-2xl bg-linear-to-br from-accent-500 to-emerald-500 flex items-center justify-center shadow-lg shadow-accent-500/20 group-hover:scale-110 transition-transform">
                                 <UserCheck className="w-7 h-7 text-white" />
                             </div>
                             <div>
@@ -163,8 +163,8 @@ export default function Home() {
                                 </p>
                             </div>
                         </div>
-                        <div className="glass-card !p-6 flex items-center gap-5 group hover:border-primary-500/30 transition-all">
-                            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary-500 to-blue-500 flex items-center justify-center shadow-lg shadow-primary-500/20 group-hover:scale-110 transition-transform">
+                        <div className="glass-card p-6! flex items-center gap-5 group hover:border-primary-500/30 transition-all">
+                            <div className="w-14 h-14 rounded-2xl bg-linear-to-br from-primary-500 to-blue-500 flex items-center justify-center shadow-lg shadow-primary-500/20 group-hover:scale-110 transition-transform">
                                 <Building2 className="w-7 h-7 text-white" />
                             </div>
                             <div>
@@ -185,7 +185,7 @@ export default function Home() {
                         initial={{ opacity: 0, y: 20 }}
                         whileInView={{ opacity: 1, y: 0 }}
                         viewport={{ once: true }}
-                        className="glass-card !p-8 text-center"
+                        className="glass-card p-8! text-center"
                     >
                         <p className="text-white/70 leading-relaxed text-base">
                             이 서비스는 <span className="text-primary-400 font-semibold">사회복지 기관의 직업재활 업무</span>를 실제 기록과 데이터 중심으로 돕기 위해 정리되었습니다.
@@ -223,7 +223,7 @@ export default function Home() {
                                     className="glass-card group"
                                 >
                                     <Link to={feature.path} className="block h-full">
-                                        <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${feature.color} flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-300`}>
+                                        <div className={`w-12 h-12 rounded-xl bg-linear-to-br ${feature.color} flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-300`}>
                                             <Icon className="w-6 h-6 text-white" />
                                         </div>
                                         <div className="flex items-start justify-between gap-3">

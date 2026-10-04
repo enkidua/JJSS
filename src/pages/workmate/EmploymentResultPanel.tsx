@@ -8,6 +8,7 @@ export function EmploymentResultPanel({
     setResult,
     placeholder,
     busy,
+    loading = false,
     isGenerating,
     isRefining,
     isSaving,
@@ -20,6 +21,7 @@ export function EmploymentResultPanel({
     setResult: (value: string) => void;
     placeholder: string;
     busy: boolean;
+    loading?: boolean;
     isGenerating: boolean;
     isRefining: boolean;
     isSaving: boolean;
@@ -30,7 +32,7 @@ export function EmploymentResultPanel({
     const hasResult = !!result.trim();
     const aiRunning = isGenerating || isRefining;
     return (
-        <div className="glass-strong rounded-[2rem] p-6 border border-white/10 shadow-2xl flex flex-col min-h-[720px]">
+        <div className="glass-strong rounded-4xl p-6 border border-white/10 shadow-2xl flex flex-col min-h-[720px]">
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
                 <div>
                     <h3 className="font-black text-white">작성 결과</h3>
@@ -50,11 +52,12 @@ export function EmploymentResultPanel({
             <textarea
                 value={result}
                 onChange={e => setResult(e.target.value)}
-                readOnly={aiRunning}
-                aria-busy={aiRunning}
+                readOnly={aiRunning || loading}
+                aria-busy={aiRunning || loading}
                 placeholder={placeholder}
-                className="textarea-field !bg-black/30 border-white/10 flex-1 min-h-[580px] text-sm leading-relaxed resize-none"
+                className="textarea-field bg-black/30! border-white/10 flex-1 min-h-[580px] text-sm leading-relaxed resize-none"
             />
+            {loading && <p role="status" className="text-sm text-white/70 mt-2">저장된 면접일지를 불러오는 중입니다.</p>}
         </div>
     );
 }

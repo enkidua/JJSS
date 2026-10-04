@@ -73,7 +73,7 @@ export function OCRView({ onBack, onDirtyChange }: OCRViewProps) {
         >
             <div className="glass-strong rounded-2xl p-8 border border-white/10 shadow-2xl">
                 <div className="flex items-center gap-4 mb-8">
-                    <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center shadow-lg shadow-blue-500/20">
+                    <div className="w-12 h-12 rounded-2xl bg-linear-to-br from-blue-500 to-cyan-500 flex items-center justify-center shadow-lg shadow-blue-500/20">
                         <ScanText className="w-6 h-6 text-white" />
                     </div>
                     <div>
@@ -82,7 +82,7 @@ export function OCRView({ onBack, onDirtyChange }: OCRViewProps) {
                     </div>
                 </div>
                 <div className="mb-6 rounded-xl border border-blue-400/20 bg-blue-500/10 px-4 py-3 text-xs leading-relaxed text-blue-100/80">
-                    선택한 파일은 글자 인식을 위해 외부 AI 서비스(Google Vision 또는 Gemini)로 전송됩니다. 이미지는 Vision을 먼저 시도하고, 실패하면 Gemini API 키가 있을 때 한 번 더 시도합니다. PDF는 Gemini로 처리합니다. 같은 파일을 연속 실행하면 중복 호출을 막습니다.
+                    글자가 들어 있는 PDF는 이 컴퓨터 안에서 바로 글자를 읽고 외부로 보내지 않습니다. 스캔한 PDF나 이미지는 원본을 외부 AI 서비스(이미지는 Google Cloud Vision 또는 Google Gemini, 스캔 PDF는 Google Gemini)로 보내야 하므로, 보내기 전에 따로 확인을 받습니다. Vision에서 읽지 못하면 Gemini로 다시 보낼지 한 번 더 묻습니다. 같은 파일을 연속 실행하면 중복 호출을 막습니다.
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -94,7 +94,7 @@ export function OCRView({ onBack, onDirtyChange }: OCRViewProps) {
                             onFiles={handleFiles}
                             disabled={isLoading}
                             ariaLabel="텍스트를 추출할 이미지 또는 PDF 파일 선택"
-                            className={`relative border-2 border-dashed rounded-2xl p-8 transition-all flex flex-col items-center justify-center gap-4 group hover:bg-white/5 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 ${
+                            className={`relative border-2 border-dashed rounded-2xl p-8 transition-all flex flex-col items-center justify-center gap-4 group hover:bg-white/5 cursor-pointer focus:outline-hidden focus-visible:ring-2 focus-visible:ring-blue-400 ${
                                 file ? 'border-blue-500/50 bg-blue-500/5' : 'border-white/10'
                             }`}
                             activeClassName="border-blue-400 bg-blue-500/10"
@@ -126,7 +126,7 @@ export function OCRView({ onBack, onDirtyChange }: OCRViewProps) {
                                 type="button"
                                 onClick={() => setFile(null)}
                                 disabled={isLoading}
-                                className="btn-ghost !py-1.5 !px-3 text-xs flex items-center gap-1.5"
+                                className="btn-ghost py-1.5! px-3! text-xs flex items-center gap-1.5"
                             >
                                 <X className="w-3.5 h-3.5" /> 선택한 파일 지우기
                             </button>
@@ -136,7 +136,7 @@ export function OCRView({ onBack, onDirtyChange }: OCRViewProps) {
                             type="button"
                             onClick={runOCR}
                             disabled={!file || isLoading}
-                            className="btn-primary w-full flex items-center justify-center gap-2 !py-4 text-lg"
+                            className="btn-primary w-full flex items-center justify-center gap-2 py-4! text-lg"
                         >
                             {isLoading ? (
                                 <><Loader2 className="w-5 h-5 animate-spin" /> 문자 추출 중...</>
@@ -166,7 +166,7 @@ export function OCRView({ onBack, onDirtyChange }: OCRViewProps) {
                                 readOnly
                                 value={result}
                                 placeholder="텍스트가 여기 표시됩니다..."
-                                className="w-full h-full min-h-[300px] bg-white/5 border border-white/10 rounded-2xl p-6 text-white/80 text-sm font-mono leading-relaxed resize-none focus:outline-none focus:border-blue-500/30 whitespace-pre-wrap"
+                                className="w-full h-full min-h-[300px] bg-white/5 border border-white/10 rounded-2xl p-6 text-white/80 text-sm font-mono leading-relaxed resize-none focus:outline-hidden focus:border-blue-500/30 whitespace-pre-wrap"
                             />
                             {!result && !isLoading && (
                                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-20">

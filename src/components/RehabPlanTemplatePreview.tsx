@@ -48,7 +48,7 @@ function EditField({
                     value={value}
                     onChange={event => onChange(event.target.value)}
                     placeholder={placeholder}
-                    className="textarea-field !min-h-[88px] !resize-y text-sm leading-relaxed"
+                    className="textarea-field min-h-[88px]! resize-y! text-sm leading-relaxed"
                 />
             ) : (
                 <input
@@ -64,7 +64,7 @@ function EditField({
 
 function EditGroup({ title, children, open = false }: { title: string; children: React.ReactNode; open?: boolean }) {
     return (
-        <details open={open} className="rounded-2xl border border-white/10 bg-white/[0.025] overflow-hidden">
+        <details open={open} className="rounded-2xl border border-white/10 bg-white/2.5 overflow-hidden">
             <summary className="cursor-pointer px-4 py-3 text-sm font-black text-white/80 bg-white/[0.035] select-none">
                 {title}
             </summary>
@@ -366,7 +366,7 @@ export function RehabPlanTemplatePreview({ seeker, planText, meetingText }: Reha
                             작성 결과와 이용자 정보를 첨부 양식에 자동 매핑한 뒤 직접 수정하고 출력할 수 있습니다.
                         </p>
                     </div>
-                    <button type="button" onClick={openPreview} className="btn-secondary !py-2.5 !px-4 flex items-center justify-center gap-2 text-sm shrink-0">
+                    <button type="button" onClick={openPreview} className="btn-secondary py-2.5! px-4! flex items-center justify-center gap-2 text-sm shrink-0">
                         <Eye className="w-4 h-4" /> 양식 미리보기
                     </button>
                 </div>
@@ -391,18 +391,18 @@ export function RehabPlanTemplatePreview({ seeker, planText, meetingText }: Reha
 
                         <div className="rehab-plan-toolbar">
                             <div className="flex flex-wrap gap-2">
-                                <button type="button" onClick={() => { void remap(); }} disabled={!!exporting} className="btn-secondary !py-2 !px-3 text-xs flex items-center gap-2">
+                                <button type="button" onClick={() => { void remap(); }} disabled={!!exporting} className="btn-secondary py-2! px-3! text-xs flex items-center gap-2">
                                     <RotateCcw className="w-3.5 h-3.5" /> 자동 매핑 다시 적용
                                 </button>
-                                <button type="button" onClick={() => requestExport('pdf')} disabled={!!exporting} className="btn-primary !py-2 !px-3 text-xs flex items-center gap-2">
+                                <button type="button" onClick={() => requestExport('pdf')} disabled={!!exporting} className="btn-primary py-2! px-3! text-xs flex items-center gap-2">
                                     {exporting === 'pdf' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
                                     PDF 다운로드
                                 </button>
-                                <button type="button" onClick={() => requestExport('png')} disabled={!!exporting} className="btn-secondary !py-2 !px-3 text-xs flex items-center gap-2">
+                                <button type="button" onClick={() => requestExport('png')} disabled={!!exporting} className="btn-secondary py-2! px-3! text-xs flex items-center gap-2">
                                     {exporting === 'png' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ImageDown className="w-3.5 h-3.5" />}
                                     이미지 다운로드
                                 </button>
-                                <button type="button" onClick={() => requestExport('docx')} disabled={!!exporting} className="btn-secondary !py-2 !px-3 text-xs flex items-center gap-2">
+                                <button type="button" onClick={() => requestExport('docx')} disabled={!!exporting} className="btn-secondary py-2! px-3! text-xs flex items-center gap-2">
                                     {exporting === 'docx' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5" />}
                                     Word(DOCX) 저장
                                 </button>
@@ -428,7 +428,7 @@ export function RehabPlanTemplatePreview({ seeker, planText, meetingText }: Reha
                                     </p>
                                     <p className="text-sm font-bold text-white/80">그래도 출력하시겠습니까?</p>
                                     <div className="flex flex-wrap justify-end gap-2">
-                                        <button type="button" onClick={() => setPendingExport(null)} className="btn-secondary !py-2 !px-4 text-xs">돌아가서 수정</button>
+                                        <button type="button" onClick={() => setPendingExport(null)} className="btn-secondary py-2! px-4! text-xs">돌아가서 수정</button>
                                         <button
                                             type="button"
                                             onClick={() => {
@@ -436,7 +436,7 @@ export function RehabPlanTemplatePreview({ seeker, planText, meetingText }: Reha
                                                 setPendingExport(null);
                                                 runExport(format);
                                             }}
-                                            className="btn-primary !py-2 !px-4 text-xs"
+                                            className="btn-primary py-2! px-4! text-xs"
                                         >
                                             계속 출력
                                         </button>

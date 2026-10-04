@@ -50,7 +50,7 @@ export default function RehabWorkflow() {
 
                 {seeker && !overview.loading && overview.loadFailed && <div role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-red-200">
                     <p>이용자 기록을 불러오지 못했습니다. 기존 기록은 지우지 않았습니다.</p>
-                    <button type="button" className="btn-secondary !px-4 !py-2 text-sm mt-3" onClick={overview.reload}>다시 불러오기</button>
+                    <button type="button" className="btn-secondary px-4! py-2! text-sm mt-3" onClick={overview.reload}>다시 불러오기</button>
                 </div>}
 
                 {seeker && !overview.loading && !overview.loadFailed && <>

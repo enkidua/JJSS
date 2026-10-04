@@ -7,9 +7,12 @@ import { JobOpening, Seeker } from '../types/matching';
 import { safeErrorMetadata } from '../utils/safeError';
 import { getAiDocumentValidationError } from '../utils/fileValidation';
 import { useDialogFocus } from '../hooks/useDialogFocus';
+import { useBeforeUnloadGuard } from '../hooks/useBeforeUnloadGuard';
 import { useToast } from './Toast';
 import { useConfirm } from './common/ConfirmProvider';
 import { FileDropZone } from './common/FileDropZone';
+import { useReportDirty } from './tools/useReportDirty';
+import { bulkRegistrationKey, formatLineList, planBulkRegistration, splitBulkRegistrationLines, splitBulkRegistrationRows } from '../utils/bulkRegistration';
 import {
     ComposingInput as Input,
     ComposingTextArea as TextArea,
@@ -24,6 +27,7 @@ interface JobSeekerModalProps {
     type: 'job' | 'seeker';
     onSuccess: () => void;
     editItem?: Seeker | JobOpening | null;
+    onDirtyChange?: (dirty: boolean) => void;
 }
 
 const emptyJobData = {
@@ -35,8 +39,8 @@ const emptyJobData = {
 
 type BulkNotice = { tone: 'error' | 'info'; message: string } | null;
 
-export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editItem = null }: JobSeekerModalProps) {
-    const { addJob, addSeeker, updateJob, updateSeeker, loading, error } = useDataStore();
+export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editItem = null, onDirtyChange }: JobSeekerModalProps) {
+    const { addJob, addSeeker, updateJob, updateSeeker, loading, error, jobs, seekers } = useDataStore();
     const { showToast } = useToast();
     const confirm = useConfirm();
     const isEditMode = Boolean(editItem?.id);
@@ -55,18 +59,42 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
     const companyNameInputRef = useRef<HTMLInputElement>(null);
     const didFocusInitialInputRef = useRef(false);
     const closingRef = useRef(false);
+    const operationRef = useRef(false);
+    const sessionRef = useRef(0);
+    const ocrAbortRef = useRef<AbortController | null>(null);
+    const [saving, setSaving] = useState(false);
+    const busy = saving || loading || bulkLoading || ocrLoading;
 
     const [jobData, setJobData] = useState(emptyJobData);
     const [seekerData, setSeekerData] = useState<SeekerFormData>(EMPTY_SEEKER_FORM);
     const updateSeekerData = (patch: Partial<SeekerFormData>) => setSeekerData(prev => ({ ...prev, ...patch }));
 
+    const current = type === 'job' ? jobData : seekerData;
+    const defaults: Record<string, string> = type === 'job' ? emptyJobData : EMPTY_SEEKER_FORM;
+    const original = editItem as unknown as Record<string, unknown> | null;
+    const dirty = Object.entries(current).some(([key, value]) =>
+        value !== String(original?.[key] || defaults[key] || ''));
+    const hasUnsavedChanges = isOpen && (dirty || Boolean(bulkData.trim()) || Boolean(ocrFile) || saving || bulkLoading || ocrLoading);
+    useBeforeUnloadGuard(hasUnsavedChanges);
+    useReportDirty(hasUnsavedChanges, onDirtyChange);
+
+    useEffect(() => {
+        sessionRef.current += 1;
+        operationRef.current = false;
+        closingRef.current = false;
+        setSaving(false);
+        setOcrLoading(false);
+        setBulkLoading(false);
+        return () => {
+            sessionRef.current += 1;
+            ocrAbortRef.current?.abort();
+            ocrAbortRef.current = null;
+        };
+    }, [isOpen, type, editItem]);
+
     const requestClose = async () => {
-        if (loading || bulkLoading || ocrLoading || closingRef.current) return;
-        const current = type === 'job' ? jobData : seekerData;
-        const defaults: Record<string, string> = type === 'job' ? emptyJobData : EMPTY_SEEKER_FORM;
-        const original = editItem as unknown as Record<string, unknown> | null;
-        const dirty = Object.entries(current).some(([key, value]) =>
-            value !== String(original?.[key] || defaults[key] || ''));
+        if (operationRef.current || busy || closingRef.current) return;
+        const session = sessionRef.current;
         if (dirty || bulkData.trim() || ocrFile) {
             closingRef.current = true;
             try {
@@ -77,9 +105,9 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
                     cancelLabel: '계속 작성',
                     tone: 'danger',
                 });
-                if (!ok) return;
+                if (!ok || session !== sessionRef.current) return;
             } finally {
-                closingRef.current = false;
+                if (session === sessionRef.current) closingRef.current = false;
             }
         }
         onClose();
@@ -94,6 +122,7 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
     };
 
     const handleOcrFiles = (files: File[]) => {
+        if (operationRef.current || busy) return;
         const file = files[0];
         if (!file) return;
         const validationError = getAiDocumentValidationError(file)
@@ -108,11 +137,16 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
     };
 
     const handleRunOcr = async () => {
-        if (!ocrFile || ocrLoading) return;
+        if (!ocrFile || operationRef.current || busy) return;
+        const session = sessionRef.current;
+        const controller = new AbortController();
+        ocrAbortRef.current = controller;
+        operationRef.current = true;
         setOcrLoading(true);
         setOcrDone(false);
         try {
-            const text = await performOCR(ocrFile);
+            const text = await performOCR(ocrFile, { signal: controller.signal });
+            if (session !== sessionRef.current || controller.signal.aborted) return;
             setOcrText(text);
             const parsed = parseSeekerFromOCR(text);
             setSeekerData(prev => ({
@@ -132,9 +166,14 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
             }));
             setOcrDone(true);
         } catch (err: unknown) {
+            if (session !== sessionRef.current || controller.signal.aborted) return;
             showToast(err instanceof Error && err.message ? err.message : 'OCR 처리에 실패했습니다.', 'error');
         } finally {
-            setOcrLoading(false);
+            if (session === sessionRef.current) {
+                operationRef.current = false;
+                ocrAbortRef.current = null;
+                setOcrLoading(false);
+            }
         }
     };
 
@@ -206,6 +245,10 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (operationRef.current || busy) return;
+        const session = sessionRef.current;
+        operationRef.current = true;
+        setSaving(true);
         try {
             if (type === 'job') {
                 const cleanedJobData = trimStrings(jobData);
@@ -220,102 +263,154 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
                 if (isEditMode && editItem?.id) await updateSeeker(editItem.id, cleanedSeekerData as Partial<Seeker>);
                 else await addSeeker(cleanedSeekerData as unknown as Parameters<typeof addSeeker>[0]);
             }
-            onSuccess();
+            if (session === sessionRef.current) onSuccess();
         } catch (err: unknown) {
+            if (session !== sessionRef.current) return;
             console.error('Record save failed:', safeErrorMetadata(err, 'record-save'));
             showToast('저장 중 오류가 발생했습니다. 입력한 내용은 유지됩니다.', 'error');
+        } finally {
+            if (session === sessionRef.current) {
+                operationRef.current = false;
+                setSaving(false);
+            }
         }
     };
 
     const handleBulkSubmit = async () => {
-        if (!bulkData.trim() || bulkLoading) return;
+        if (!bulkData.trim() || operationRef.current || busy) return;
         setBulkNotice(null);
 
-        const rows = bulkData.trim().split('\n').filter(row => row.trim() !== '');
-        const total = rows.length;
+        const lines = splitBulkRegistrationLines(bulkData);
         const expectedColumns = type === 'job' ? 9 : 13;
-        // 저장 전에 모든 행을 먼저 검사해, 형식 오류로 일부만 저장되는 일을 막습니다.
-        const parsedRows: string[][] = [];
-        for (let index = 0; index < rows.length; index++) {
-            const columns = rows[index].split('\t').map(column => column.trim());
+        // 저장 전에 모든 행을 먼저 검사해, 형식 오류로 일부만 저장되는 일을 막습니다. 줄 번호는 붙여넣은 글 기준입니다.
+        const parsedRows: Array<{ line: number; text: string; data: Record<string, string>; key: string }> = [];
+        for (const row of lines) {
+            const columns = row.text.split('\t').map(column => column.trim());
             if (columns.length < expectedColumns) {
-                setBulkNotice({ tone: 'error', message: `${index + 1}행의 열 수가 부족합니다. ${expectedColumns}개 열 순서를 확인해 주세요. 아무것도 저장하지 않았습니다.` });
+                setBulkNotice({ tone: 'error', message: `${row.line}번째 줄의 열 수가 부족합니다. ${expectedColumns}개 열 순서를 확인해 주세요. 아무것도 저장하지 않았습니다.` });
                 return;
             }
             const requiredValue = type === 'job' ? columns[0] : columns[2];
             if (!requiredValue) {
-                setBulkNotice({ tone: 'error', message: `${index + 1}행의 ${type === 'job' ? '회사명' : '이름'}이 비어 있습니다. 아무것도 저장하지 않았습니다.` });
+                setBulkNotice({ tone: 'error', message: `${row.line}번째 줄의 ${type === 'job' ? '회사명' : '이름'}이 비어 있습니다. 아무것도 저장하지 않았습니다.` });
                 return;
             }
-            parsedRows.push(columns);
+            const data: Record<string, string> = type === 'job'
+                ? {
+                    companyName: columns[0] || '',
+                    location: columns[1] || '',
+                    reqDisabilityType: columns[2] || '',
+                    reqSeverity: columns[3] || '',
+                    openingsCount: columns[4] || '',
+                    jobRole: columns[5] || '',
+                    salary: columns[6] || '',
+                    workHours: columns[7] || '',
+                    counselDate: columns[8] || '',
+                    // 한 건씩 등록할 때와 같은 기본 채용상태(빈칸이면 목록·매칭에서 "확인 필요"로 보였다).
+                    hiringStatus: '모집중',
+                }
+                : {
+                    status: columns[0] || '구직중',
+                    seekerId: columns[1] || '',
+                    name: columns[2],
+                    age: columns[3] || '',
+                    disabilityType: columns[4] || '',
+                    severity: columns[5] || '',
+                    desiredJob1: columns[6] || '',
+                    desiredJob2: columns[7] || '',
+                    desiredSalary: columns[8] || '',
+                    desiredWorkHours: columns[9] || '',
+                    desiredLocation: columns[10] || '',
+                    recommendingAgency: columns[11] || '',
+                    notes: columns[12] || '',
+                };
+            parsedRows.push({ line: row.line, text: row.text, data, key: bulkRegistrationKey(type, data) });
         }
 
+        // 이미 등록된 항목·붙여넣은 내용 안의 중복은 건너뜁니다(같은 표를 다시 붙여넣어도 두 번 등록되지 않게).
+        const registered = type === 'job' ? jobs : seekers;
+        const plan = planBulkRegistration(parsedRows, registered.map(item => bulkRegistrationKey(type, item as unknown as Record<string, unknown>)));
+        const skipped = plan.existingLines.length + plan.repeatedLines.length;
+        if (!plan.toSave.length) {
+            setBulkNotice({ tone: 'info', message: `붙여넣은 ${parsedRows.length}건이 모두 이미 등록되어 있거나 서로 겹쳐 저장할 것이 없습니다.` });
+            return;
+        }
+        if (skipped) {
+            const parts = [
+                plan.existingLines.length ? `이미 등록됨: ${formatLineList(plan.existingLines)}` : '',
+                plan.repeatedLines.length ? `붙여넣은 내용 안에서 겹침: ${formatLineList(plan.repeatedLines)}` : '',
+            ].filter(Boolean).join('\n');
+            const session = sessionRef.current;
+            operationRef.current = true;
+            let ok = false;
+            try {
+                ok = await confirm({
+                    title: '중복 항목 건너뛰기',
+                    message: `${skipped}건은 ${type === 'job' ? '같은 회사명·직무' : '같은 이름·관리번호'}가 있어 건너뜁니다.\n${parts}\n나머지 ${plan.toSave.length}건을 저장할까요?`,
+                    confirmLabel: `${plan.toSave.length}건 저장`,
+                    cancelLabel: '취소',
+                });
+            } finally {
+                if (session === sessionRef.current) operationRef.current = false;
+            }
+            if (!ok || session !== sessionRef.current) return;
+        }
+
+        operationRef.current = true;
+        const session = sessionRef.current;
+        const total = plan.toSave.length;
+        const label = type === 'job' ? '사업체/구인 정보' : '이용자';
         setBulkLoading(true);
         setBulkProgress(0);
         let savedCount = 0;
+        // 창이 닫히거나 화면을 떠나 중간에 멈추면, 그때까지 저장된 건수를 알려 줍니다(아무 안내 없이 일부만 남지 않게).
+        const reportInterrupted = () => {
+            if (savedCount > 0) showToast(`${label} 일괄 저장이 중간에 멈췄습니다. ${savedCount}건은 저장되었고 ${total - savedCount}건은 저장하지 않았습니다. 목록을 확인해 주세요.`, 'info', 9000);
+        };
         try {
             for (let i = 0; i < total; i++) {
-                const columns = parsedRows[i];
-
+                if (session !== sessionRef.current) { reportInterrupted(); return; }
+                const row = plan.toSave[i];
                 if (type === 'job') {
-                    const data = {
-                        companyName: columns[0] || '',
-                        location: columns[1] || '',
-                        reqDisabilityType: columns[2] || '',
-                        reqSeverity: columns[3] || '',
-                        openingsCount: columns[4] || '',
-                        jobRole: columns[5] || '',
-                        salary: columns[6] || '',
-                        workHours: columns[7] || '',
-                        counselDate: columns[8] || ''
-                    };
-                    await addJob(data as unknown as Parameters<typeof addJob>[0]);
+                    await addJob(row.data as unknown as Parameters<typeof addJob>[0]);
                 } else {
-                    const data = {
-                        status: columns[0] || '구직중',
-                        seekerId: columns[1] || '',
-                        name: columns[2],
-                        age: columns[3] || '',
-                        disabilityType: columns[4] || '',
-                        severity: columns[5] || '',
-                        desiredJob1: columns[6] || '',
-                        desiredJob2: columns[7] || '',
-                        desiredSalary: columns[8] || '',
-                        desiredWorkHours: columns[9] || '',
-                        desiredLocation: columns[10] || '',
-                        recommendingAgency: columns[11] || '',
-                        notes: columns[12] || ''
-                    };
-                    await addSeeker(data as unknown as Parameters<typeof addSeeker>[0]);
+                    await addSeeker(row.data as unknown as Parameters<typeof addSeeker>[0]);
                 }
                 savedCount = i + 1;
+                if (session !== sessionRef.current) { reportInterrupted(); return; }
                 setBulkProgress(Math.round((savedCount / total) * 100));
             }
 
             setBulkProgress(100);
             setBulkData('');
+            if (skipped) showToast(`${savedCount}건을 저장하고 중복 ${skipped}건은 건너뛰었습니다.`, 'info', 6000);
             onSuccess();
         } catch (err: unknown) {
+            if (session !== sessionRef.current) { reportInterrupted(); return; }
             console.error('Bulk save failed:', safeErrorMetadata(err, 'bulk-save'));
-            // 이미 저장된 행은 입력칸에서 빼서, 다시 저장해도 중복 등록되지 않게 합니다.
-            const remainingRows = rows.slice(savedCount);
-            setBulkData(remainingRows.join('\n'));
+            // 이미 저장된 행은 입력칸에서 빼서, 다시 저장해도 중복 등록되지 않게 합니다(건너뛴 중복 행도 뺍니다).
+            const remainingRows = plan.toSave.slice(savedCount);
+            setBulkData(remainingRows.map(row => row.text).join('\n'));
             setBulkProgress(total ? Math.round((savedCount / total) * 100) : 0);
+            const failedLine = plan.toSave[savedCount]?.line;
             const reason = err instanceof Error && err.message ? ` (${err.message})` : '';
             setBulkNotice({
                 tone: 'error',
                 message: savedCount > 0
-                    ? `${savedCount}행까지 저장되었습니다. ${savedCount + 1}행째에서 저장하지 못했습니다${reason}. 저장된 ${savedCount}행은 입력칸에서 지웠으니, 남은 ${remainingRows.length}행을 확인한 뒤 다시 저장해 주세요.`
-                    : `첫 행을 저장하지 못했습니다${reason}. 저장된 행은 없습니다. 내용을 확인한 뒤 다시 시도해 주세요.`,
+                    ? `${savedCount}건을 저장했습니다. ${failedLine}번째 줄에서 저장하지 못했습니다${reason}. 저장된 ${savedCount}건은 입력칸에서 지웠으니, 남은 ${remainingRows.length}건을 확인한 뒤 다시 저장해 주세요.`
+                    : `${failedLine}번째 줄(첫 저장)을 저장하지 못했습니다${reason}. 저장된 행은 없습니다. 내용을 확인한 뒤 다시 시도해 주세요.`,
             });
         } finally {
-            setBulkLoading(false);
+            if (session === sessionRef.current) {
+                operationRef.current = false;
+                setBulkLoading(false);
+            }
         }
     };
 
     if (!isOpen) return null;
 
-    const bulkRowCount = bulkData.trim() ? bulkData.trim().split('\n').filter(row => row.trim() !== '').length : 0;
+    const bulkRowCount = splitBulkRegistrationRows(bulkData).length;
 
     return (
         <div className="modal-overlay" onClick={() => { void requestClose(); }}>
@@ -331,9 +426,9 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
                 onClick={(e) => e.stopPropagation()}
             >
                 {/* Header */}
-                <div className="p-6 pb-4 bg-gradient-to-r from-primary-600/30 to-accent-600/30 flex items-center justify-between">
+                <div className="p-6 pb-4 bg-linear-to-r from-primary-600/30 to-accent-600/30 flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary-500 to-accent-500 flex items-center justify-center">
+                        <div className="w-10 h-10 rounded-xl bg-linear-to-br from-primary-500 to-accent-500 flex items-center justify-center">
                             {type === 'job' ? <Building2 className="w-5 h-5 text-white" /> : <User className="w-5 h-5 text-white" />}
                         </div>
                         <h2 id="job-seeker-modal-title" className="text-xl font-bold text-white">
@@ -342,7 +437,7 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
                                 : (isEditMode ? '이용자 정보 수정' : '새 이용자 등록')}
                         </h2>
                     </div>
-                    <button type="button" aria-label="등록 창 닫기" onClick={() => { void requestClose(); }} className="btn-ghost !p-2"><X className="w-5 h-5" /></button>
+                    <button type="button" aria-label="등록 창 닫기" onClick={() => { void requestClose(); }} className="btn-ghost p-2!"><X className="w-5 h-5" /></button>
                 </div>
 
                 {!isEditMode && <div className="flex overflow-x-auto [&>button]:shrink-0 [&>button]:whitespace-nowrap border-b border-white/10 px-6">
@@ -350,20 +445,20 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
                         type="button"
                         className={`py-3 px-4 font-medium text-sm border-b-2 transition-all ${inputMode === 'single' ? 'border-primary-500 text-primary-400' : 'border-transparent text-white/50 hover:text-white'}`}
                         onClick={() => setInputMode('single')}
-                        disabled={bulkLoading}
+                        disabled={busy}
                     >단건 직접 입력</button>
                     <button
                         type="button"
                         className={`py-3 px-4 font-medium text-sm border-b-2 transition-all ${inputMode === 'bulk' ? 'border-primary-500 text-primary-400' : 'border-transparent text-white/50 hover:text-white'}`}
                         onClick={() => setInputMode('bulk')}
-                        disabled={bulkLoading}
+                        disabled={busy}
                     >엑셀 일괄 등록</button>
                     {type === 'seeker' && (
                         <button
                             type="button"
                             className={`py-3 px-4 font-medium text-sm border-b-2 transition-all flex items-center gap-1.5 ${inputMode === 'ocr' ? 'border-green-500 text-green-400' : 'border-transparent text-white/50 hover:text-white'}`}
                             onClick={() => setInputMode('ocr')}
-                            disabled={bulkLoading}
+                            disabled={busy}
                         >
                             <Camera className="w-3.5 h-3.5" />
                             OCR 스캔 등록
@@ -378,6 +473,7 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
 
                     {inputMode === 'single' ? (
                         <form onSubmit={handleSubmit} onClick={(e) => e.stopPropagation()} className="space-y-4">
+                            <fieldset disabled={busy} className="contents">
                             {type === 'job' ? (
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     <Input label="상담일자" value={jobData.counselDate} onChange={v => setJobData(prev => ({ ...prev, counselDate: v }))} placeholder="2026-02-20" />
@@ -405,15 +501,16 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
                                 <SeekerFormFields value={seekerData} onChange={updateSeekerData} />
                             )}
 
-                            <button type="submit" disabled={loading} className="btn-primary w-full mt-4 flex items-center justify-center gap-2">
+                            <button type="submit" disabled={busy} className="btn-primary w-full mt-4 flex items-center justify-center gap-2">
                                 <Save className="w-5 h-5" />
-                                {loading ? '저장 중...' : (isEditMode ? '변경사항 저장' : '저장하기')}
+                                {saving || loading ? '저장 중...' : (isEditMode ? '변경사항 저장' : '저장하기')}
                             </button>
                             {isEditMode && (
                                 <button type="button" onClick={() => { void requestClose(); }} className="btn-ghost w-full flex items-center justify-center gap-2">
                                     수정 취소
                                 </button>
                             )}
+                            </fieldset>
                         </form>
                     ) : inputMode === 'bulk' ? (
                         <div className="space-y-4">
@@ -433,7 +530,7 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
                                 placeholder="여기에 엑셀 데이터를 붙여넣으세요..."
                                 value={bulkData}
                                 onChange={(e) => { setBulkData(e.target.value); setBulkNotice(null); }}
-                                disabled={bulkLoading}
+                                disabled={busy}
                             />
 
                             {(bulkLoading || bulkProgress > 0) && (
@@ -451,7 +548,7 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
                             <button
                                 type="button"
                                 onClick={() => void handleBulkSubmit()}
-                                disabled={bulkLoading || !bulkData.trim()}
+                                disabled={busy || !bulkData.trim()}
                                 className="btn-primary w-full mt-4 flex items-center justify-center gap-2"
                             >
                                 <Save className="w-5 h-5" />
@@ -466,22 +563,22 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
                                     <Camera className="w-4 h-4" />
                                     상담기록지 OCR 자동 인식
                                 </p>
-                                <p className="text-green-200/70">상담기록지나 접수서류를 스캔/촬영하여 업로드하면 Google Vision AI가 텍스트를 자동 인식하여 이용자 정보를 채워줍니다. 분석 버튼을 누르면 이미지가 외부 AI 서비스로 전송됩니다.</p>
+                                <p className="text-green-200/70">상담기록지나 접수서류를 스캔/촬영하여 업로드하면 글자를 인식하여 이용자 정보를 채워줍니다. 분석 버튼을 누르면 원본 이미지를 외부 AI 서비스(Google Cloud Vision 또는 Google Gemini)로 보낼지 먼저 확인합니다. 글자가 들어 있는 PDF는 이 컴퓨터 안에서 읽습니다.</p>
                             </div>
 
                             {/* 파일 업로드 영역 */}
                             <FileDropZone
                                 accept="image/*"
                                 onFiles={handleOcrFiles}
-                                disabled={ocrLoading}
+                                disabled={busy}
                                 ariaLabel="상담기록지 이미지 선택"
-                                className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 ${ocrDone ? 'border-green-500/50 bg-green-500/5' : 'border-white/20 hover:border-primary-500/50 hover:bg-white/5'}`}
+                                className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all focus:outline-hidden focus-visible:ring-2 focus-visible:ring-primary-400 ${ocrDone ? 'border-green-500/50 bg-green-500/5' : 'border-white/20 hover:border-primary-500/50 hover:bg-white/5'}`}
                                 activeClassName="border-primary-400 bg-primary-500/10"
                             >
                                 {ocrLoading ? (
                                     <div className="flex flex-col items-center gap-3">
                                         <Loader2 className="w-12 h-12 text-primary-400 animate-spin" />
-                                        <p className="text-white/60">Google Vision AI로 텍스트 추출 중...</p>
+                                        <p className="text-white/60">글자 인식 중...</p>
                                     </div>
                                 ) : ocrDone ? (
                                     <div className="flex flex-col items-center gap-3">
@@ -501,7 +598,7 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
                             <button
                                 type="button"
                                 onClick={() => void handleRunOcr()}
-                                disabled={!ocrFile || ocrLoading}
+                                disabled={!ocrFile || busy}
                                 aria-describedby={ocrFile && !ocrDone ? ocrFileHintId : undefined}
                                 className="btn-primary w-full flex items-center justify-center gap-2 disabled:opacity-50"
                             >
@@ -521,12 +618,14 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
                             {/* OCR로 채워진 입력칸 (수정 가능) */}
                             {ocrDone && (
                                 <form onSubmit={handleSubmit} onClick={(e) => e.stopPropagation()} className="space-y-4 border-t border-white/10 pt-4">
+                                    <fieldset disabled={busy} className="contents">
                                     <p className="text-white/60 text-sm">자동 인식 결과를 확인하고 필요한 부분을 수정하세요</p>
                                     <SeekerFormFields value={seekerData} onChange={updateSeekerData} />
-                                    <button type="submit" disabled={loading} className="btn-primary w-full flex items-center justify-center gap-2">
+                                    <button type="submit" disabled={busy} className="btn-primary w-full flex items-center justify-center gap-2">
                                         <Save className="w-5 h-5" />
-                                        {loading ? '저장 중...' : 'OCR 결과로 이용자 등록'}
+                                        {saving || loading ? '저장 중...' : 'OCR 결과로 이용자 등록'}
                                     </button>
+                                    </fieldset>
                                 </form>
                             )}
                         </div>

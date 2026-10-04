@@ -19,10 +19,10 @@ interface Props {
 /** 기한 지남·오늘·이번 주 후속 일정. 여기서는 완료 표시만 하고, 추가·편집은 고용지원 화면에서 합니다. */
 export function NextActions({ seeker, actions, disabled, onComplete }: Props) {
     const navigate = useNavigate();
-    return <section className="glass-card !p-5" aria-labelledby="next-actions-title">
+    return <section className="glass-card p-5!" aria-labelledby="next-actions-title">
         <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 id="next-actions-title" className="text-xl font-bold text-white flex items-center gap-2"><CalendarDays className="w-5 h-5 text-accent-300" aria-hidden="true" /> 다음 할 일</h2>
-            <button type="button" className="btn-secondary !px-3 !py-1.5 text-sm"
+            <button type="button" className="btn-secondary px-3! py-1.5! text-sm"
                 onClick={() => navigate('/workmate', { state: { seekerId: seeker.id || seeker.seekerId, seekerName: seeker.name, tab: 'pipeline', step: 'workflow' } })}>
                 일정 추가·편집
             </button>
@@ -33,7 +33,7 @@ export function NextActions({ seeker, actions, disabled, onComplete }: Props) {
             : <ul className="mt-4 space-y-2">{actions.map(({ task, timing }) => <li key={task.id} className="flex flex-wrap items-center gap-3 rounded-xl bg-white/5 border border-white/10 p-3">
                 <input id={`next-action-${task.id}`} type="checkbox" className="w-5 h-5 accent-emerald-400" checked={false} disabled={disabled}
                     onChange={() => onComplete(task.id)} />
-                <label htmlFor={`next-action-${task.id}`} className="flex-1 min-w-40 text-white break-words cursor-pointer">
+                <label htmlFor={`next-action-${task.id}`} className="flex-1 min-w-40 text-white wrap-break-word cursor-pointer">
                     <span className="text-white/50 text-xs mr-2">{CATEGORY_LABELS[task.category || 'other']}</span>{task.title}
                     <span className="sr-only"> 완료 표시</span>
                 </label>

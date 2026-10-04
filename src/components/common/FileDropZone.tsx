@@ -57,7 +57,7 @@ export function FileDropZone({ accept, multiple, disabled, onFiles, ariaLabel, c
         emit(event.dataTransfer?.files || null);
     };
 
-    const base = className || 'cursor-pointer rounded-xl border-2 border-dashed border-white/15 p-6 text-center transition hover:border-white/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400';
+    const base = className || 'cursor-pointer rounded-xl border-2 border-dashed border-white/15 p-6 text-center transition hover:border-white/30 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-violet-400';
     const active = activeClassName || 'border-violet-400 bg-violet-500/10';
 
     return (

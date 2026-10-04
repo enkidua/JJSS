@@ -26,7 +26,7 @@ export default function ProjectCards({ budgetProjects, expenses, onEdit, onDelet
                 const unassignedSpent = unassignedItemSpent(project.id, expenses);
                 const expanded = Boolean(expandedProjectIds[project.id]);
                 return (
-                    <div key={project.id} className="rounded-2xl bg-white/[0.03] border border-white/10 p-4">
+                    <div key={project.id} className="rounded-2xl bg-white/3 border border-white/10 p-4">
                         <div className="flex items-start justify-between gap-3">
                             <div>
                                 <p className="font-bold text-white">{project.name}</p>
@@ -80,7 +80,7 @@ export default function ProjectCards({ budgetProjects, expenses, onEdit, onDelet
                                         const balanceForItem = itemBalance(project.id, item, expenses);
                                         const itemStatus = getBudgetStatus(item.amount || 0, spentForItem);
                                         return (
-                                            <div key={item.id} className="text-xs rounded-xl bg-white/[0.03] border border-white/10 p-2">
+                                            <div key={item.id} className="text-xs rounded-xl bg-white/3 border border-white/10 p-2">
                                                 <div className="flex justify-between gap-2">
                                                     <span className="text-white/75 truncate">{item.name || '이름 없는 항목'}</span>
                                                     <span className={itemStatus.over ? 'text-red-300' : 'text-white/45'}>
@@ -102,7 +102,7 @@ export default function ProjectCards({ budgetProjects, expenses, onEdit, onDelet
                                         );
                                     })}
                                     {unassignedSpent !== 0 && (
-                                        <p className="text-xs text-white/40 rounded-xl bg-white/[0.03] border border-white/10 p-2">
+                                        <p className="text-xs text-white/40 rounded-xl bg-white/3 border border-white/10 p-2">
                                             항목 미지정 사용액: {unassignedSpent.toLocaleString()}원
                                         </p>
                                     )}

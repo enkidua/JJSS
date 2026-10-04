@@ -179,9 +179,9 @@ export function MaskingView({ onBack, onDirtyChange }: MaskingViewProps) {
                 <ArrowLeft className="w-4 h-4" /> 도구 목록으로 돌아가기
             </button>
 
-            <div className="glass-strong rounded-[2rem] shadow-2xl overflow-hidden border border-white/10 relative p-6 md:p-10">
+            <div className="glass-strong rounded-4xl shadow-2xl overflow-hidden border border-white/10 relative p-6 md:p-10">
                 <div className="flex items-center gap-4 mb-8">
-                    <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-rose-500 to-pink-600 flex items-center justify-center shadow-lg">
+                    <div className="w-14 h-14 rounded-2xl bg-linear-to-br from-rose-500 to-pink-600 flex items-center justify-center shadow-lg">
                         <ShieldCheck className="w-8 h-8 text-white" />
                     </div>
                     <div>
@@ -198,7 +198,7 @@ export function MaskingView({ onBack, onDirtyChange }: MaskingViewProps) {
                         </label>
                         <textarea
                             id="masking-input"
-                            className="w-full flex-1 min-h-[300px] bg-black/30 border border-white/10 rounded-2xl p-5 text-white placeholder-white/30 focus:outline-none focus:border-rose-500/50 resize-none transition-colors shadow-inner text-[15px] leading-relaxed custom-scrollbar"
+                            className="w-full flex-1 min-h-[300px] bg-black/30 border border-white/10 rounded-2xl p-5 text-white placeholder-white/30 focus:outline-hidden focus:border-rose-500/50 resize-none transition-colors shadow-inner text-[15px] leading-relaxed custom-scrollbar"
                             placeholder="개인정보(이름, 주민번호, 주소, 연락처 등)가 포함된 원문을 붙여넣으세요..."
                             value={input}
                             onChange={(e) => setInput(e.target.value)}
@@ -207,7 +207,7 @@ export function MaskingView({ onBack, onDirtyChange }: MaskingViewProps) {
                             type="button"
                             onClick={handleLocalMask}
                             disabled={aiLoading || !input.trim()}
-                            className="btn-primary w-full mt-4 flex items-center justify-center gap-2 !py-4 shadow-[0_0_20px_rgba(244,63,94,0.3)] hover:shadow-[0_0_30px_rgba(244,63,94,0.5)]"
+                            className="btn-primary w-full mt-4 flex items-center justify-center gap-2 py-4! shadow-[0_0_20px_rgba(244,63,94,0.3)] hover:shadow-[0_0_30px_rgba(244,63,94,0.5)]"
                         >
                             <EyeOff className="w-5 h-5" /> 개인정보 가리기 (이 컴퓨터에서 처리)
                         </button>
@@ -232,7 +232,7 @@ export function MaskingView({ onBack, onDirtyChange }: MaskingViewProps) {
                                 type="button"
                                 onClick={() => void handleAiCheck()}
                                 disabled={!aiConsent || !maskedText || aiLoading || inputChangedAfterMasking}
-                                className="btn-ghost w-full flex items-center justify-center gap-2 border border-white/15 rounded-xl !py-3 text-sm text-white/80 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                                className="btn-ghost w-full flex items-center justify-center gap-2 border border-white/15 rounded-xl py-3! text-sm text-white/80 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
                             >
                                 {aiLoading
                                     ? <><Loader2 className="w-4 h-4 animate-spin" /> AI로 추가 점검 중...</>
@@ -257,7 +257,7 @@ export function MaskingView({ onBack, onDirtyChange }: MaskingViewProps) {
                                         <button
                                             type="button"
                                             onClick={() => setShowOriginal(prev => !prev)}
-                                            className="btn-ghost !px-3 !py-1.5 text-xs text-white/70 hover:text-white flex items-center gap-1.5 border border-white/10 rounded-lg"
+                                            className="btn-ghost px-3! py-1.5! text-xs text-white/70 hover:text-white flex items-center gap-1.5 border border-white/10 rounded-lg"
                                         >
                                             {showOriginal ? <KeyRound className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
                                             {showOriginal ? '가린 글 보기' : '원문 보기'}
@@ -265,7 +265,7 @@ export function MaskingView({ onBack, onDirtyChange }: MaskingViewProps) {
                                         <CopyButton
                                             text={displayedText}
                                             label={showOriginal ? '원문 복사' : '가린 글 복사'}
-                                            className="btn-ghost !px-3 !py-1.5 text-xs text-blue-300 hover:text-blue-200 flex items-center gap-1.5 border border-blue-500/20 bg-blue-500/10 rounded-lg"
+                                            className="btn-ghost px-3! py-1.5! text-xs text-blue-300 hover:text-blue-200 flex items-center gap-1.5 border border-blue-500/20 bg-blue-500/10 rounded-lg"
                                         />
                                     </>
                                 )}
@@ -301,11 +301,11 @@ export function MaskingView({ onBack, onDirtyChange }: MaskingViewProps) {
                                             <div className="space-y-2">
                                                 {rows.map((row, idx) => (
                                                     <div key={`${row.masked}-${idx}`} className="flex items-center gap-3 text-sm">
-                                                        <span className="px-2 py-0.5 rounded bg-white/10 text-white/40 text-[10px] w-20 text-center shrink-0">
+                                                        <span className="px-2 py-0.5 rounded-sm bg-white/10 text-white/40 text-[10px] w-20 text-center shrink-0">
                                                             {row.source === 'ai' ? `AI·${row.category}` : row.category}
                                                         </span>
                                                         <span className="text-rose-300 flex-1 truncate">{row.original}</span>
-                                                        <ArrowRight className="w-3 h-3 text-white/20 flex-shrink-0" />
+                                                        <ArrowRight className="w-3 h-3 text-white/20 shrink-0" />
                                                         <span className="text-emerald-300 flex-1 truncate font-mono">
                                                             {row.masked}{row.restorable ? '' : ' (일반화)'}
                                                         </span>

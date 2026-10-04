@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { readTrainingStateAfterWrites } from '../pages/training/trainingWriteQueue';
 import { Link } from 'react-router-dom';
 import * as localDB from '../config/localDB';
 import { getDueBoardSummary, getDueFollowUps, SUPPORTED_EMPLOYMENT_TYPE, type TrainingState } from '../config/rehabOverview';
@@ -32,7 +33,8 @@ export default function RehabDueBoard({ seekers, onSelect }: Props) {
         Promise.all([
             localDB.getAll<CaseDocument>('caseDocuments'),
             // 훈련 기록을 읽지 못해도 일정 목록은 보여 줍니다(훈련 중 인원만 0으로 표시).
-            localDB.getById<TrainingState>('trainingState', 'work-training').catch(() => undefined),
+            // 직업훈련 화면에서 예약된 저장이 끝난 뒤 읽는다.
+            readTrainingStateAfterWrites<TrainingState>().catch(() => undefined),
         ]).then(([items, trainingState]) => {
             if (cancelled) return;
             setDocs(items.filter(doc => doc.type === 'workflow'));
@@ -55,12 +57,12 @@ export default function RehabDueBoard({ seekers, onSelect }: Props) {
     ];
     return <>
     <div className="grid gap-3 grid-cols-2 lg:grid-cols-4" aria-label="전체 요약">
-        {tiles.map(([label, count, unit]) => <div key={label} className="glass-card !p-4">
+        {tiles.map(([label, count, unit]) => <div key={label} className="glass-card p-4!">
             <p className="text-sm text-white/60">{label}</p>
             <p className="text-2xl font-bold text-white mt-1">{loading || error ? '-' : `${count}${unit}`}</p>
         </div>)}
     </div>
-    <section className="glass-card !p-5" aria-labelledby="all-due-title">
+    <section className="glass-card p-5!" aria-labelledby="all-due-title">
         <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 id="all-due-title" className="text-lg font-bold text-white">전체 이용자 후속 일정</h2>
             {!loading && !error && <span className="text-sm text-white/60">기한 지남 {overdue}건 · 오늘~7일 이내 {due.length - overdue}건</span>}
@@ -72,7 +74,7 @@ export default function RehabDueBoard({ seekers, onSelect }: Props) {
                     : <ul className="grid gap-2 mt-3 sm:grid-cols-2">{due.slice(0, 20).map(item => <li key={`${item.seekerId}-${item.task.id}`} className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm">
                         <button type="button" onClick={() => onSelect(item.seekerId)} className="text-accent-200 hover:underline font-semibold text-left">{item.seekerName}</button>
                         <span className={`ml-2 ${item.timing === 'overdue' ? 'text-red-200' : 'text-amber-200'}`}>{item.task.dueDate}{item.timing === 'overdue' ? ' · 기한 지남' : ''}</span>
-                        <p className="text-white/80 break-words mt-1">{categoryLabels[item.task.category || 'other']} · {item.task.title}</p>
+                        <p className="text-white/80 wrap-break-word mt-1">{categoryLabels[item.task.category || 'other']} · {item.task.title}</p>
                     </li>)}</ul>}
         {due.length > 20 && <p className="text-xs text-white/50 mt-2">가까운 일정 20건을 표시합니다. 전체 기록은 이용자별 현황에서 확인해 주세요.</p>}
         {!loading && !error && unreadable > 0 && <p role="alert" className="text-xs text-amber-200 mt-2">

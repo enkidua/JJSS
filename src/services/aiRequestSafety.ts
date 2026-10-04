@@ -35,6 +35,11 @@ export interface AIRequestJob {
     assertActive(): void;
     cancel(): void;
     finish(status: AIJobStatus): void;
+    /**
+     * 사용자 확인을 기다리는 동안(고성능 모델 사용 확인창 등) 작업 시간제한을 멈춘다.
+     * 확인창을 오래 열어 두었다고 API 호출 전에 시간 초과로 끝나지 않게, 기다린 시간은 제한에서 뺀다.
+     */
+    pauseTimeoutWhile<T>(task: () => Promise<T>): Promise<T>;
 }
 
 export interface DailyAIRequestUsage {
@@ -169,6 +174,8 @@ export function beginAIRequestJob(options: BeginAIRequestJobOptions): AIRequestJ
     let timedOut = false;
     let finished = false;
     let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+    let timerStartedAt = now;
+    let remainingTimeoutMs = 0;
     const id = createJobId(now);
     const kind = options.kind || 'generation';
     const timeoutMs = options.timeoutMs ?? AI_TEXT_TIMEOUT_MS;
@@ -229,6 +236,17 @@ export function beginAIRequestJob(options: BeginAIRequestJobOptions): AIRequestJ
             abortController.abort(createAbortError());
             release();
         },
+        async pauseTimeoutWhile(task) {
+            if (timeoutTimer === undefined) return task();
+            clearTimeout(timeoutTimer);
+            timeoutTimer = undefined;
+            remainingTimeoutMs = Math.max(0, remainingTimeoutMs - (Date.now() - timerStartedAt));
+            try {
+                return await task();
+            } finally {
+                if (!finished && !cancelled && !timedOut) startTimeout(remainingTimeoutMs);
+            }
+        },
         finish(status) {
             if (finished) return;
             finished = true;
@@ -243,16 +261,19 @@ export function beginAIRequestJob(options: BeginAIRequestJobOptions): AIRequestJ
     activeFeatureJobs.set(featureKey, job);
     if (options.signal?.aborted) job.cancel();
     else options.signal?.addEventListener('abort', onUserAbort, { once: true });
-    if (!job.cancelled && timeoutMs > 0) {
+    function startTimeout(ms: number) {
+        remainingTimeoutMs = ms;
+        timerStartedAt = Date.now();
         timeoutTimer = setTimeout(() => {
             if (finished || cancelled || timedOut) return;
             timedOut = true;
             abortController.abort(createTimeoutError());
             release();
-        }, timeoutMs);
+        }, ms);
         // Node(테스트)에서 타이머가 프로세스 종료를 막지 않도록 한다. 브라우저에서는 무시된다.
         (timeoutTimer as { unref?: () => void }).unref?.();
     }
+    if (!job.cancelled && timeoutMs > 0) startTimeout(timeoutMs);
     return job;
 }
 

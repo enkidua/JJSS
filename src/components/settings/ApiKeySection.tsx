@@ -74,7 +74,7 @@ function ApiKeyField({ slot, inputId, label, placeholder, value, savedValue, sav
                                 onCommit();
                             }
                         }}
-                        className="input-field !pr-12 font-mono text-sm"
+                        className="input-field pr-12! font-mono text-sm"
                     />
                     <button
                         type="button"
@@ -89,12 +89,12 @@ function ApiKeyField({ slot, inputId, label, placeholder, value, savedValue, sav
                     type="button"
                     disabled={!dirty || saving}
                     onClick={onCommit}
-                    className="btn-secondary !px-4 !py-2 text-sm shrink-0 disabled:opacity-40"
+                    className="btn-secondary px-4! py-2! text-sm shrink-0 disabled:opacity-40"
                 >
                     {saving ? '저장 중…' : '저장'}
                 </button>
             </div>
-            <p id={statusId} role="status" aria-live="polite" className="mt-1.5 min-h-[1.25rem] text-xs">
+            <p id={statusId} role="status" aria-live="polite" className="mt-1.5 min-h-5 text-xs">
                 {saving ? (
                     <span className="text-white/50">저장하는 중입니다…</span>
                 ) : dirty ? (
@@ -121,7 +121,7 @@ interface ConnectionCheckRowProps {
 function ConnectionCheckRow({ label, state, disabled, onCheck }: ConnectionCheckRowProps) {
     return (
         <div className="mt-3 flex flex-wrap items-center gap-3">
-            <button type="button" disabled={disabled || state?.busy} onClick={onCheck} className="btn-secondary !px-3 !py-2 text-xs disabled:opacity-50">
+            <button type="button" disabled={disabled || state?.busy} onClick={onCheck} className="btn-secondary px-3! py-2! text-xs disabled:opacity-50">
                 {state?.busy ? '연결 확인 중…' : `${label} 연결 확인`}
             </button>
             {state?.message && (
@@ -278,7 +278,7 @@ export default function ApiKeySection({ onSaved }: SettingsSectionProps) {
                             className="glass-card"
                         >
                             <div className="flex items-center gap-3 mb-4">
-                                <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${info.gradient} flex items-center justify-center`}>
+                                <div className={`w-10 h-10 rounded-xl bg-linear-to-br ${info.gradient} flex items-center justify-center`}>
                                     <Sparkles className="w-5 h-5 text-white" />
                                 </div>
                                 <div>
@@ -360,10 +360,10 @@ export default function ApiKeySection({ onSaved }: SettingsSectionProps) {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.4 }}
-                className="glass-card !p-6 mt-8"
+                className="glass-card p-6! mt-8"
             >
                 <div className="flex items-center gap-3 mb-4">
-                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-pink-600 flex items-center justify-center">
+                    <div className="w-10 h-10 rounded-xl bg-linear-to-br from-purple-500 to-pink-600 flex items-center justify-center">
                         <Eye className="w-5 h-5 text-white" />
                     </div>
                     <div>

@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import { Settings as SettingsIcon, Check, AlertTriangle, Shield } from 'lucide-react';
 import { useSettingsStore } from '../store/settingsStore';
 import { AI_MODEL_CATALOG_UPDATED_AT, DEFAULT_AI_MODEL_LABELS } from '../config/aiModels';
-import { getEncryptionKeyKind } from '../config/crypto';
+import { getEncryptionKeyInfo, type EncryptionKeyInfo } from '../config/crypto';
 import AiModelSection from '../components/settings/AiModelSection';
 import FailoverSection from '../components/settings/FailoverSection';
 import ApiKeySection from '../components/settings/ApiKeySection';
@@ -17,6 +17,24 @@ const SECTION_LINKS: Array<[id: string, label: string]> = [
     ['files-backup', '파일·백업'],
 ];
 
+/** 플랫폼별 운영체제 보안 저장소 이름 */
+function secureStoreLabel(platform: string | null): string {
+    if (platform === 'win32') return 'Windows 사용자 계정 보호 기능(DPAPI)';
+    if (platform === 'darwin') return 'macOS Keychain';
+    return '운영체제 보안 저장소';
+}
+
+function keyInfoMessage(info: EncryptionKeyInfo): string {
+    const store = secureStoreLabel(info.platform);
+    if (info.kind === 'data-key') {
+        return `운영체제 보안 저장소를 이용해 암호화 키를 보호합니다(${store}). 다른 PC로 옮길 때는 데이터 폴더를 복사하지 말고, 암호화 백업 파일을 만든 뒤 새 PC에서 비밀번호로 복원해 주세요.`;
+    }
+    if (info.kind === 'unavailable') {
+        return `현재 ${store}를 사용할 수 없어 새 개인정보와 API 키를 저장하지 않습니다. 앱을 재실행하거나 운영체제 보안 설정을 확인해 주세요. 기존 데이터는 삭제하지 않았습니다.`;
+    }
+    return '개발용 실행 환경이라 운영체제 보안 저장소 대신 기본 암호화 방식을 사용합니다. 배포용 앱에서는 운영체제 보안 저장소를 사용합니다.';
+}
+
 function focusSection(id: string) {
     const section = document.getElementById(id);
     section?.focus({ preventScroll: true });
@@ -27,10 +45,11 @@ export default function Settings() {
     const loadSettings = useSettingsStore(state => state.loadSettings);
     const loaded = useSettingsStore(state => state.loaded);
     const error = useSettingsStore(state => state.error);
+    const loadFailed = useSettingsStore(state => state.loadFailed);
     const recoveryNotice = useSettingsStore(state => state.recoveryNotice);
     const location = useLocation();
     const [saved, setSaved] = useState(false);
-    const [keyKind, setKeyKind] = useState<'data-key' | 'installation' | null>(null);
+    const [keyInfo, setKeyInfo] = useState<EncryptionKeyInfo | null>(null);
     const savedTimerRef = useRef<number | undefined>(undefined);
 
     useEffect(() => {
@@ -39,8 +58,8 @@ export default function Settings() {
 
     useEffect(() => {
         let active = true;
-        getEncryptionKeyKind()
-            .then(kind => { if (active) setKeyKind(kind); })
+        getEncryptionKeyInfo()
+            .then(info => { if (active) setKeyInfo(info); })
             .catch(() => undefined);
         return () => { active = false; };
     }, []);
@@ -93,21 +112,17 @@ export default function Settings() {
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.1 }}
-                    className="glass-card !p-5 mb-8 flex items-start gap-3"
+                    className="glass-card p-5! mb-8 flex items-start gap-3"
                 >
                     <Shield className="w-5 h-5 text-emerald-400 mt-0.5 shrink-0" />
                     <div>
                         <p className="text-white/80 text-sm font-medium mb-1">로컬 저장과 암호화</p>
                         <p className="text-white/50 text-xs leading-relaxed">
-                            API 키와 이용자의 주요 개인정보(이름·연락처·주소·상담 문서 등)는 저장할 때 AES-GCM 256비트로 암호화하여 이 컴퓨터(IndexedDB)에만 보관합니다.
-                            API 키와 입력한 내용은 AI 기능을 사용할 때 해당 AI 제공업체(Google·OpenAI·Anthropic)로만 전송되며, 그 밖의 서버로는 전송되지 않습니다.
+                            운영체제 보안 저장소와 AES-GCM을 이용하여 로컬 데이터를 보호합니다. API 키와 이용자 개인정보(이름·연락처·주소·상담 문서·직업훈련 기록 등)는 암호화하여 이 컴퓨터(IndexedDB)에 보관합니다.
+                            AI 기능을 실행하면 비식별화된 업무 내용이 선택한 AI 제공업체로 전송될 수 있습니다. 기관의 개인정보 처리방침과 생성형 AI 사용 지침을 함께 확인해 주세요.
                         </p>
-                        {keyKind && (
-                            <p className="mt-1 text-white/50 text-xs leading-relaxed">
-                                {keyKind === 'data-key'
-                                    ? '암호화 키는 Windows 사용자 계정 보호 기능(DPAPI)으로 보관됩니다. 다른 PC로 옮길 때는 백업 파일을 사용해 주세요.'
-                                    : '현재 실행 환경에서는 Windows 보안 저장소를 사용할 수 없어 기본 암호화 방식을 사용합니다.'}
-                            </p>
+                        {keyInfo && (
+                            <p className="mt-1 text-white/50 text-xs leading-relaxed">{keyInfoMessage(keyInfo)}</p>
                         )}
                     </div>
                 </motion.div>
@@ -116,7 +131,7 @@ export default function Settings() {
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.12 }}
-                    className="glass-card !p-5 mb-8 flex items-start gap-3"
+                    className="glass-card p-5! mb-8 flex items-start gap-3"
                 >
                     <AlertTriangle className="w-5 h-5 text-amber-300 mt-0.5 shrink-0" />
                     <div className="text-xs leading-relaxed text-white/55">
@@ -139,7 +154,13 @@ export default function Settings() {
                         className="mb-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-sm flex items-start gap-2"
                     >
                         <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-                        <span>{error || recoveryNotice}</span>
+                        <span className="flex-1">{error || recoveryNotice}</span>
+                        {loadFailed && (
+                            // 설정을 읽지 못한 동안은 저장이 막혀 있다(기존 API 키 보호). 다시 불러오면 풀린다.
+                            <button type="button" className="btn-secondary px-3! py-1! text-xs shrink-0" onClick={() => void loadSettings()}>
+                                설정 다시 불러오기
+                            </button>
+                        )}
                     </motion.div>
                 )}
 

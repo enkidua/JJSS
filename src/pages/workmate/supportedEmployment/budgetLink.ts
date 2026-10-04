@@ -35,27 +35,47 @@ export function findTaggedExpenses<T extends TaggableExpense>(caseId: string, ex
 }
 
 export interface ExpenseDraftPlan {
-    /** 새로 만들어야 하는 초안(금액 0원 초과이면서 표식이 붙은 지출이 없는 항목) */
+    /** 새로 만들어야 하는 초안(금액 0원 초과이면서 표식·연결 ID 어느 쪽으로도 찾지 못한 항목) */
     toCreate: NewExpense[];
-    /** 이미 예산 관리에 있는 이 회차 지출 ID(표식 기준) */
+    /** 이미 예산 관리에 있는 이 회차 지출 ID(표식 또는 회차에 연결된 지출 ID 기준) */
     existingIds: string[];
+    /** 회차에 연결돼 있지만 예산 관리에서 지워진 지출 ID — 연결 목록에서 정리한다 */
+    staleLinkedIds: string[];
     /** 금액이 0원보다 큰 항목 수 */
     payableCount: number;
 }
 
-/** 이미 만든 초안(표식 기준)은 건너뛰고 빠진 항목만 만든다 — 중복·누락 방지. */
-export function planExpenseDrafts<T extends TaggableExpense>(c: SupportedEmploymentCase, project: BudgetProject, expenses: readonly T[]): ExpenseDraftPlan {
+type LinkableExpense = TaggableExpense & Partial<Pick<Expense, 'budgetItem'>>;
+
+/**
+ * 이미 만든 초안은 건너뛰고 빠진 항목만 만든다 — 중복·누락 방지.
+ * 사용자가 예산 관리에서 비고를 고쳐 표식이 지워져도, 회차에 연결된 지출 ID(c.expenseIds)와 항목 이름이 맞으면
+ * 이미 있는 것으로 본다(표식만 보면 같은 초안이 또 만들어졌다).
+ */
+export function planExpenseDrafts<T extends LinkableExpense>(c: SupportedEmploymentCase, project: BudgetProject, expenses: readonly T[]): ExpenseDraftPlan {
     const drafts = buildExpenseDrafts(c, project);
     const tagged = findTaggedExpenses(c.id, expenses);
+    const linkedIds = new Set(c.expenseIds || []);
+    const presentIds = new Set(expenses.map(expense => expense.id).filter((id): id is string => Boolean(id)));
+    const linked = expenses.filter(expense => expense.id && linkedIds.has(expense.id));
     const toCreate: NewExpense[] = [];
     const existingIds: string[] = [];
+    const claimed = new Set<string>();
     for (const draft of drafts) {
         const key = draft.itemKey;
-        const existing = key ? tagged.get(key) : undefined;
-        if (existing?.id) existingIds.push(existing.id);
-        else toCreate.push(draft);
+        const byTag = key ? tagged.get(key) : undefined;
+        const existing = byTag?.id && !claimed.has(byTag.id)
+            ? byTag
+            : linked.find(expense => expense.id && !claimed.has(expense.id) && expense.budgetItem === draft.budgetItem);
+        if (existing?.id) {
+            claimed.add(existing.id);
+            existingIds.push(existing.id);
+        } else {
+            toCreate.push(draft);
+        }
     }
-    return { toCreate: toCreate.map(stripItemKey), existingIds, payableCount: drafts.length };
+    const staleLinkedIds = (c.expenseIds || []).filter(id => !presentIds.has(id));
+    return { toCreate: toCreate.map(stripItemKey), existingIds, staleLinkedIds, payableCount: drafts.length };
 }
 
 /** 금액이 0원보다 크지만 예산 관리에 아직 없는 항목의 이름(표식 또는 연결된 지출 ID 기준). */

@@ -1,13 +1,14 @@
 /**
  * 지원고용 회차 저장소. 새 IndexedDB store를 만들지 않고(D-7 #1) caseDocuments에
  * type 'supported_employment' 문서 하나에 회차 전체를 JSON으로 저장한다.
- * content·seekerName은 localDB의 SENSITIVE_FIELDS라 저장 시 암호화된다(계좌·연락처 포함).
+ * caseDocuments는 최소 메타데이터(id·종류·시각)를 뺀 필드가 localDB에서 암호화되므로 회차 JSON(계좌·연락처 포함)도 암호화되어 저장된다.
  *
  * 참고: zustand dataStore의 caseDocuments 목록은 여기서 갱신하지 않는다.
  * 현황판 타임라인 등에 바로 보여야 하면 저장 후 화면에서 fetchCaseDocuments()를 다시 부른다.
  */
 import { addDoc, deleteDoc, generateId, getById, localTimestamp, query } from '../../config/localDB';
 import type { CaseDocument } from '../../types/caseDocument';
+import { storedTimestampToIso as timestampToIso } from '../../utils/date';
 import { normalizeCase, parseCase, serializeCase, type SupportedEmploymentCase } from './model';
 
 export { parseCase, serializeCase } from './model';
@@ -15,11 +16,6 @@ export { parseCase, serializeCase } from './model';
 export const SUPPORTED_EMPLOYMENT_DOC_TYPE = 'supported_employment' as const;
 
 const isCaseDocument = (doc: CaseDocument) => doc.type === SUPPORTED_EMPLOYMENT_DOC_TYPE;
-
-function timestampToIso(value: unknown): string | undefined {
-    const seconds = value && typeof value === 'object' ? Number((value as { seconds?: unknown }).seconds) : NaN;
-    return Number.isFinite(seconds) ? new Date(seconds * 1000).toISOString() : undefined;
-}
 
 function documentToCase(doc: CaseDocument): SupportedEmploymentCase | null {
     const parsed = parseCase(doc.content);

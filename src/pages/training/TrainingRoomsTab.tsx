@@ -111,7 +111,7 @@ export function TrainingRoomsTab({
     };
 
     return (
-        <div className="glass-strong rounded-[2rem] p-6 border border-white/10 shadow-2xl">
+        <div className="glass-strong rounded-4xl p-6 border border-white/10 shadow-2xl">
             <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6">
                 <div>
                     <h2 className="text-2xl font-black text-white">훈련실관리</h2>
@@ -120,7 +120,7 @@ export function TrainingRoomsTab({
                 <div className="flex flex-wrap gap-2">
                     <RoomSelect rooms={rooms} selectedRoomId={selectedRoomId} setSelectedRoomId={setSelectedRoomId} />
                     <button type="button" onClick={addRoom} className="btn-primary flex items-center gap-2"><Plus className="w-4 h-4" /> 훈련실 생성</button>
-                    <button type="button" onClick={() => deleteRoom(room.id)} className="btn-ghost !bg-white/5 border border-white/10 text-red-300" title="훈련실 삭제" aria-label="훈련실 삭제"><Trash2 className="w-4 h-4" /></button>
+                    <button type="button" onClick={() => deleteRoom(room.id)} className="btn-ghost bg-white/5! border border-white/10 text-red-300" title="훈련실 삭제" aria-label="훈련실 삭제"><Trash2 className="w-4 h-4" /></button>
                 </div>
             </div>
 
@@ -131,7 +131,7 @@ export function TrainingRoomsTab({
                 <TrainingInput label="운영연도" value={room.year} onChange={v => updateRoom(room.id, prev => ({ ...prev, year: v }))} />
             </div>
 
-            <div className="rounded-3xl bg-white/[0.03] border border-white/10 p-6 mb-6">
+            <div className="rounded-3xl bg-white/3 border border-white/10 p-6 mb-6">
                 <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-4">
                     <div>
                         <h3 className="font-black text-white">검색하여 명단에 추가</h3>
@@ -158,7 +158,7 @@ export function TrainingRoomsTab({
                                     disabled={assigned}
                                     className={`w-full text-left rounded-2xl border px-4 py-3 transition-all ${
                                         assigned
-                                            ? 'bg-white/[0.03] border-white/10 text-white/40 cursor-not-allowed'
+                                            ? 'bg-white/3 border-white/10 text-white/40 cursor-not-allowed'
                                             : 'bg-slate-950/35 border-white/10 text-white hover:bg-emerald-500/10 hover:border-emerald-400/35'
                                     }`}
                                 >
@@ -177,7 +177,7 @@ export function TrainingRoomsTab({
                             );
                         })}
                         {filteredSeekers.length === 0 && (
-                            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/45">
+                            <div className="rounded-2xl border border-white/10 bg-white/3 p-4 text-sm text-white/45">
                                 검색 조건에 맞는 이용자가 없습니다.
                             </div>
                         )}
@@ -188,7 +188,7 @@ export function TrainingRoomsTab({
             <div className="space-y-3">
                 <h3 className="font-black text-white">배정된 훈련생 명단</h3>
                 {room.trainees.length === 0 ? (
-                    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 text-sm text-white/45">
+                    <div className="rounded-2xl border border-white/10 bg-white/3 p-5 text-sm text-white/45">
                         아직 배정된 훈련생이 없습니다. 위 검색에서 이용자를 찾아 명단에 추가해주세요.
                     </div>
                 ) : (

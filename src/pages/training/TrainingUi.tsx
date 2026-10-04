@@ -31,14 +31,14 @@ export function TrainingTextarea({ label, value, onChange, placeholder }: { labe
     return (
         <label className="block">
             <span className="block text-sm font-medium text-white/70 mb-1.5">{label}</span>
-            <textarea value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} className="textarea-field !min-h-[108px] text-sm leading-relaxed" />
+            <textarea value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} className="textarea-field min-h-[108px]! text-sm leading-relaxed" />
         </label>
     );
 }
 
 export function StatPill({ label, value }: { label: string; value: string }) {
     return (
-        <div className="rounded-2xl bg-white/[0.04] border border-white/10 px-4 py-3 min-w-24">
+        <div className="rounded-2xl bg-white/4 border border-white/10 px-4 py-3 min-w-24">
             <p className="text-[11px] text-white/35 font-bold uppercase">{label}</p>
             <p className="text-xl font-black text-white">{value}</p>
         </div>

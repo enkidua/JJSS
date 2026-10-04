@@ -14,15 +14,15 @@ interface Props {
 function Row({ label, value }: { label: string; value: ReactNode }) {
     return <div className="flex justify-between gap-3 text-sm py-1 border-b border-white/5 last:border-0">
         <dt className="text-white/50 shrink-0">{label}</dt>
-        <dd className="text-white/85 text-right break-words min-w-0">{value}</dd>
+        <dd className="text-white/85 text-right wrap-break-word min-w-0">{value}</dd>
     </div>;
 }
 
 function Card({ title, icon, children, action, onAction }: { title: string; icon: ReactNode; children: ReactNode; action: string; onAction: () => void }) {
-    return <article className="glass-card !p-5 flex flex-col">
+    return <article className="glass-card p-5! flex flex-col">
         <h3 className="text-lg font-bold text-white flex items-center gap-2">{icon}{title}</h3>
         <div className="flex-1 mt-3">{children}</div>
-        <button type="button" className="btn-secondary !px-4 !py-2 text-sm mt-4 self-start" onClick={onAction}>{action}</button>
+        <button type="button" className="btn-secondary px-4! py-2! text-sm mt-4 self-start" onClick={onAction}>{action}</button>
     </article>;
 }
 
@@ -44,7 +44,7 @@ export function StatusCards({ seeker, evaluation, training, employment }: Props)
                 <Row label="평가 문서" value={`${evaluation.documentCount}건`} />
             </dl>
             {evaluation.lastOpinion.length > 0
-                ? <div className="mt-2 text-sm text-white/70 break-words"><p className="text-white/45 text-xs">마지막 소견</p>{evaluation.lastOpinion.map((line, index) => <p key={index} className="line-clamp-2">{line}</p>)}</div>
+                ? <div className="mt-2 text-sm text-white/70 wrap-break-word"><p className="text-white/45 text-xs">마지막 소견</p>{evaluation.lastOpinion.map((line, index) => <p key={index} className="line-clamp-2">{line}</p>)}</div>
                 : <p className="mt-2 text-xs text-white/45">이 이용자와 연결된 평가 문서가 없습니다.</p>}
         </Card>
 
@@ -57,7 +57,7 @@ export function StatusCards({ seeker, evaluation, training, employment }: Props)
                     <Row label="출석률" value={training.attendanceRate === null ? '출석 기록 없음' : `${training.attendanceRate}% (${training.attendanceDays}일 기록)`} />
                     <Row label="최근 상담일" value={training.lastCounselingDate || '기록 없음'} />
                 </dl>
-                {training.planSummary.length > 0 && <div className="mt-2 text-sm text-white/70 break-words"><p className="text-white/45 text-xs">훈련계획 요약</p>{training.planSummary.map((line, index) => <p key={index} className="line-clamp-2">{line}</p>)}</div>}
+                {training.planSummary.length > 0 && <div className="mt-2 text-sm text-white/70 wrap-break-word"><p className="text-white/45 text-xs">훈련계획 요약</p>{training.planSummary.map((line, index) => <p key={index} className="line-clamp-2">{line}</p>)}</div>}
             </> : <p className="text-sm text-white/50">훈련실 배정 기록이 없습니다.</p>}
         </Card>
 

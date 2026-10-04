@@ -7,6 +7,7 @@ import { localDateKey } from '../../utils/date';
 import { getDefaultRates, type SupportedEmploymentRates } from './rates';
 import { summarizeAttendance } from './attendance';
 import { lunarHolidayDataWarning } from './holidays';
+import { hasRecordingContent } from './recording';
 
 export const SUPPORTED_EMPLOYMENT_CASE_VERSION = 1 as const;
 export const EVALUATION_ITEM_COUNT = 20;
@@ -75,6 +76,10 @@ export interface SupportedEmploymentDocumentOptions {
     organizationName: string;
     staffName: string;
     coachDaysBasis: 'scheduled' | 'attended';
+    /** 공단 지사명(직무지도원 출근부 제목). 예전 저장본에는 없다 */
+    branchName?: string;
+    /** 사업체(업체) 담당자 — 훈련일지·출근부 확인란. 예전 저장본에는 없다 */
+    employerContactName?: string;
 }
 
 export interface SupportedEmploymentCase {
@@ -378,6 +383,8 @@ export function normalizeCase(input: unknown): SupportedEmploymentCase {
             organizationName: str(options.organizationName),
             staffName: str(options.staffName),
             coachDaysBasis: options.coachDaysBasis === 'attended' ? 'attended' : 'scheduled',
+            ...(str(options.branchName) ? { branchName: str(options.branchName) } : {}),
+            ...(str(options.employerContactName) ? { employerContactName: str(options.employerContactName) } : {}),
         };
     }
     if (typeof o.createdAt === 'string') normalized.createdAt = o.createdAt;
@@ -470,7 +477,7 @@ export function validateCase(value: SupportedEmploymentCase): CaseValidationIssu
         }
         const noTime = c.dailyLogs.filter(log => log.attendance !== '결석' && (!log.start || !log.end)).length;
         if (noTime) add('warning', 'dailyLogs', `훈련시간이 비어 있는 날이 ${noTime}일 있습니다.`);
-        const noNote = c.dailyLogs.filter(log => log.attendance !== '결석' && !log.note.trim()).length;
+        const noNote = c.dailyLogs.filter(log => log.attendance !== '결석' && !hasRecordingContent(log.note)).length;
         if (noNote) add('warning', 'dailyLogs', `평가 및 지도사항이 비어 있는 날이 ${noNote}일 있습니다.`);
         const preCount = c.dailyLogs.filter(log => log.phase === '사전').length;
         if (preCount !== c.preTrainingDays) {

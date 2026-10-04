@@ -21,6 +21,7 @@ export function EmploymentDocumentTab({
     setResult,
     resultPlaceholder,
     busy,
+    loading = false,
     isGenerating,
     isRefining,
     isSaving,
@@ -46,6 +47,7 @@ export function EmploymentDocumentTab({
     setResult: (value: string) => void;
     resultPlaceholder: string;
     busy: boolean;
+    loading?: boolean;
     isGenerating: boolean;
     isRefining: boolean;
     isSaving: boolean;
@@ -66,7 +68,7 @@ export function EmploymentDocumentTab({
             exit={{ opacity: 0, x: -10 }}
             className="w-full max-w-7xl grid grid-cols-1 xl:grid-cols-2 gap-6"
         >
-            <div className="glass-strong rounded-[2rem] p-6 border border-white/10 shadow-2xl">
+            <div className="glass-strong rounded-4xl p-6 border border-white/10 shadow-2xl">
                 <div className="flex items-start gap-3 mb-6">
                     <div className="w-11 h-11 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center shrink-0">
                         {icon}
@@ -104,7 +106,7 @@ export function EmploymentDocumentTab({
                     {fields.map(field => (
                         <label key={field.label} className="block">
                             <span className="block text-sm font-medium text-white/70 mb-1.5">{field.label}</span>
-                            <input value={field.value} onChange={e => field.onChange(e.target.value)} placeholder={field.placeholder} className="input-field" />
+                            <input disabled={loading} value={field.value} onChange={e => field.onChange(e.target.value)} placeholder={field.placeholder} className="input-field" />
                         </label>
                     ))}
                 </div>
@@ -113,7 +115,7 @@ export function EmploymentDocumentTab({
                     {textareas.map(field => (
                         <label key={field.label} className="block">
                             <span className="block text-sm font-medium text-white/70 mb-1.5">{field.label}</span>
-                            <textarea value={field.value} onChange={e => field.onChange(e.target.value)} placeholder={field.placeholder} className="textarea-field !min-h-[110px] text-sm leading-relaxed" />
+                            <textarea disabled={loading} value={field.value} onChange={e => field.onChange(e.target.value)} placeholder={field.placeholder} className="textarea-field min-h-[110px]! text-sm leading-relaxed" />
                         </label>
                     ))}
                 </div>
@@ -125,6 +127,7 @@ export function EmploymentDocumentTab({
             </div>
 
             <EmploymentResultPanel
+                loading={loading}
                 description="생성 후 직접 수정할 수 있고, 저장하면 이 이용자의 고용지원 문서로 보관됩니다."
                 result={result}
                 setResult={setResult}

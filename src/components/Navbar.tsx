@@ -94,11 +94,11 @@ export default function Navbar() {
 
     return (
         <nav aria-label="주요 메뉴" className="fixed top-0 left-0 right-0 z-40 glass-strong">
-            <div className="relative z-30 max-w-7xl 2xl:max-w-[90rem] mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="relative z-30 max-w-7xl 2xl:max-w-360 mx-auto px-4 sm:px-6 lg:px-8">
                 <div className="flex items-center justify-between h-16">
                     {/* Logo */}
                     <Link to="/" aria-label="JJSS 서비스 소개로 이동" className="flex items-center gap-2 sm:gap-3 group shrink-0">
-                        <div className="w-9 h-9 sm:w-10 sm:h-10 shrink-0 rounded-xl bg-gradient-to-br from-primary-500 to-accent-500 flex items-center justify-center shadow-[0_0_20px_rgba(79,70,229,0.3)] relative overflow-hidden">
+                        <div className="w-9 h-9 sm:w-10 sm:h-10 shrink-0 rounded-xl bg-linear-to-br from-primary-500 to-accent-500 flex items-center justify-center shadow-[0_0_20px_rgba(79,70,229,0.3)] relative overflow-hidden">
                             <div className="absolute inset-0 bg-white/20 blur-xl group-hover:bg-white/30 transition-all rounded-full" />
                             <Sparkles className="w-5 h-5 text-white relative z-10" />
                         </div>
@@ -152,7 +152,7 @@ export default function Navbar() {
                                 }}
                                 className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 rounded-xl hover:bg-white/5 transition-colors whitespace-nowrap shrink-0"
                             >
-                                <div className="w-7 h-7 sm:w-8 sm:h-8 shrink-0 rounded-full bg-gradient-to-tr from-primary-600 to-accent-600 flex items-center justify-center text-white text-xs sm:text-sm font-bold shadow-lg">
+                                <div className="w-7 h-7 sm:w-8 sm:h-8 shrink-0 rounded-full bg-linear-to-tr from-primary-600 to-accent-600 flex items-center justify-center text-white text-xs sm:text-sm font-bold shadow-lg">
                                     {profile?.displayName?.charAt(0) || 'U'}
                                 </div>
                                 <span className="text-sm font-bold text-white/90 hidden lg:inline max-w-[80px] xl:max-w-[120px] truncate">{profile?.displayName}</span>
@@ -214,7 +214,7 @@ export default function Navbar() {
                             aria-label={mobileOpen ? '모바일 메뉴 닫기' : '모바일 메뉴 열기'}
                             aria-expanded={mobileOpen}
                             aria-controls="mobile-navigation"
-                            className="md:hidden btn-ghost !p-2"
+                            className="md:hidden btn-ghost p-2!"
                             onClick={() => {
                                 setMobileOpen(!mobileOpen);
                                 setProfileOpen(false);

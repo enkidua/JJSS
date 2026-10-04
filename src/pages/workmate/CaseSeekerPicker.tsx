@@ -22,7 +22,7 @@ export function CaseSeekerPicker({ seekers, loading, selectedSeeker, onSelect }:
     const displayCaseSeekers = (showAllCaseSeekers || seekerSearch) ? filteredSeekers : filteredSeekers.slice(0, 3);
 
     return (
-        <div className="lg:col-span-3 glass-strong rounded-[2rem] p-6 border border-white/10 shadow-2xl">
+        <div className="lg:col-span-3 glass-strong rounded-4xl p-6 border border-white/10 shadow-2xl">
             <div className="flex justify-between items-center mb-6">
                 <h3 className="font-bold text-white text-lg flex items-center gap-2">
                     <UserCheck className="w-5 h-5 text-accent-400" />
@@ -33,7 +33,7 @@ export function CaseSeekerPicker({ seekers, loading, selectedSeeker, onSelect }:
 
             <div className="relative mb-6">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
-                <input className="input-field !pl-10 !py-3 text-sm border-white/5 focus:border-accent-500/50" placeholder="성함 또는 장애유형 검색"
+                <input className="input-field pl-10! py-3! text-sm border-white/5 focus:border-accent-500/50" placeholder="성함 또는 장애유형 검색"
                     aria-label="이용자 검색"
                     value={seekerSearch} onChange={e => setSeekerSearch(e.target.value)} />
             </div>
@@ -44,7 +44,7 @@ export function CaseSeekerPicker({ seekers, loading, selectedSeeker, onSelect }:
                 ) : displayCaseSeekers.length === 0 ? (
                     <div className="text-center py-12 text-white/65 text-sm">
                         <p>{seekerSearch.trim() ? '검색 조건에 맞는 이용자가 없습니다.' : '등록된 이용자가 없습니다.'}</p>
-                        {seekerSearch.trim() && <button type="button" onClick={() => setSeekerSearch('')} className="btn-secondary mt-3 !px-3 !py-2">검색 초기화</button>}
+                        {seekerSearch.trim() && <button type="button" onClick={() => setSeekerSearch('')} className="btn-secondary mt-3 px-3! py-2!">검색 초기화</button>}
                     </div>
                 ) : (
                     displayCaseSeekers.map((s, index) => {

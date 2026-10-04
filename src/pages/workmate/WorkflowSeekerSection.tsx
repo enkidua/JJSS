@@ -25,7 +25,7 @@ export function WorkflowSeekerSection({ id, label, seekers, seekerKey, onSeekerC
     const record = useRehabWorkflowRecord(seeker);
     useEffect(() => () => onDirtyChange(false), [seekerKey, onDirtyChange]);
 
-    return <div className={`glass-strong rounded-[2rem] border border-white/10 p-6 space-y-4 ${className}`}>
+    return <div className={`glass-strong rounded-4xl border border-white/10 p-6 space-y-4 ${className}`}>
         <WorkflowSeekerSelect id={id} label={label} seekers={seekers} value={seekerKey} disabled={record.saving} onChange={onSeekerChange} />
         {!seeker
             ? <p className="text-sm text-white/55">{seekerKey ? '선택한 이용자를 찾을 수 없습니다. 목록에서 다시 선택해 주세요.' : '이용자를 선택하면 저장된 기록을 불러옵니다.'}</p>

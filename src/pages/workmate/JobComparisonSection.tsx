@@ -78,7 +78,7 @@ export function JobComparisonSection({ seeker, jobs, record, onDirtyChange }: Pr
             {analysisLoadError && <p role="alert" className="text-red-200">직무분석 기록을 불러오지 못했습니다. 기존 기록은 유지됩니다.</p>}
             {relatedDocuments.map(doc => <details key={doc.id} className="rounded-lg border border-white/10 bg-white/5 p-3 mt-2">
                 <summary className="cursor-pointer text-accent-200">{doc.type === 'job_analysis' ? '저장된 직무분석' : '저장된 매칭 의견'}</summary>
-                <p className="mt-2 max-h-56 overflow-y-auto whitespace-pre-wrap break-words text-white/70">{doc.content}</p>
+                <p className="mt-2 max-h-56 overflow-y-auto whitespace-pre-wrap wrap-break-word text-white/70">{doc.content}</p>
             </details>)}
         </div>}
         {selectedJob && <form onSubmit={async event => {
@@ -101,19 +101,19 @@ export function JobComparisonSection({ seeker, jobs, record, onDirtyChange }: Pr
                 <thead><tr className="text-white/60 border-b border-white/15"><th className="p-2">항목</th><th className="p-2">이용자 희망·현황</th><th className="p-2">사업체 요구·조건</th><th className="p-2">필요한 지원·조정</th></tr></thead>
                 <tbody>{COMPARISON_ROWS.map(row => <tr key={row.key} className="border-b border-white/10 align-top">
                     <th scope="row" className="p-2 text-white/80">{row.label}</th>
-                    <td className="p-2 text-white/65 break-words max-w-48">{seekerSnapshot[row.key]}</td>
-                    <td className="p-2 text-white/65 break-words max-w-48">{jobSnapshot[row.key]}</td>
-                    <td className="p-2"><label className="sr-only" htmlFor={`need-${row.key}`}>{row.label} 필요한 지원</label><input id={`need-${row.key}`} className="input-field !py-2" value={needs[row.key]} onChange={e => setNeeds(current => ({ ...current, [row.key]: e.target.value }))} maxLength={300} placeholder="직접 확인한 지원 필요" disabled={unavailable} /></td>
+                    <td className="p-2 text-white/65 wrap-break-word max-w-48">{seekerSnapshot[row.key]}</td>
+                    <td className="p-2 text-white/65 wrap-break-word max-w-48">{jobSnapshot[row.key]}</td>
+                    <td className="p-2"><label className="sr-only" htmlFor={`need-${row.key}`}>{row.label} 필요한 지원</label><input id={`need-${row.key}`} className="input-field py-2!" value={needs[row.key]} onChange={e => setNeeds(current => ({ ...current, [row.key]: e.target.value }))} maxLength={300} placeholder="직접 확인한 지원 필요" disabled={unavailable} /></td>
                 </tr>)}</tbody>
             </table></div>
             <label className="block text-sm text-white/75 mt-4">종합 조정 방향<textarea className="textarea-field mt-1" rows={2} value={adjustment} onChange={e => setAdjustment(e.target.value)} maxLength={800} placeholder="사업체와 확인할 조정 사항, 담당자·후속 조치" disabled={unavailable} /></label>
-            <button type="submit" className="btn-primary !px-4 !py-2 mt-3" disabled={unavailable}>비교 기록 저장</button>
+            <button type="submit" className="btn-primary px-4! py-2! mt-3" disabled={unavailable}>비교 기록 저장</button>
         </form>}
         {error && <p role="alert" className="text-sm text-red-300 mt-2">{error}</p>}
         {workflow.jobComparisons.length > 0 && <div id="job-comparison-history" className="mt-5 space-y-2"><h4 className="font-semibold text-white">이전 비교 기록</h4>{workflow.jobComparisons.map(entry => <details key={entry.id} className="rounded-xl border border-white/10 bg-white/5 p-3">
             <summary className="cursor-pointer text-white/80">{entry.date} · {entry.jobLabel}</summary>
-            <div className="grid sm:grid-cols-2 gap-2 mt-3 text-sm">{COMPARISON_ROWS.map(row => <div key={row.key}><p className="text-white/50">{row.label} · 사업체 조건</p><p className="text-white/75 break-words">{entry.jobSnapshot[row.key]}</p><p className="text-accent-200 break-words">지원 필요: {entry.supportNeeds[row.key] || '미기록'}</p></div>)}</div>
-            <p className="text-sm text-white/80 mt-3 whitespace-pre-wrap break-words">조정 방향: {entry.adjustment || '미기록'}</p>
+            <div className="grid sm:grid-cols-2 gap-2 mt-3 text-sm">{COMPARISON_ROWS.map(row => <div key={row.key}><p className="text-white/50">{row.label} · 사업체 조건</p><p className="text-white/75 wrap-break-word">{entry.jobSnapshot[row.key]}</p><p className="text-accent-200 wrap-break-word">지원 필요: {entry.supportNeeds[row.key] || '미기록'}</p></div>)}</div>
+            <p className="text-sm text-white/80 mt-3 whitespace-pre-wrap wrap-break-word">조정 방향: {entry.adjustment || '미기록'}</p>
         </details>)}</div>}
     </section>;
 }

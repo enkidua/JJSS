@@ -49,7 +49,7 @@ export function ClientContextBox({
                         onClick={onLoad}
                         disabled={loading || disabled}
                         aria-busy={loading}
-                        className="btn-secondary !py-2 flex items-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="btn-secondary py-2! flex items-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         {loading ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <Clock className="w-4 h-4" aria-hidden="true" />}
                         최근 기록 참고
@@ -59,7 +59,7 @@ export function ClientContextBox({
                             type="button"
                             onClick={onClear}
                             disabled={disabled}
-                            className="btn-ghost !bg-white/5 border border-white/10 !py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="btn-ghost bg-white/5! border border-white/10 py-2! text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             참고자료 제외
                         </button>

@@ -94,10 +94,12 @@ export default function WorkTraining() {
     } = useTrainingState({ showToast, defaultYear: currentYear, onLoaded: handleLoaded });
 
     useUnsavedGuard(
-        generating !== null || saveStatus === 'error',
+        generating !== null || saveStatus === 'pending' || saveStatus === 'saving' || saveStatus === 'error',
         generating !== null
             ? 'AI가 문서를 작성하는 중입니다.\n지금 다른 메뉴로 이동하면 작성 결과를 받을 수 없습니다. 계속할까요?'
-            : '저장하지 못한 직업훈련 자료가 있습니다.\n지금 이동하면 마지막 변경 내용이 사라질 수 있습니다. 계속할까요?',
+            : saveStatus === 'error'
+                ? '저장하지 못한 직업훈련 자료가 있습니다.\n지금 이동하면 마지막 변경 내용이 사라질 수 있습니다. 계속할까요?'
+                : '직업훈련 자료의 저장이 아직 완료되지 않았습니다.\n안전하게 보관하려면 저장 완료를 기다려 주세요. 지금 다른 메뉴로 이동할까요?',
     );
 
     const selectedRoom = rooms.find(room => room.id === selectedRoomId) || rooms[0];
@@ -302,13 +304,13 @@ export default function WorkTraining() {
 
             <div className="w-full max-w-7xl">
                 {loadState === 'loading' && (
-                    <div className="glass-strong rounded-[2rem] p-8 border border-white/10 text-center text-white/60 flex items-center justify-center gap-3" role="status">
+                    <div className="glass-strong rounded-4xl p-8 border border-white/10 text-center text-white/60 flex items-center justify-center gap-3" role="status">
                         <Loader2 className="w-5 h-5 animate-spin" />
                         저장된 직업훈련 자료를 불러오는 중입니다.
                     </div>
                 )}
                 {loadState === 'failed' && (
-                    <div className="glass-strong rounded-[2rem] p-8 border border-rose-400/30 bg-rose-500/10 text-center" role="alert">
+                    <div className="glass-strong rounded-4xl p-8 border border-rose-400/30 bg-rose-500/10 text-center" role="alert">
                         <AlertTriangle className="w-8 h-8 text-rose-300 mx-auto mb-3" />
                         <p className="text-lg font-black text-white">저장된 직업훈련 자료를 불러오지 못했습니다.</p>
                         <p className="text-sm text-white/60 mt-2">기존 자료가 빈 내용으로 덮어써지지 않도록 편집과 자동 저장을 멈췄습니다. 잠시 후 다시 불러와 주세요.</p>

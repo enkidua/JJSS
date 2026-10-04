@@ -4,7 +4,8 @@ import {
     Wand2, ClipboardList,
     Pen, Lightbulb, Loader2, Sparkles, Newspaper,
     Megaphone, ScanText, CalendarDays, FileText, Smile, LayoutTemplate,
-    Wrench, BarChart3, ExternalLink, MousePointer2, Briefcase, Home, Compass, PieChart, ShieldCheck, Layout, FileSearch, Presentation,
+    Wrench, BarChart3, ExternalLink, MousePointer2, Briefcase, Home, Compass, PieChart, ShieldCheck, Layout, Presentation,
+    Layers, Camera, Keyboard, Palette, ClipboardCheck, Gamepad2, Smartphone,
     ShieldAlert, MessageSquare, type LucideIcon
 } from 'lucide-react';
 import { generateText, PromptType, BlogLength, BlogPurpose } from '../services/gemini';
@@ -279,55 +280,114 @@ const TOOL_CATEGORIES: { id: ToolCategory; title: string; description: string }[
     { id: 'planning', title: '기획 및 위기대응', description: '위기대응, 이름/제목 생성처럼 기획과 판단 보조에 쓰는 도구입니다.' },
 ];
 
-const EXTERNAL_TOOLS = [
+interface ExternalTool {
+    title: string;
+    url: string;
+    description: string;
+    icon: LucideIcon;
+    color: string;
+    gradient: string;
+    /** 같은 도구의 다른 설치·이용 경로(예: 안드로이드 앱) */
+    extraLinks?: { label: string; url: string }[];
+}
+
+const EXTERNAL_TOOLS: ExternalTool[] = [
     {
-        title: '이력서 작성 프로그램',
-        url: 'https://service-459909947241.us-west1.run.app/',
-        description: 'AI 기반 맞춤형 이력서 및 자기소개서 작성 도구',
+        title: '꿈꾸는 이력서',
+        url: 'https://remix-218446321702.us-west1.run.app/',
+        description: '발달장애인 이력서 작성 지원. 복잡한 문서 작성을 이용자 친화적인 질문 흐름으로 바꾼 서비스입니다.',
         icon: FileText,
         color: 'text-blue-400',
-        gradient: 'from-blue-500 to-indigo-600'
+        gradient: 'from-blue-500 to-indigo-600',
     },
     {
-        title: '척척이 - 무장애 업무 보조 어시스턴트',
-        url: 'https://chromewebstore.google.com/detail/lafcomblpgecmflfjdldfgaabdanphmf?utm_source=item-share-cb',
-        description: '크롬 브라우저에서 사용 가능한 무장애 업무 보조 확장 프로그램',
-        icon: MousePointer2,
-        color: 'text-purple-400',
-        gradient: 'from-purple-500 to-violet-600'
-    },
-    {
-        title: '발달장애인 사무직 지원 앱',
-        url: 'https://dulcet-cucurucho-729ff5.netlify.app/',
-        description: '사무직 직무 수행을 돕는 맞춤형 보조 애플리케이션',
-        icon: Briefcase,
-        color: 'text-emerald-400',
-        gradient: 'from-emerald-500 to-teal-600'
-    },
-    {
-        title: '재택근무 훈련지원 시스템',
+        title: '재택근무 훈련 시스템',
         url: 'https://keen-bombolone-45fda8.netlify.app/',
-        description: '재택근무 환경 적응 및 직무 훈련을 지원하는 시스템',
+        description: '서울장애인종합복지관 재택근무 훈련 시스템. 교육·훈련 과정을 웹서비스로 구조화했습니다.',
         icon: Home,
         color: 'text-rose-400',
-        gradient: 'from-rose-500 to-pink-600'
+        gradient: 'from-rose-500 to-pink-600',
     },
     {
-        title: '발달장애인 진로선택 지원 프로그램',
+        title: 'JJSS 직업재활지원시스템',
+        url: 'https://github.com/enkidua/JJSS/releases/tag/2.3',
+        description: '상담과 취업지원처럼 반복되는 직업재활 업무를 하나의 업무시스템으로 묶은 프로그램입니다.',
+        icon: Layers,
+        color: 'text-sky-400',
+        gradient: 'from-sky-500 to-blue-600',
+    },
+    {
+        title: 'AR JobLens',
+        url: 'https://tilnote.io/pages/6a170b9fe731abd590f6cb06',
+        description: '웹캠 기반 직업평가 보조도구. 점수 산출보다 실제 과업 수행과 지원 필요를 관찰하는 데 씁니다.',
+        icon: Camera,
+        color: 'text-fuchsia-400',
+        gradient: 'from-fuchsia-500 to-purple-600',
+    },
+    {
+        title: '타닥(TADAK)',
+        url: 'https://tadak.enkidua82.workers.dev',
+        description: '발달장애인을 위한 게임형 타자연습. 키보드 위치부터 자음·모음, 단어, 문장까지 단계별로 익히고 자주 틀리는 키를 다시 연습합니다.',
+        icon: Keyboard,
+        color: 'text-lime-400',
+        gradient: 'from-lime-500 to-green-600',
+    },
+    {
+        title: '척척이',
+        url: 'https://chromewebstore.google.com/detail/lafcomblpgecmflfjdldfgaabdanphmf',
+        description: '발달장애인 근로자를 위한 무장애 업무 보조 Chrome 확장프로그램. 어려운 메일·공지·문서를 쉽게 설명하고 스스로 결정하도록 돕습니다.',
+        icon: MousePointer2,
+        color: 'text-purple-400',
+        gradient: 'from-purple-500 to-violet-600',
+    },
+    {
+        title: '나의 일자리 찾기',
         url: 'https://workplacetours.netlify.app/',
-        description: '다양한 직업 세계 탐색 및 진로 선택을 돕는 프로그램',
+        description: '발달장애인 진로선택 지원 프로그램. 직업과 근무환경을 직접 살펴보고 비교하며 진로를 고릅니다.',
         icon: Compass,
         color: 'text-amber-400',
-        gradient: 'from-amber-500 to-orange-600'
+        gradient: 'from-amber-500 to-orange-600',
+    },
+    {
+        title: 'CanDo',
+        url: 'https://dulcet-cucurucho-729ff5.netlify.app/',
+        description: '발달장애인 사무직 업무지원 프로그램. 사무환경에서 필요한 업무를 이해하고 연습하도록 세분화했습니다.',
+        icon: Briefcase,
+        color: 'text-emerald-400',
+        gradient: 'from-emerald-500 to-teal-600',
+        extraLinks: [{ label: '안드로이드 앱(원스토어)', url: 'https://m.onestore.co.kr/v2/ko-kr/app/0001004709?scYn=Y' }],
+    },
+    {
+        title: 'Vibe Coding Design Lab',
+        url: 'https://vibe-coding-design-lab.enkidua.chatgpt.site/',
+        description: 'AI 웹앱 디자인 실험실. 여러 UI 디자인 콘셉트를 실제 화면으로 비교하고 관련 프롬프트를 활용합니다.',
+        icon: Palette,
+        color: 'text-pink-400',
+        gradient: 'from-pink-500 to-rose-600',
+    },
+    {
+        title: 'VibeGuard Skills',
+        url: 'https://vibeguard-skills.vercel.app/',
+        description: '안전한 바이브코딩을 위한 개발 기준 생성도구. 데이터·권한·보안·테스트 기준을 담은 Skills.md 기본 틀을 만듭니다.',
+        icon: ClipboardCheck,
+        color: 'text-yellow-400',
+        gradient: 'from-yellow-500 to-amber-600',
+    },
+    {
+        title: 'Job Quest',
+        url: 'https://job-quest.pages.dev/',
+        description: '발달장애인 직무체험·직무탐색 게임. 11가지 직업, 100여 개 직무를 체험하며 진로를 정합니다.',
+        icon: Gamepad2,
+        color: 'text-red-400',
+        gradient: 'from-red-500 to-orange-600',
     },
     {
         title: '직업재활 시각화 사이트',
         url: 'https://welfare-insight-90344221755.us-west1.run.app/',
-        isNew: true,
         description: '직업재활 데이터를 시각화하여 한눈에 파악할 수 있는 대시보드',
         icon: PieChart,
         color: 'text-indigo-400',
-        gradient: 'from-indigo-500 to-blue-600'
+        gradient: 'from-indigo-500 to-blue-600',
     },
     {
         title: '개인정보 비식별화 앱',
@@ -335,7 +395,7 @@ const EXTERNAL_TOOLS = [
         description: 'AI가 문서 내 개인정보를 자동으로 찾아 비식별 처리합니다.',
         icon: ShieldCheck,
         color: 'text-gray-400',
-        gradient: 'from-gray-500 to-slate-600'
+        gradient: 'from-gray-500 to-slate-600',
     },
     {
         title: 'PCP 대쉬보드',
@@ -343,15 +403,7 @@ const EXTERNAL_TOOLS = [
         description: '개인중심계획(PCP) 수립 및 관리를 위한 인터랙티브 대시보드',
         icon: Layout,
         color: 'text-cyan-400',
-        gradient: 'from-cyan-500 to-blue-600'
-    },
-    {
-        title: '공문서 인공지능 가독성 변환',
-        url: 'https://lucid-doc-459909947241.us-west1.run.app/',
-        description: '복잡한 공문서를 누구나 이해하기 쉬운 문장으로 변환합니다.',
-        icon: FileSearch,
-        color: 'text-teal-400',
-        gradient: 'from-teal-400 to-emerald-500'
+        gradient: 'from-cyan-500 to-blue-600',
     },
     {
         title: 'PDF → 파워포인트 변환·수정',
@@ -359,8 +411,8 @@ const EXTERNAL_TOOLS = [
         description: 'PDF 문서를 편집 가능한 파워포인트(PPTX) 파일로 변환하고 수정합니다.',
         icon: Presentation,
         color: 'text-orange-400',
-        gradient: 'from-orange-500 to-red-600'
-    }
+        gradient: 'from-orange-500 to-red-600',
+    },
 ];
 
 const LEAVE_TOOL_MESSAGE = '도구 목록으로 돌아가면 현재 입력과 결과가 사라집니다. 돌아갈까요?';
@@ -435,7 +487,7 @@ export default function AITools() {
 
             setToolLoading(true);
             // 새 결과가 나오면 교체하고, 실패하면 이전 결과를 그대로 둡니다.
-            const result = await generateText(activeTool.id, promptStr, undefined, { blogLength, blogPurpose });
+            const result = await generateText(activeTool.id, promptStr, undefined, { blogLength, blogPurpose, featureKey: 'ai-tools', documentType: activeTool.id });
             setToolResult(result);
         } catch (err: unknown) {
             setToolError(err instanceof Error && err.message ? err.message : '도구 실행 중 오류가 발생했습니다.');
@@ -464,7 +516,7 @@ export default function AITools() {
                         <div className="glass-strong rounded-2xl p-6 border border-white/10">
                             <div className="flex items-center gap-3 mb-6">
                                 <h2 className="text-2xl font-black text-white flex items-center gap-3">
-                                    <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${tool.gradient} flex items-center justify-center shadow-lg`}>
+                                    <div className={`w-10 h-10 rounded-xl bg-linear-to-br ${tool.gradient} flex items-center justify-center shadow-lg`}>
                                         <Icon className="w-5 h-5 text-white" />
                                     </div>
                                     {tool.title}
@@ -508,7 +560,7 @@ export default function AITools() {
 
                                 <AiTransmissionNotice />
 
-                                <button type="button" onClick={() => void runTool()} disabled={toolLoading} className="btn-primary w-full flex items-center justify-center gap-2 !py-3.5 mt-6">
+                                <button type="button" onClick={() => void runTool()} disabled={toolLoading} className="btn-primary w-full flex items-center justify-center gap-2 py-3.5! mt-6">
                                     {toolLoading
                                         ? <><Loader2 className="w-5 h-5 animate-spin" /> 생성 중...</>
                                         : <><Sparkles className="w-5 h-5" /> {toolResult ? '다시 생성하기' : '생성하기'}</>}
@@ -624,7 +676,7 @@ export default function AITools() {
                                                                 }}
                                                                 className="text-left glass-strong rounded-2xl p-6 border border-white/10 hover:border-white/20 cursor-pointer transition-all duration-300 hover:scale-[1.02] hover:shadow-lg group min-h-[260px] flex flex-col"
                                                             >
-                                                                <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${tool.gradient} flex items-center justify-center mb-4 shadow-lg group-hover:scale-110 transition-transform`}>
+                                                                <div className={`w-12 h-12 rounded-xl bg-linear-to-br ${tool.gradient} flex items-center justify-center mb-4 shadow-lg group-hover:scale-110 transition-transform`}>
                                                                     <Icon className="w-6 h-6 text-white" />
                                                                 </div>
                                                                 <h3 className="text-white font-bold text-lg mb-2 flex items-center gap-2 flex-wrap">
@@ -650,25 +702,45 @@ export default function AITools() {
                                     {EXTERNAL_TOOLS.map((tool, i) => {
                                         const Icon = tool.icon;
                                         return (
-                                            <motion.a
+                                            <motion.div
                                                 key={tool.url}
-                                                href={tool.url}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
                                                 initial={{ opacity: 0, y: 20 }}
                                                 animate={{ opacity: 1, y: 0 }}
                                                 transition={{ delay: i * 0.05 }}
-                                                className="glass-strong rounded-2xl p-6 border border-white/10 hover:border-white/20 cursor-pointer transition-all duration-300 hover:scale-[1.02] hover:shadow-lg group block"
+                                                className="glass-strong rounded-2xl border border-white/10 hover:border-white/20 transition-all duration-300 hover:scale-[1.02] hover:shadow-lg group flex flex-col"
                                             >
-                                                <div className="flex justify-between items-start mb-4">
-                                                    <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${tool.gradient} flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform`}>
-                                                        <Icon className="w-6 h-6 text-white" />
+                                                <a
+                                                    href={tool.url}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="block p-6 flex-1 rounded-2xl focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-primary-400"
+                                                >
+                                                    <div className="flex justify-between items-start mb-4">
+                                                        <div className={`w-12 h-12 rounded-xl bg-linear-to-br ${tool.gradient} flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform`}>
+                                                            <Icon className="w-6 h-6 text-white" />
+                                                        </div>
+                                                        <ExternalLink className="w-4 h-4 text-white/20 group-hover:text-white/50 transition-colors" />
                                                     </div>
-                                                    <ExternalLink className="w-4 h-4 text-white/20 group-hover:text-white/50 transition-colors" />
-                                                </div>
-                                                <h3 className="text-white font-bold text-lg mb-2">{tool.title}</h3>
-                                                <p className="text-white/40 text-sm leading-relaxed">{tool.description}</p>
-                                            </motion.a>
+                                                    <h3 className="text-white font-bold text-lg mb-2">{tool.title}</h3>
+                                                    <p className="text-white/40 text-sm leading-relaxed">{tool.description}</p>
+                                                </a>
+                                                {tool.extraLinks?.length ? (
+                                                    <div className="px-6 pb-5 -mt-2 flex flex-wrap gap-2">
+                                                        {tool.extraLinks.map(link => (
+                                                            <a
+                                                                key={link.url}
+                                                                href={link.url}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="inline-flex items-center gap-1 rounded-lg border border-white/15 px-2.5 py-1 text-xs font-bold text-white/60 hover:text-white hover:border-white/30 transition-colors"
+                                                            >
+                                                                <Smartphone className="w-3.5 h-3.5" />
+                                                                {link.label}
+                                                            </a>
+                                                        ))}
+                                                    </div>
+                                                ) : null}
+                                            </motion.div>
                                         );
                                     })}
                                 </div>

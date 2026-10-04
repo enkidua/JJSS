@@ -49,7 +49,8 @@ export async function executeAIRequestPlan<T>(
             if (!isPremiumAutomaticCandidateAllowed(candidate, failover)) continue;
 
             if (candidate.tier === 'premium' && candidate.automatic && failover.confirmBeforePremium) {
-                const decision = await options.confirmPremium(candidate);
+                // 확인창을 기다리는 시간은 작업 시간제한에 넣지 않는다(답하는 사이 시간 초과로 끝나지 않게).
+                const decision = await options.job.pauseTimeoutWhile(() => options.confirmPremium(candidate));
                 options.job.assertActive();
                 if (decision === 'cancel') {
                     options.job.cancel();

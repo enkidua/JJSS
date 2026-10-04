@@ -69,7 +69,7 @@ export default function BudgetIntegrityPanel({ projects, expenses, onEditExpense
                                 {group.items.map((issue, index) => (
                                     <li
                                         key={`${issue.kind}-${issue.expense?.id || issue.project?.id || index}`}
-                                        className="flex items-center justify-between gap-3 rounded-xl bg-white/[0.03] border border-white/10 px-3 py-2"
+                                        className="flex items-center justify-between gap-3 rounded-xl bg-white/3 border border-white/10 px-3 py-2"
                                     >
                                         <span className="text-xs text-white/70 break-all">{issue.message}</span>
                                         <button

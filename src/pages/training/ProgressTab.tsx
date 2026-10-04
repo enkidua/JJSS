@@ -60,7 +60,7 @@ export function ProgressTab({
     };
 
     return (
-        <div className="glass-strong rounded-[2rem] p-6 border border-white/10 shadow-2xl">
+        <div className="glass-strong rounded-4xl p-6 border border-white/10 shadow-2xl">
             <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6">
                 <div>
                     <h2 className="text-2xl font-black text-white">훈련상황 진도</h2>
@@ -78,7 +78,7 @@ export function ProgressTab({
                     const doneCount = programDefinitions.filter(program => checked[program.key].checked).length;
                     const isExpanded = expandedTraineeId === trainee.id;
                     return (
-                        <div key={trainee.id} className={`rounded-3xl border transition-all ${isExpanded ? 'bg-emerald-500/[0.06] border-emerald-400/25 p-5' : 'bg-white/[0.03] border-white/10 p-4'}`}>
+                        <div key={trainee.id} className={`rounded-3xl border transition-all ${isExpanded ? 'bg-emerald-500/6 border-emerald-400/25 p-5' : 'bg-white/3 border-white/10 p-4'}`}>
                             <button type="button" aria-expanded={isExpanded} onClick={() => setExpandedTraineeId(isExpanded ? '' : trainee.id)} className="w-full flex items-center justify-between gap-3 text-left">
                                 <div>
                                     <h3 className="font-black text-white">{trainee.name}</h3>
@@ -113,7 +113,7 @@ export function ProgressTab({
                                                 onChange={e => updateProgramNote(trainee.id, program.key, e.target.value)}
                                                 placeholder="어떤 훈련을 진행해서 체크했는지 기록하세요. 예: 출퇴근 경로 연습, 모의면접 2회, 사업체 현장실습 1회"
                                                 aria-label={`${trainee.name} ${program.label} 기록`}
-                                                className="textarea-field !min-h-[72px] text-xs leading-relaxed"
+                                                className="textarea-field min-h-[72px]! text-xs leading-relaxed"
                                             />
                                         </div>
                                     ))}

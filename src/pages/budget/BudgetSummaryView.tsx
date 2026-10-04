@@ -23,7 +23,7 @@ function barWidth(value: number, max: number): number {
 function SimpleTotalsTable({ title, firstColumn, rows }: { title: string; firstColumn: string; rows: TotalRow[] }) {
     const max = Math.max(0, ...rows.map(row => row.total));
     return (
-        <div className="rounded-2xl bg-white/[0.03] border border-white/10 p-4">
+        <div className="rounded-2xl bg-white/3 border border-white/10 p-4">
             <h3 className="text-sm font-bold text-white mb-3">{title}</h3>
             {rows.length === 0 ? (
                 <p className="text-xs text-white/40">지출이 없습니다.</p>
@@ -84,7 +84,7 @@ export default function BudgetSummaryView({ projects, expenses, totalsOptions, h
                 </button>
             </div>
 
-            <div className="rounded-2xl bg-white/[0.03] border border-white/10 p-4 overflow-x-auto">
+            <div className="rounded-2xl bg-white/3 border border-white/10 p-4 overflow-x-auto">
                 <h3 className="text-sm font-bold text-white mb-3">사업별</h3>
                 {projectRows.length === 0 ? (
                     <p className="text-xs text-white/40">등록된 사업이나 지출이 없습니다.</p>

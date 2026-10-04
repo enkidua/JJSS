@@ -236,6 +236,44 @@ assert.equal(premiumResult.value, 'premium success');
 assert.equal(premiumResult.candidate.tier, 'premium');
 assert.equal(premiumConfirmations, 1);
 
+// 고성능 모델 확인창을 시간제한보다 오래 열어 두어도, 답한 뒤 호출이 시간 초과로 끝나지 않는다.
+testJobSequence += 1;
+const slowConfirmJob = beginAIRequestJob({
+    featureKey: `slow-confirm:${testJobSequence}`,
+    requestFingerprint: createAIRequestFingerprint(testJobSequence),
+    timeoutMs: 60,
+});
+const slowResult = await executeAIRequestPlan({
+    job: slowConfirmJob,
+    candidates: premiumAutoOnPlan,
+    failover: { ...premiumBase, allowPremiumAutoUpgrade: true, confirmBeforePremium: true },
+    classifyReason: () => 'modelUnavailable',
+    confirmPremium: () => new Promise(resolve => setTimeout(() => resolve('use'), 150)),
+    call: async candidate => {
+        if (candidate.tier !== 'premium') throw Object.assign(new Error('model unavailable'), { status: 404 });
+        return 'answered after slow confirmation';
+    },
+});
+assert.equal(slowResult.value, 'answered after slow confirmation');
+// 확인창 밖의 시간은 그대로 센다: 응답이 시간제한보다 늦으면 시간 초과로 끝난다.
+testJobSequence += 1;
+const slowCallJob = beginAIRequestJob({
+    featureKey: `slow-call:${testJobSequence}`,
+    requestFingerprint: createAIRequestFingerprint(testJobSequence),
+    timeoutMs: 60,
+});
+await assert.rejects(executeAIRequestPlan({
+    job: slowCallJob,
+    candidates: premiumAutoOnPlan,
+    failover: { ...premiumBase, allowPremiumAutoUpgrade: true, confirmBeforePremium: true },
+    classifyReason: () => 'modelUnavailable',
+    confirmPremium: async () => 'use',
+    call: (_candidate, context) => new Promise((resolve, reject) => {
+        const timer = setTimeout(() => resolve('too late'), 300);
+        context.signal.addEventListener('abort', () => { clearTimeout(timer); reject(context.signal.reason); }, { once: true });
+    }),
+}), error => error?.code === 'AI_REQUEST_TIMEOUT');
+
 const canceledCalls = [];
 await assert.rejects(
     executeAIRequestPlan({

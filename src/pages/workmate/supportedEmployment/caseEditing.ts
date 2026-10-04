@@ -7,6 +7,7 @@ import { addDaysKey, getHolidayName, isWeekend } from '../../../features/support
 import { buildCoachTimesheetFromLogs, generateTrainingDays, syncDailyLogs, timeRangeHours } from '../../../features/supportedEmployment/schedule';
 import { summarizeAttendance } from '../../../features/supportedEmployment/attendance';
 import { calculatePayments } from '../../../features/supportedEmployment/calc';
+import { hasRecordingContent, printableRecordingNote } from '../../../features/supportedEmployment/recording';
 import {
     parseCase,
     EVALUATION_GROUPS,
@@ -86,7 +87,18 @@ export function planSchedule(current: SupportedEmploymentCase, patch: Partial<Pi
     const template = first ? { start: first.start, end: first.end, task: first.task, commuteGuidance: first.commuteGuidance } : {};
     const logs = syncDailyLogs(days, current.dailyLogs, template);
     const keptDates = new Set(logs.map(log => log.date));
-    const droppedWithContent = current.dailyLogs.filter(log => !keptDates.has(log.date) && hasLogContent(log)).map(log => log.date);
+    // 지도사항·과제뿐 아니라 그날만 고친 훈련시간, 출근부에서 고친 지도시간·연장시간도 "내용"이다.
+    // 이것만 고친 날이 기간 밖으로 빠질 때도 확인 없이 지워지지 않게 한다.
+    const entryByDate = new Map(current.coachTimesheet.map(entry => [entry.date, entry]));
+    const timeEdited = (log: SupportedEmploymentDailyLog) =>
+        Boolean(first) && log.attendance !== '결석' && (log.start !== first!.start || log.end !== first!.end);
+    const timesheetEdited = (log: SupportedEmploymentDailyLog) => {
+        const entry = entryByDate.get(log.date);
+        return Boolean(entry) && (entry!.overtime > 0 || entry!.start !== log.start || entry!.end !== log.end);
+    };
+    const droppedWithContent = current.dailyLogs
+        .filter(log => !keptDates.has(log.date) && (hasLogContent(log) || timeEdited(log) || timesheetEdited(log)))
+        .map(log => log.date);
     return {
         next: {
             ...merged,
@@ -213,9 +225,10 @@ export function buildOpinionPrompt(c: SupportedEmploymentCase): string {
     const scoreLine = (scores: Array<number | null>, from: number) =>
         scores.slice(from, from + 5).map(score => (score === null ? '-' : String(score))).join(', ');
     const notes = c.dailyLogs
-        .filter(log => log.note.trim() || log.task.trim())
+        // 작성 틀 제목만 있는 지도사항은 기록이 아니다(AI가 틀 제목을 관찰 내용으로 읽지 않게 뺀다).
+        .filter(log => hasRecordingContent(log.note) || log.task.trim())
         .slice(0, 40)
-        .map(log => `- ${log.date} (${log.phase}, ${log.attendance}) 과제: ${log.task || '-'} / 수행정도: ${log.performanceHours || '-'} / 지도사항: ${log.note || '-'}`);
+        .map(log => `- ${log.date} (${log.phase}, ${log.attendance}) 과제: ${log.task || '-'} / 수행정도: ${log.performanceHours || '-'} / 지도사항: ${printableRecordingNote(log.note) || '-'}`);
     return [
         '아래는 지원고용 훈련생 한 명의 훈련일지 지도사항과 종합 평가기록부 점수(1~5점)입니다.',
         '기록에 있는 내용만 근거로, 평가기록부의 네 영역 소견을 각각 2~3문장으로 작성해 주세요. 없는 사실은 만들지 말고, 근거가 부족하면 "관찰 기록 부족"이라고 적어 주세요.',

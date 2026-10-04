@@ -9,6 +9,7 @@ import {
     type ReceiptParseResult,
 } from '../../services/ocr';
 import { toAmount } from '../../utils/currency';
+import { planReceiptAmounts } from './receiptAmounts';
 import { parseLocalDate } from '../../utils/date';
 
 export type ReceiptApplyMode = 'parsed' | 'firstItem' | 'allItems';
@@ -16,13 +17,6 @@ export type ReceiptApplyMode = 'parsed' | 'firstItem' | 'allItems';
 interface ReceiptSource {
     fileName: string;
     rawText: string;
-}
-
-/** 입력칸에 넣을 양수 금액. 음수·0·빈값은 undefined(부호를 잃고 양수로 바뀌지 않게 부호를 먼저 해석). */
-function toPositiveAmount(value: unknown): number | undefined {
-    if (value === undefined || value === null || String(value).trim() === '') return undefined;
-    const parsed = toAmount(value, { allowNegative: true });
-    return parsed > 0 ? parsed : undefined;
 }
 
 /** 할인·취소처럼 음수인 품목도 합계에 반영합니다. */
@@ -41,13 +35,11 @@ export function buildReceiptItemsSummary(items: ReceiptItem[] = []) {
     return items.map(item => `${item.description} ${toSignedAmount(item.amount).toLocaleString()}원`).join(', ');
 }
 
-/** OCR 결과를 기존 입력값 위에 덮어씁니다. OCR에 없는 칸(사업·세부 항목 등)은 그대로 둡니다. */
-function mergeReceiptIntoForm(
-    prev: Partial<Expense>,
+/** 적용 방식(전체 품목·첫 품목·영수증 요약)에 따라 입력칸에 넣을 값을 고릅니다. */
+function pickReceiptValues(
     parsed: ReceiptParseResult & { items?: ReceiptItem[] },
     mode: ReceiptApplyMode,
-    source: ReceiptSource,
-): Partial<Expense> {
+): { nextParsed: ReceiptParseResult; notesExtra: string } {
     const items = parsed.items || [];
     let nextParsed: ReceiptParseResult = { ...parsed };
     let notesExtra = '';
@@ -82,7 +74,17 @@ function mergeReceiptIntoForm(
     } else if (items.length) {
         notesExtra = `OCR 품목 요약: ${buildReceiptItemsSummary(items)}`;
     }
+    return { nextParsed, notesExtra };
+}
 
+/** OCR 결과를 기존 입력값 위에 덮어씁니다. OCR에 없는 칸(사업·세부 항목 등)은 그대로 둡니다. */
+function mergeReceiptIntoForm(
+    prev: Partial<Expense>,
+    parsed: ReceiptParseResult & { items?: ReceiptItem[] },
+    mode: ReceiptApplyMode,
+    source: ReceiptSource,
+): Partial<Expense> {
+    const { nextParsed, notesExtra } = pickReceiptValues(parsed, mode);
     const next: Partial<Expense> = { ...prev };
     const setTextIfPresent = (key: 'vendor' | 'vendorBizNo' | 'description' | 'paymentMethod' | 'cardType' | 'approvalNo', value: string | undefined) => {
         if (value !== undefined && value !== null && String(value).trim() !== '') next[key] = value;
@@ -98,18 +100,14 @@ function mergeReceiptIntoForm(
     if (lastFour) next.cardLastFour = lastFour;
     setTextIfPresent('approvalNo', nextParsed.approvalNo);
 
-    const quantity = toPositiveAmount(nextParsed.quantity);
-    const unitPrice = toPositiveAmount(nextParsed.unitPrice);
-    const supplyAmount = toPositiveAmount(nextParsed.supplyAmount);
-    const vat = toPositiveAmount(nextParsed.vat);
-    let amount = toPositiveAmount(nextParsed.amount);
-    if (!amount && quantity && unitPrice) amount = quantity * unitPrice;
-
-    if (quantity) next.quantity = quantity;
-    if (unitPrice) next.unitPrice = unitPrice;
-    if (supplyAmount) next.supplyAmount = supplyAmount;
-    if (vat) next.vat = vat;
-    if (amount) next.amount = amount;
+    const amounts = planReceiptAmounts(nextParsed);
+    if (amounts) {
+        next.quantity = amounts.quantity;
+        next.unitPrice = amounts.unitPrice;
+        next.supplyAmount = amounts.supplyAmount;
+        next.vat = amounts.vat;
+        next.amount = amounts.amount;
+    }
 
     const existingNotes = (prev.notes || '')
         .split('\n')
@@ -145,7 +143,10 @@ export function useReceiptOcr(setForm: Dispatch<SetStateAction<Partial<Expense>>
 
     const applyOcrResult = (parsed: ReceiptParseResult & { items?: ReceiptItem[] }, mode: ReceiptApplyMode, source: ReceiptSource) => {
         setForm(prev => mergeReceiptIntoForm(prev, parsed, mode, source));
-        setOcrMessage('OCR 결과를 입력칸에 반영했습니다. 저장 전 내용을 확인해 주세요.');
+        const missing = planReceiptAmounts(pickReceiptValues(parsed, mode).nextParsed)?.missing ?? [];
+        setOcrMessage(missing.length
+            ? `OCR 결과를 입력칸에 반영했습니다. 영수증에서 ${missing.join('·')}을(를) 찾지 못해 비워 두었습니다. 과세 여부와 금액을 확인해 입력해 주세요.`
+            : 'OCR 결과를 입력칸에 반영했습니다. 저장 전 내용을 확인해 주세요.');
         onApplied?.();
     };
 

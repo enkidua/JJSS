@@ -77,8 +77,8 @@ export function TrainingTimelineStage({
     return (
         <motion.div
             layout
-            className={`glass-strong rounded-[2rem] border overflow-hidden transition-all ${
-                hasHistory || hasDraft ? 'border-blue-400/35 bg-blue-500/[0.04]' : 'border-white/10'
+            className={`glass-strong rounded-4xl border overflow-hidden transition-all ${
+                hasHistory || hasDraft ? 'border-blue-400/35 bg-blue-500/4' : 'border-white/10'
             }`}
         >
             <div className="p-6 md:p-8">
@@ -147,7 +147,7 @@ export function TrainingTimelineStage({
                         <div className="space-y-5 max-h-[760px] overflow-y-auto pr-3 custom-scrollbar border-l-2 border-white/5 pl-4 ml-2 relative">
                             {history.map((item, index) => (
                                 <div key={index} className="relative">
-                                    <div className="absolute -left-[23px] top-4 w-3 h-3 rounded-full border-4 border-[#12121a] bg-emerald-400" />
+                                    <div className="absolute left-[-23px] top-4 w-3 h-3 rounded-full border-4 border-[#12121a] bg-emerald-400" />
                                     <div className="p-5 rounded-3xl bg-emerald-500/5 border border-emerald-500/20">
                                         <div className="flex justify-between items-center mb-3">
                                             <span className="text-xs font-bold flex items-center gap-2 text-emerald-400">
@@ -177,7 +177,7 @@ export function TrainingTimelineStage({
                                             value={item}
                                             onChange={event => onHistoryChange(index, event.target.value)}
                                             aria-label={`${index + 1}회기 상담일지 내용`}
-                                            className="textarea-field !bg-black/20 !border-none !p-4 rounded-2xl !min-h-[220px] !max-h-[620px] text-sm leading-relaxed text-white/85 resize-y"
+                                            className="textarea-field bg-black/20! border-none! p-4! rounded-2xl min-h-[220px]! max-h-[620px]! text-sm leading-relaxed text-white/85 resize-y"
                                         />
                                     </div>
                                 </div>
@@ -204,19 +204,19 @@ export function TrainingTimelineStage({
                                 value={activeText}
                                 onChange={e => activeSetText(e.target.value)}
                                 aria-label={activeTitle}
-                                className="textarea-field !bg-black/30 border-accent-500/20 !min-h-[180px] !max-h-[460px] text-sm leading-relaxed font-sans resize-y"
+                                className="textarea-field bg-black/30! border-accent-500/20 min-h-[180px]! max-h-[460px]! text-sm leading-relaxed font-sans resize-y"
                             />
                         </div>
                     )}
 
-                    <div className="rounded-3xl bg-white/[0.03] border border-white/10 overflow-hidden">
+                    <div className="rounded-3xl bg-white/3 border border-white/10 overflow-hidden">
                         <div className="grid grid-cols-2 border-b border-white/10">
                             <button
                                 type="button"
                                 aria-pressed={documentMode === 'counseling'}
                                 onClick={() => setDocumentMode('counseling')}
                                 className={`py-3 text-center text-sm font-black transition-colors ${
-                                    documentMode === 'counseling' ? 'text-emerald-300 bg-emerald-500/10 border-b-2 border-emerald-400' : 'text-white/35 bg-white/[0.02] hover:text-white/70'
+                                    documentMode === 'counseling' ? 'text-emerald-300 bg-emerald-500/10 border-b-2 border-emerald-400' : 'text-white/35 bg-white/2 hover:text-white/70'
                                 }`}
                             >
                                 상담일지 추가
@@ -226,7 +226,7 @@ export function TrainingTimelineStage({
                                 aria-pressed={documentMode === 'evaluation'}
                                 onClick={() => setDocumentMode('evaluation')}
                                 className={`py-3 text-center text-sm font-black transition-colors ${
-                                    documentMode === 'evaluation' ? 'text-emerald-300 bg-emerald-500/10 border-b-2 border-emerald-400' : 'text-white/35 bg-white/[0.02] hover:text-white/70'
+                                    documentMode === 'evaluation' ? 'text-emerald-300 bg-emerald-500/10 border-b-2 border-emerald-400' : 'text-white/35 bg-white/2 hover:text-white/70'
                                 }`}
                             >
                                 정기평가 작성
@@ -242,7 +242,7 @@ export function TrainingTimelineStage({
                                 onChange={e => (isEvaluation ? onEvaluationMemoChange(e.target.value) : onMemoChange(e.target.value))}
                                 aria-label={isEvaluation ? '정기평가 입력 메모' : '상담 입력 메모'}
                                 placeholder={isEvaluation ? '목표 달성도, 변화, 미달성 사유, 다음 훈련계획에 반영할 내용을 입력하세요. 누적 상담일지와 훈련계획 흐름이 함께 반영됩니다.' : '상담 일시, 장소, 주요 대화 내용 및 진전 피드백을 입력하세요. 이전 타임라인 흐름이 함께 반영됩니다.'}
-                                className="textarea-field !bg-black/30 border-white/10 !min-h-[130px] text-sm leading-relaxed"
+                                className="textarea-field bg-black/30! border-white/10 min-h-[130px]! text-sm leading-relaxed"
                             />
                             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                                 <p className="text-xs text-white/35 flex items-center gap-1.5">

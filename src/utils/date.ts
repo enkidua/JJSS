@@ -8,10 +8,28 @@ export function localDateCompact(date: Date = new Date()): string {
     return localDateKey(date).replace(/-/g, '');
 }
 
+/** 저장된 초 단위 시각이 손상되어도 문서 목록 전체가 실패하지 않게 한다. */
+export function storedTimestampToIso(value: unknown): string | undefined {
+    if (!value || typeof value !== 'object') return undefined;
+    const raw = (value as { seconds?: unknown }).seconds;
+    if ((typeof raw !== 'number' && typeof raw !== 'string') || raw === '') return undefined;
+    const seconds = Number(raw);
+    if (!Number.isFinite(seconds)) return undefined;
+    const date = new Date(seconds * 1000);
+    return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
+}
+
 /** 'YYYY-MM-DD' 문자열을 로컬 자정 Date로 변환합니다. `new Date('YYYY-MM-DD')`는 UTC 자정으로 해석됩니다. */
 export function parseLocalDate(value: string): Date | null {
     const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
     if (!match) return null;
-    const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-    return Number.isNaN(date.getTime()) ? null : date;
+    const year = Number(match[1]);
+    const month = Number(match[2]) - 1;
+    const day = Number(match[3]);
+    const date = new Date(0);
+    date.setHours(0, 0, 0, 0);
+    // setFullYear also avoids Date's implicit 1900 offset for years 00–99.
+    date.setFullYear(year, month, day);
+    return date.getFullYear() === year && date.getMonth() === month && date.getDate() === day
+        ? date : null;
 }

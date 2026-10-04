@@ -56,6 +56,12 @@ export function useCaseDocumentPipeline() {
     const caseDocSaveInFlightRef = useRef(false);
     const followUpSavedContentsRef = useRef<Record<string, string>>({});
     const caseSelectionRequestRef = useRef(0);
+    // 이용자의 저장 문서를 불러오는 동안 생성·저장을 막는다. 조회가 끝나기 전에 만들면 이미 있는 회의록을 못 보고
+    // 새 문서를 하나 더 만들거나, 늦게 도착한 조회 결과가 방금 만든 초안을 덮는다(7차 면접일지와 같은 규칙).
+    const caseLoadingRef = useRef(false);
+    const [caseLoading, setCaseLoading] = useState(false);
+    const caseLocked = () => caseDocSaveInFlightRef.current || caseGeneratingRef.current || caseLoadingRef.current;
+    const loadingNotice = () => showToast('저장된 사례관리 문서를 불러오는 중입니다. 잠시 후 다시 눌러 주세요.', 'info');
 
     const hasEditedSavedFollowUp = caseFollowUpHistory.some(document =>
         Boolean(document.id) && followUpSavedContentsRef.current[document.id!] !== document.content
@@ -85,19 +91,35 @@ export function useCaseDocumentPipeline() {
         if (caseDocSaveInFlightRef.current || caseGeneratingRef.current) { showToast('문서 처리가 끝난 뒤 이용자를 변경해 주세요.', 'info'); return; }
         if (caseSeeker && isSameSeeker(caseSeeker, s) && !requestedStep) return;
         if (caseSeeker && !(await confirmDiscardCaseChanges('저장하지 않은 작성 내용이 있습니다. 이용자를 변경하면 해당 내용이 사라집니다. 계속할까요?'))) return;
+        if (caseDocSaveInFlightRef.current || caseGeneratingRef.current) return;
 
         const requestId = ++caseSelectionRequestRef.current;
         setCaseSeeker(s);
         setCaseStep('meeting');
         clearCaseState();
+        caseLoadingRef.current = true;
+        setCaseLoading(true);
         // 문서 매칭은 fetchCaseDocuments가 식별자로 합니다.
         // 이름으로만 저장된 옛 문서는 같은 이름의 이용자가 한 명뿐일 때만 읽습니다(dataStore 호환 규칙).
         let docs: CaseDocument[] = [];
         try {
             docs = await fetchCaseDocuments(s);
         } catch (error: any) {
-            if (requestId !== caseSelectionRequestRef.current) return;
-            showToast(error?.message || '저장된 사례관리 문서를 불러오지 못했습니다.', 'error');
+            if (requestId === caseSelectionRequestRef.current) {
+                // 저장된 회의록·계획서를 모르는 채로 작성을 시작하면 새 문서가 하나 더 생기므로, 선택 화면으로 돌아간다.
+                showToast(error?.message || '저장된 사례관리 문서를 불러오지 못했습니다. 다시 선택해 주세요.', 'error');
+                caseSelectionRequestRef.current += 1;
+                caseLoadingRef.current = false;
+                setCaseLoading(false);
+                setCaseSeeker(null);
+                setCaseStep('select');
+            }
+            return;
+        } finally {
+            if (requestId === caseSelectionRequestRef.current) {
+                caseLoadingRef.current = false;
+                setCaseLoading(false);
+            }
         }
         if (requestId !== caseSelectionRequestRef.current) return;
         const tabDocs = docs.filter(d => d.tab === 'case');
@@ -131,6 +153,8 @@ export function useCaseDocumentPipeline() {
         if (!(await confirmDiscardCaseChanges('저장하지 않은 작성 내용이 있습니다. 이용자 선택 화면으로 돌아가면 해당 내용이 사라집니다. 계속할까요?'))) return;
 
         caseSelectionRequestRef.current += 1;
+        caseLoadingRef.current = false;
+        setCaseLoading(false);
         setCaseSeeker(null);
         setCaseStep('select');
         clearCaseState();
@@ -159,20 +183,26 @@ export function useCaseDocumentPipeline() {
     };
 
     const generateCaseDoc = async (step: CaseDocumentAction) => {
-        if (caseDocSaveInFlightRef.current || caseGeneratingRef.current) return;
+        if (caseLoadingRef.current) { loadingNotice(); return; }
+        if (caseLocked()) return;
         if (!caseSeeker) return;
+        // 응답이 오기 전에 이용자 선택이 바뀌면(초기화 등) 결과를 버린다 — 다른 이용자 화면에 넣거나 저장하지 않는다.
+        const sessionId = caseSelectionRequestRef.current;
+        const stale = () => sessionId !== caseSelectionRequestRef.current;
         caseGeneratingRef.current = true;
         setCaseGenerating(step);
         try {
             if (step === 'meeting') {
                 const prompt = buildCaseMeetingPrompt(caseSeeker, meetingInput, caseContextSummary);
                 const result = await generateText('case_meeting', prompt, undefined, { featureKey: 'workmate', documentType: 'case-meeting' });
+                if (stale()) return;
                 setMeetingText(result);
                 await persistGeneratedCaseDoc('meeting', result, caseSeeker);
                 setCaseStep('plan');
             } else if (step === 'plan') {
                 const prompt = buildRehabPlanPrompt(caseSeeker, meetingText, planInput, caseContextSummary);
                 const result = await generateText('rehab_plan', prompt, undefined, { featureKey: 'workmate', documentType: 'rehab-plan' });
+                if (stale()) return;
                 setPlanText(result);
                 await persistGeneratedCaseDoc('plan', result, caseSeeker);
                 setCaseStep('followup');
@@ -186,6 +216,7 @@ export function useCaseDocumentPipeline() {
                     contextSummary: caseContextSummary,
                 });
                 const result = await generateText('counseling', prompt, undefined, { featureKey: 'workmate', documentType: 'counseling' });
+                if (stale()) return;
                 setCounselText(result);
                 // 상담 완료 후에도 followup 상태 유지 (사용자가 직접 저장 버튼을 눌러야 DB에 저장됨)
             } else if (step === 'evaluation') {
@@ -197,10 +228,12 @@ export function useCaseDocumentPipeline() {
                     contextSummary: caseContextSummary,
                 });
                 const result = await generateText('evaluation', prompt, undefined, { featureKey: 'workmate', documentType: 'evaluation' });
+                if (stale()) return;
                 setEvalText(result);
                 // 평가 완료 후에도 유지 (사용자가 직접 저장 버튼을 눌러야 DB에 저장됨)
             }
         } catch (error: any) {
+            if (stale()) return;
             showToast(error?.message || 'AI 생성 중 오류가 발생했습니다. 기존 작성 내용은 유지됩니다.', 'error', 7000);
         } finally {
             caseGeneratingRef.current = false;
@@ -210,8 +243,10 @@ export function useCaseDocumentPipeline() {
 
     // 보완은 성공했을 때만 작성칸을 바꾸므로(실패 시 기존 내용 유지) 확인창 없이 바로 실행합니다.
     const refineCaseDoc = async (type: CaseDocumentAction) => {
-        if (caseDocSaveInFlightRef.current || caseGeneratingRef.current) return;
+        if (caseLoadingRef.current) { loadingNotice(); return; }
+        if (caseLocked()) return;
         if (!caseSeeker) return;
+        const sessionId = caseSelectionRequestRef.current;
         const currentContent = type === 'meeting' ? meetingText : type === 'plan' ? planText : type === 'counseling' ? counselText : evalText;
         if (!currentContent.trim()) {
             showToast('먼저 보완할 내용을 작성하거나 생성해 주세요.', 'error');
@@ -228,7 +263,8 @@ export function useCaseDocumentPipeline() {
                 previousRecords: buildCasePreviousRecords(type, meetingText, planText, caseFollowUpHistory),
                 contextSummary: caseContextSummary,
                 additionalInstruction: CASE_REFINE_INSTRUCTION,
-            });
+            }, { featureKey: 'workmate', documentType: `case-refine-${type}`, knownNames: [caseSeeker?.name] });
+            if (sessionId !== caseSelectionRequestRef.current) return;
             if (type === 'meeting') setMeetingText(result);
             if (type === 'plan') setPlanText(result);
             if (type === 'counseling') setCounselText(result);
@@ -244,7 +280,7 @@ export function useCaseDocumentPipeline() {
 
     /** 사례회의록·계획서 작성칸 비우기(저장된 문서는 지우지 않음) */
     const resetCaseResult = async (type: 'meeting' | 'plan') => {
-        if (caseDocSaveInFlightRef.current || caseGeneratingRef.current) return;
+        if (caseLocked()) return;
         const label = CASE_DOCUMENT_TITLES[type];
         const ok = await confirm({
             title: `${label} 작성 내용 비우기`,
@@ -260,7 +296,7 @@ export function useCaseDocumentPipeline() {
 
     // ─── 문서 삭제 ───
     const deleteCaseDoc = async (docId: string, type: CaseDocumentAction) => {
-        if (caseDocSaveInFlightRef.current || caseGeneratingRef.current) return;
+        if (caseLocked()) return;
         const ok = await confirm({
             title: '문서 삭제',
             message: '이 문서를 삭제할까요? 삭제한 문서는 되돌릴 수 없습니다.',
@@ -293,7 +329,8 @@ export function useCaseDocumentPipeline() {
             showToast('저장할 내용이 없습니다.', 'error');
             return false;
         }
-        if (caseDocSaveInFlightRef.current || caseGeneratingRef.current) return false;
+        if (caseLoadingRef.current) { loadingNotice(); return false; }
+        if (caseLocked()) return false;
         const seekerKey = getSeekerKey(caseSeeker);
         if (!docObj?.id && (!caseSeeker || !seekerKey)) {
             showToast('이용자 식별 정보가 없어 저장하지 못했습니다. 이용자를 다시 선택해 주세요.', 'error');
@@ -351,6 +388,7 @@ export function useCaseDocumentPipeline() {
         caseContext,
         caseGenerating,
         isGenerating,
+        caseLoading,
         savingCaseDocType,
         hasUnsavedCaseChanges,
         selectCaseSeeker,

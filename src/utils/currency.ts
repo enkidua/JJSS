@@ -2,8 +2,12 @@
 export function parseCurrencyInput(value: string, options: { allowNegative?: boolean } = {}): number {
     const text = String(value ?? '').trim();
     const negative = options.allowNegative === true && /^[-−(]/.test(text);
-    const digits = text.replace(/[^\d]/g, '');
-    const amount = Number(digits) || 0;
+    // 소수점은 숫자 값(toAmount)과 같게 원 단위로 반올림한다. 점을 지우기만 하면 "1234.5"가 12,345원이 됐다.
+    // 점이 둘 이상("1.234.567")이거나 점 뒤가 딱 세 자리("1.234" — OCR이 쉼표를 점으로 읽은 경우)면 자릿점으로 보고 지운다.
+    const cleaned = text.replace(/[^\d.]/g, '');
+    const dots = (cleaned.match(/\./g) || []).length;
+    const decimal = dots === 1 && !/\.\d{3}$/.test(cleaned);
+    const amount = decimal ? Math.round(Number(cleaned) || 0) : Number(cleaned.replace(/\./g, '')) || 0;
     return negative ? -amount : amount;
 }
 

@@ -38,7 +38,7 @@ export default function ExpenseDocSetupModal({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4"
             onClick={onClose}
         >
             <motion.div
@@ -123,7 +123,7 @@ export default function ExpenseDocSetupModal({
                                                 approvers: prev.approvers.map((approver, index) => index === idx ? { ...approver, title: e.target.value } : approver),
                                             }));
                                         }}
-                                        className="input-field !py-2 text-xs w-24"
+                                        className="input-field py-2! text-xs w-24"
                                     />
                                     <input
                                         type="text"
@@ -136,7 +136,7 @@ export default function ExpenseDocSetupModal({
                                                 approvers: prev.approvers.map((approver, index) => index === idx ? { ...approver, name: e.target.value } : approver),
                                             }));
                                         }}
-                                        className="input-field !py-2 text-xs flex-1"
+                                        className="input-field py-2! text-xs flex-1"
                                     />
                                     {docForm.approvers.length > 1 && (
                                         <button

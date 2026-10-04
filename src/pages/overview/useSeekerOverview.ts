@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { readTrainingStateAfterWrites } from '../training/trainingWriteQueue';
 import { useDataStore } from '../../store/dataStore';
-import * as localDB from '../../config/localDB';
 import {
     buildSituationSummaryPrompt, buildTimeline, deriveStage, getEmploymentSummary, getEvaluationSummary,
     getNextActions, getTrainingOverview, type TrainingState,
@@ -8,9 +8,6 @@ import {
 import { useRehabWorkflowRecord } from '../workmate/useRehabWorkflowRecord';
 import { buildSupportedEmploymentOverview } from '../workmate/supportedEmployment/caseEditing';
 import { useLocalToday } from './useLocalToday';
-
-/** 직업훈련 화면이 저장하는 훈련 상태 문서 ID(src/pages/training/useTrainingState.ts와 같은 값) */
-const TRAINING_STATE_ID = 'work-training';
 
 /**
  * 현황판에서 한 이용자의 평가·훈련·고용지원 기록을 한 번에 모읍니다.
@@ -35,7 +32,8 @@ export function useSeekerOverview(seekerId: string) {
         setTrainingFailed(false);
         if (!seeker) { setTrainingLoading(false); return; }
         setTrainingLoading(true);
-        localDB.getById<TrainingState>('trainingState', TRAINING_STATE_ID).then(state => {
+        // 직업훈련 화면에서 막 고치고 넘어온 경우에도 예약된 저장이 끝난 뒤의 자료를 보여 준다(11차 쓰기 큐).
+        readTrainingStateAfterWrites<TrainingState>().then(state => {
             if (request === trainingSequence.current) setTrainingState(state);
         }).catch(() => {
             if (request === trainingSequence.current) setTrainingFailed(true);

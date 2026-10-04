@@ -157,7 +157,7 @@ ${customSituation}
 - 사후 지원계획
 - 의료적/법적 판단을 단정하지 말 것
 - 긴급 상황은 119, 보호자, 기관 지침에 따르도록 안내할 것`;
-      const result = await generateText('utilities', prompt);
+      const result = await generateText('utilities', prompt, undefined, { featureKey: 'crisis-manual', documentType: 'custom-guide' });
       setCustomGuide(prev => ({ ...prev, guide: result || fallback, loading: false }));
     } catch (error: unknown) {
       const detail = error instanceof Error && error.message ? ` (${error.message})` : '';
@@ -194,7 +194,7 @@ ${customSituation}
       {/* Bento Main Hero */}
       <motion.div variants={itemVars} className="md:col-span-2 lg:col-span-2 row-span-2 relative overflow-hidden rounded-3xl p-8 glass-strong border border-white/10 group hover:border-primary-500/50 transition-all duration-500 flex flex-col justify-between">
         <div className="absolute top-0 right-0 p-8 opacity-20 group-hover:opacity-40 group-hover:scale-110 transition-all duration-700">
-          <AlertTriangle className="w-48 h-48 text-rose-500 blur-sm" />
+          <AlertTriangle className="w-48 h-48 text-rose-500 blur-xs" />
         </div>
         <div className="relative z-10">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-rose-500/20 text-rose-300 font-bold text-xs mb-4 border border-rose-500/20">
@@ -207,7 +207,7 @@ ${customSituation}
           <button
             type="button"
             onClick={() => onSelect(crisisScenarios[0], 'simulator')}
-            className="flex-1 px-6 py-4 bg-gradient-to-r from-rose-500 to-pink-600 rounded-2xl text-white font-bold flex items-center justify-center gap-2 hover:shadow-[0_0_30px_rgba(244,63,94,0.4)] transition-all hover:-translate-y-1"
+            className="flex-1 px-6 py-4 bg-linear-to-r from-rose-500 to-pink-600 rounded-2xl text-white font-bold flex items-center justify-center gap-2 hover:shadow-[0_0_30px_rgba(244,63,94,0.4)] transition-all hover:-translate-y-1"
           >
             <AlertTriangle className="w-5 h-5" />
             시뮬레이션 시작하기
@@ -229,7 +229,7 @@ ${customSituation}
           aria-label="위기 상황 내용"
           value={customSituation}
           onChange={e => setCustomGuide(prev => ({ ...prev, situation: e.target.value }))}
-          className="textarea-field !bg-black/30 border-white/10 !min-h-[110px] text-sm"
+          className="textarea-field bg-black/30! border-white/10 min-h-[110px]! text-sm"
           placeholder="예: 훈련 중 이용자가 갑자기 크게 소리를 지르고 물건을 던지려 하며 다른 이용자들이 불안해함."
         />
         <AiTransmissionNotice className="mt-3" message="입력한 상황은 안내 작성을 위해 외부 AI 서비스로 전송됩니다. 이용자 이름 등 개인정보는 빼고 상황만 적어 주세요." />
@@ -252,7 +252,7 @@ ${customSituation}
 
       {/* Stats Bento */}
       <motion.div variants={itemVars} className="rounded-3xl p-6 glass border border-white/10 flex flex-col justify-center items-center text-center relative overflow-hidden group">
-        <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+        <div className="absolute inset-0 bg-linear-to-br from-blue-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
         <BookOpen className="w-8 h-8 text-blue-400 mb-3" />
         <h3 className="text-white/60 text-sm font-semibold mb-1">총 시나리오</h3>
         <p className="text-4xl font-black text-white">{crisisScenarios.length}<span className="text-lg text-white/50 ml-1">개</span></p>
@@ -260,7 +260,7 @@ ${customSituation}
 
       {/* Category Bento */}
       <motion.div variants={itemVars} className="rounded-3xl p-6 glass border border-white/10 flex flex-col justify-center items-center text-center relative overflow-hidden group">
-        <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+        <div className="absolute inset-0 bg-linear-to-br from-emerald-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
         <Layers className="w-8 h-8 text-emerald-400 mb-3" />
         <h3 className="text-white/60 text-sm font-semibold mb-1">상황 분야</h3>
         <p className="text-4xl font-black text-white">{TOTAL_CATEGORIES}<span className="text-lg text-white/50 ml-1">개</span></p>
@@ -287,8 +287,8 @@ ${customSituation}
                   {scenario.part}
                 </div>
               </div>
-              <h4 className="text-white font-bold text-lg mb-2 break-words whitespace-normal leading-snug">{scenario.title}</h4>
-              <p className="text-white/50 text-sm mb-6 flex-1 break-words whitespace-normal line-clamp-4">{scenario.background}</p>
+              <h4 className="text-white font-bold text-lg mb-2 wrap-break-word whitespace-normal leading-snug">{scenario.title}</h4>
+              <p className="text-white/50 text-sm mb-6 flex-1 wrap-break-word whitespace-normal line-clamp-4">{scenario.background}</p>
               <div className="flex gap-2 mt-auto">
                 <button
                   type="button"
@@ -419,7 +419,7 @@ function SimulatorView({ scenario }: { scenario: CrisisScenario }) {
                   {idx + 1}
                 </div>
                 <div className="pt-1 flex-1">
-                  <p className={`text-[15px] sm:text-base md:text-lg font-medium transition-colors break-words whitespace-normal leading-relaxed ${
+                  <p className={`text-[15px] sm:text-base md:text-lg font-medium transition-colors wrap-break-word whitespace-normal leading-relaxed ${
                     isRevealed && isCorrectAndRevealed ? 'text-emerald-100' :
                     isRevealed && isWrongAndRevealed ? 'text-rose-100' :
                     isSelected ? 'text-white' : 'text-white/80'
@@ -437,7 +437,7 @@ function SimulatorView({ scenario }: { scenario: CrisisScenario }) {
           <motion.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-sm rounded-3xl z-20"
+            className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-xs rounded-3xl z-20"
           >
             <div className="w-12 h-12 border-4 border-white/20 border-t-primary-500 rounded-full animate-spin mb-4" />
             <p className="text-white font-bold tracking-widest animate-pulse">결과 분석 중...</p>
@@ -454,8 +454,8 @@ function SimulatorView({ scenario }: { scenario: CrisisScenario }) {
             transition={{ type: "spring", bounce: 0.4, duration: 0.8 }}
             className={`mt-8 p-8 rounded-3xl border relative overflow-hidden ${
               isSuccess 
-                ? 'bg-gradient-to-br from-emerald-900/40 to-teal-900/40 border-emerald-500/30' 
-                : 'bg-gradient-to-br from-rose-900/40 to-red-900/40 border-rose-500/30'
+                ? 'bg-linear-to-br from-emerald-900/40 to-teal-900/40 border-emerald-500/30' 
+                : 'bg-linear-to-br from-rose-900/40 to-red-900/40 border-rose-500/30'
             }`}
           >
             <div className="flex items-start gap-4 md:gap-6">
@@ -478,8 +478,8 @@ function SimulatorView({ scenario }: { scenario: CrisisScenario }) {
                     <Briefcase className="w-5 h-5 text-blue-400" />
                     <h4 className="text-blue-400 font-bold text-lg">전문가 솔루션</h4>
                   </div>
-                  <h5 className="text-white font-bold text-xl mb-3 break-words whitespace-normal">{scenario.solution.summary}</h5>
-                  <p className="text-white/70 leading-relaxed mb-6 break-words whitespace-normal">
+                  <h5 className="text-white font-bold text-xl mb-3 wrap-break-word whitespace-normal">{scenario.solution.summary}</h5>
+                  <p className="text-white/70 leading-relaxed mb-6 wrap-break-word whitespace-normal">
                     {scenario.solution.detail}
                   </p>
                   
@@ -529,8 +529,8 @@ function ManualDetailView({ scenario }: { scenario: CrisisScenario }) {
     >
       <div className="glass-strong border border-white/10 rounded-3xl overflow-hidden shadow-2xl">
         {/* Header */}
-        <div className="p-8 md:p-10 border-b border-white/10 bg-gradient-to-br from-blue-900/20 to-transparent relative">
-          <BookOpen className="absolute -bottom-10 -right-10 w-48 h-48 text-blue-500/10 rotate-12 blur-sm" />
+        <div className="p-8 md:p-10 border-b border-white/10 bg-linear-to-br from-blue-900/20 to-transparent relative">
+          <BookOpen className="absolute -bottom-10 -right-10 w-48 h-48 text-blue-500/10 rotate-12 blur-xs" />
           <div className="relative z-10">
              <div className="flex items-center gap-3 mb-4">
               <span className="px-3 py-1 bg-white/10 text-white/70 rounded-full text-xs font-bold">{scenario.part}</span>

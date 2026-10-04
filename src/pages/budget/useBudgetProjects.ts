@@ -5,6 +5,7 @@ import { safeErrorMetadata } from '../../utils/safeError';
 import { useConfirm } from '../../components/common/ConfirmProvider';
 import { useAppToast } from '../../components/Toast';
 import { budgetItemsTotal, isStorageQuotaError, loadBudgetProjects, normalizeBudgetItems, saveBudgetProjects, toWon } from './budgetUtils';
+import { assertStorageWritable } from '../../config/localDB';
 
 /** 사업 목록 저장 실패 시 안내 문구. 용량 초과면 백업을 먼저 권합니다(저장 구조 변경은 결정 전). */
 const STORAGE_QUOTA_MESSAGE = '브라우저 저장 공간이 가득 차서 사업 정보를 저장하지 못했습니다. 설정 화면의 데이터 백업으로 먼저 백업한 뒤 오래된 자료나 영수증 이미지를 정리해 주세요.';
@@ -91,6 +92,17 @@ export function useBudgetProjects({ expenses, updateExpense, fetchExpenses, onBu
         }));
     };
 
+    /** 저장소가 복원으로 막혀 있으면 사유를 알리고 false */
+    const storageWritableOrToast = (): boolean => {
+        try {
+            assertStorageWritable();
+            return true;
+        } catch (error) {
+            showToast(error instanceof Error ? error.message : '지금은 저장할 수 없습니다.', 'error');
+            return false;
+        }
+    };
+
     const runProjectAction = async (action: () => Promise<void>) => {
         if (projectActionInFlightRef.current) return;
         projectActionInFlightRef.current = true;
@@ -159,6 +171,9 @@ export function useBudgetProjects({ expenses, updateExpense, fetchExpenses, onBu
         }))) {
             return;
         }
+        // 백업 복원 중이거나 복원을 마치고 다시 불러오기 전이면 사업 목록(localStorage)도 쓰지 않는다.
+        // 화면의 목록은 복원 전 상태라, 저장하면 복원된 목록을 덮는다. 지출 연결도 바꾸기 전에 멈춘다.
+        if (!storageWritableOrToast()) return;
         const now = new Date().toISOString();
         const nextProjects = editingProjectId
             ? budgetProjects.map(project => project.id === editingProjectId
@@ -191,6 +206,7 @@ export function useBudgetProjects({ expenses, updateExpense, fetchExpenses, onBu
                 await updateExpense(expense.id!, getBudgetItemUnassignment());
                 updatedExpenseSnapshots.push(expense);
             }
+            assertStorageWritable();
             saveBudgetProjects(nextProjects);
             setBudgetProjects(nextProjects);
             if (removedBudgetItemIds.size > 0) onBudgetItemsRemoved?.(removedBudgetItemIds);
@@ -253,6 +269,7 @@ export function useBudgetProjects({ expenses, updateExpense, fetchExpenses, onBu
             ? `이 사업에 연결된 지출 ${linkedExpenses.length}건은 삭제하지 않고 사업 미지정으로 전환됩니다. 사업만 삭제할까요?`
             : '이 사업을 삭제할까요?';
         if (!(await confirm({ title: '사업 삭제', message, confirmLabel: '삭제', cancelLabel: '취소', tone: 'danger' }))) return;
+        if (!storageWritableOrToast()) return;
         const updatedExpenseSnapshots: Expense[] = [];
         try {
             // 하나씩 전환하고, 중간에 실패하면 이미 바꾼 지출을 원래 사업으로 되돌립니다(사업 저장과 같은 방식).
@@ -266,6 +283,7 @@ export function useBudgetProjects({ expenses, updateExpense, fetchExpenses, onBu
                 updatedExpenseSnapshots.push(expense);
             }
             const nextProjects = budgetProjects.filter(project => project.id !== projectId);
+            assertStorageWritable();
             saveBudgetProjects(nextProjects);
             setBudgetProjects(nextProjects);
             onProjectDeleted?.(projectId);

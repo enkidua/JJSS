@@ -46,7 +46,7 @@ export function WorkflowPanel({ seeker, open, onToggle, onDirtyChange }: Props) 
     const openTaskCount = workflow.tasks.filter(task => !task.done).length;
     const ready = !record.loading && !record.loadFailed;
 
-    return <section id="workflow-panel" ref={sectionRef} className="glass-strong rounded-[2rem] border border-white/10 p-6 scroll-mt-24" aria-labelledby="workflow-panel-title">
+    return <section id="workflow-panel" ref={sectionRef} className="glass-strong rounded-4xl border border-white/10 p-6 scroll-mt-24" aria-labelledby="workflow-panel-title">
         <button type="button" aria-expanded={open} aria-controls="workflow-panel-body" onClick={onToggle}
             className="w-full flex flex-wrap items-center justify-between gap-3 text-left">
             <span id="workflow-panel-title" className="text-lg font-black text-white flex items-center gap-2">

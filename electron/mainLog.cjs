@@ -60,6 +60,29 @@ function rotateIfNeeded() {
     }
 }
 
+// 기록할 수 있는 값: 숫자·참/거짓·짧은 분류 문자열(영문·숫자·._-), 정리된 호출 위치(stack).
+// 그 밖의 문자열(오류 메시지·프롬프트·이름·경로 등)과 객체는 기록하지 않는다.
+function sanitizeDetails(details) {
+    const safe = {};
+    if (!details || typeof details !== 'object') return safe;
+    for (const [key, value] of Object.entries(details)) {
+        if (!/^[a-z][a-z0-9_]{0,40}$/i.test(key) || value === undefined) continue;
+        if (key === 'stack' && Array.isArray(value)) {
+            safe.stack = value
+                .filter(line => typeof line === 'string')
+                .slice(0, MAX_STACK_FRAMES)
+                .map(line => maskUserFolders(line).slice(0, 300));
+        } else if (typeof value === 'number' && Number.isFinite(value)) {
+            safe[key] = value;
+        } else if (typeof value === 'boolean') {
+            safe[key] = value;
+        } else if (typeof value === 'string') {
+            safe[key] = safeToken(value, '[redacted]');
+        }
+    }
+    return safe;
+}
+
 function logMainEvent(level, event, details = {}) {
     if (!logFilePath) return;
     try {
@@ -70,7 +93,7 @@ function logMainEvent(level, event, details = {}) {
             level: safeToken(level, 'info'),
             event: safeToken(event, 'event'),
             version: appVersion || undefined,
-            ...details,
+            ...sanitizeDetails(details),
         };
         fs.appendFileSync(logFilePath, `${JSON.stringify(entry)}\n`, { encoding: 'utf8', mode: 0o600 });
     } catch {

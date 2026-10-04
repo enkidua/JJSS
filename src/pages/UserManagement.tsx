@@ -11,18 +11,22 @@ import JobSeekerModal from '../components/JobSeekerModal';
 import { useConfirm } from '../components/common/ConfirmProvider';
 import { useAppToast } from '../components/Toast';
 import { getSeekerKey } from '../utils/seeker';
+import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 
 type ViewMode = 'seekers' | 'jobs';
 
 export default function UserManagement() {
     const { fetchData, seekers, jobs, loading, deleteSeeker, deleteJob } = useDataStore();
-    const deleteCaseDocumentsForSeeker = useDataStore(state => state.deleteCaseDocumentsForSeeker);
+    const deleteSeekerWithDocuments = useDataStore(state => state.deleteSeekerWithDocuments);
     const confirm = useConfirm();
     const showToast = useAppToast();
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [viewMode, setViewMode] = useState<ViewMode>('seekers');
     const [searchTerm, setSearchTerm] = useState('');
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [registrationDirty, setRegistrationDirty] = useState(false);
+    useUnsavedGuard(isModalOpen && registrationDirty,
+        '작성 중이거나 처리 중인 등록 자료가 있습니다.\n이동하면 입력과 OCR 결과는 사라집니다. 이미 진행 중인 DB 저장은 완료될 수 있습니다. 이동할까요?');
     const [modalType, setModalType] = useState<'job' | 'seeker'>('seeker');
     const [editItem, setEditItem] = useState<Seeker | JobOpening | null>(null);
     const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -72,9 +76,10 @@ export default function UserManagement() {
         let deletedDocuments: number | null = null;
         try {
             if (type === 'seeker') {
-                // 문서 삭제를 먼저 해야 이용자 정보(내부 ID·구직자 ID)로 문서를 정확히 찾을 수 있습니다.
-                if (alsoDeleteDocuments) deletedDocuments = await deleteCaseDocumentsForSeeker(id);
-                await deleteSeeker(id);
+                // 이용자와 사례문서를 한 트랜잭션에서 함께 지웁니다.
+                // 따로 지우면 중간에 실패했을 때 문서만 사라지고 되돌릴 수 없습니다.
+                if (alsoDeleteDocuments) deletedDocuments = await deleteSeekerWithDocuments(id);
+                else await deleteSeeker(id);
                 showToast(alsoDeleteDocuments
                     ? `"${label}" 정보와 사례문서 ${deletedDocuments}건을 삭제했습니다.`
                     : `"${label}" 정보를 삭제했습니다. 사례문서는 남겨 두었습니다.`, 'success');
@@ -85,9 +90,8 @@ export default function UserManagement() {
             if (expandedId === id) setExpandedId(null);
         } catch (error: any) {
             const message = error?.message || '삭제 중 오류가 발생했습니다.';
-            showToast(deletedDocuments !== null
-                ? `사례문서 ${deletedDocuments}건은 삭제했지만 이용자 정보는 삭제하지 못했습니다. ${message}`
-                : message, 'error');
+            // 한 트랜잭션이라 부분 삭제가 없습니다. 실패하면 아무것도 지워지지 않았습니다.
+            showToast(message, 'error');
         } finally {
             setDeletingId(null);
         }
@@ -163,7 +167,7 @@ export default function UserManagement() {
                         <button
                             type="button"
                             onClick={() => navigate('/overview')}
-                            className="btn-secondary !py-2.5 !px-4 text-sm font-bold flex items-center gap-2"
+                            className="btn-secondary py-2.5! px-4! text-sm font-bold flex items-center gap-2"
                         >
                             <ClipboardList className="w-4 h-4" /> 현황판
                         </button>
@@ -175,7 +179,7 @@ export default function UserManagement() {
                         </button>
                         <button
                             onClick={() => openCreateModal('job')}
-                            className="btn-primary !py-2.5 !px-4 text-sm font-bold flex items-center gap-2"
+                            className="btn-primary py-2.5! px-4! text-sm font-bold flex items-center gap-2"
                         >
                             <Plus className="w-4 h-4" /> 사업체 등록
                         </button>
@@ -187,7 +191,7 @@ export default function UserManagement() {
                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/30" />
                     <input
                         aria-label={viewMode === 'seekers' ? '이용자 검색' : '사업체 검색'}
-                        className="input-field !pl-12 !py-3 text-base"
+                        className="input-field pl-12! py-3! text-base"
                         placeholder={viewMode === 'seekers' ? '이름, 장애유형, 희망직종, 지역으로 검색...' : '기업명, 직무, 지역, 장애유형으로 검색...'}
                         value={searchTerm}
                         onChange={e => setSearchTerm(e.target.value)}
@@ -205,7 +209,7 @@ export default function UserManagement() {
                                     <div className="text-center py-12 text-white/60">
                                         <p>{searchTerm.trim() ? `“${searchTerm.trim()}”에 맞는 이용자가 없습니다.` : '등록된 이용자가 없습니다.'}</p>
                                         {searchTerm.trim() && (
-                                            <button type="button" onClick={() => setSearchTerm('')} className="btn-secondary mt-4 !px-4 !py-2 text-sm">검색 초기화</button>
+                                            <button type="button" onClick={() => setSearchTerm('')} className="btn-secondary mt-4 px-4! py-2! text-sm">검색 초기화</button>
                                         )}
                                     </div>
                                 ) : (
@@ -220,7 +224,7 @@ export default function UserManagement() {
                                         >
                                             {/* 요약 행 */}
                                             <div
-                                                className="p-4 flex items-center gap-4 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/80 focus-visible:ring-inset"
+                                                className="p-4 flex items-center gap-4 cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent-400/80 focus-visible:ring-inset"
                                                 onClick={() => s.id && toggleExpand(s.id)}
                                             >
                                                 {/* 상태 뱃지 */}
@@ -345,7 +349,7 @@ export default function UserManagement() {
                                     <div className="text-center py-12 text-white/60">
                                         <p>{searchTerm.trim() ? `“${searchTerm.trim()}”에 맞는 사업체가 없습니다.` : '등록된 사업체가 없습니다.'}</p>
                                         {searchTerm.trim() && (
-                                            <button type="button" onClick={() => setSearchTerm('')} className="btn-secondary mt-4 !px-4 !py-2 text-sm">검색 초기화</button>
+                                            <button type="button" onClick={() => setSearchTerm('')} className="btn-secondary mt-4 px-4! py-2! text-sm">검색 초기화</button>
                                         )}
                                     </div>
                                 ) : (
@@ -360,7 +364,7 @@ export default function UserManagement() {
                                         >
                                             {/* 요약 행 */}
                                             <div
-                                                className="p-4 flex items-center gap-4 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/80 focus-visible:ring-inset"
+                                                className="p-4 flex items-center gap-4 cursor-pointer focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-primary-400/80 focus-visible:ring-inset"
                                                 onClick={() => j.id && toggleExpand(j.id)}
                                             >
                                                 <div className="w-10 h-10 rounded-xl bg-primary-500/20 flex items-center justify-center shrink-0">
@@ -452,6 +456,7 @@ export default function UserManagement() {
                 type={modalType}
                 editItem={editItem}
                 onSuccess={handleModalSuccess}
+                onDirtyChange={setRegistrationDirty}
             />
         </div>
     );

@@ -61,7 +61,7 @@ export function EmploymentCheckSection({ record, onDirtyChange }: Props) {
             <label className="text-sm text-white/75">조치 후 결과<textarea className="textarea-field mt-1" value={employment.outcome} onChange={e => setField('outcome', e.target.value)} maxLength={800} rows={2} placeholder="확인된 변화 또는 확인 필요 사항" disabled={unavailable} /></label>
             <label className="text-sm text-white/75">다음 점검일(선택)<input type="date" className="input-field mt-1" value={employment.nextDate || ''} min={employment.date || undefined} onChange={e => setField('nextDate', e.target.value)} disabled={unavailable} /></label>
             <div className="sm:col-span-2 flex flex-wrap items-center gap-3">
-                <button type="submit" className="btn-primary !px-4 !py-2" disabled={unavailable}>적응지원 기록 저장</button>
+                <button type="submit" className="btn-primary px-4! py-2!" disabled={unavailable}>적응지원 기록 저장</button>
                 <span className="text-xs text-white/50">다음 점검일을 지정하면 후속 일정에도 추가됩니다.</span>
             </div>
         </form>
@@ -75,7 +75,7 @@ export function EmploymentCheckSection({ record, onDirtyChange }: Props) {
                     ['당사자 의견', entry.satisfaction], ['사업체 의견', entry.employerOpinion],
                     ['지원 조치', entry.supportAction], ['조치 결과', entry.outcome],
                     ['다음 점검일', entry.nextDate],
-                ].map(([label, value]) => <div key={label}><dt className="text-white/45">{label}</dt><dd className="text-white/80 break-words whitespace-pre-wrap">{value || '-'}</dd></div>)}</dl>
+                ].map(([label, value]) => <div key={label}><dt className="text-white/45">{label}</dt><dd className="text-white/80 wrap-break-word whitespace-pre-wrap">{value || '-'}</dd></div>)}</dl>
             </details>)}
         </div>
     </section>;

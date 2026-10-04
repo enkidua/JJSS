@@ -100,7 +100,7 @@ export function JobAnalysisDocumentTab({
             exit={{ opacity: 0, x: -10 }}
             className="w-full max-w-7xl grid grid-cols-1 xl:grid-cols-2 gap-6"
         >
-            <div className="glass-strong rounded-[2rem] p-6 border border-white/10 shadow-2xl">
+            <div className="glass-strong rounded-4xl p-6 border border-white/10 shadow-2xl">
                 <div className="flex items-start gap-3 mb-6">
                     <div className="w-11 h-11 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center shrink-0">
                         <Briefcase className="w-5 h-5 text-emerald-300" />
@@ -121,7 +121,7 @@ export function JobAnalysisDocumentTab({
                     className="mb-5"
                 />
 
-                <section className="rounded-3xl border border-white/10 bg-white/[0.025] p-5 mb-5">
+                <section className="rounded-3xl border border-white/10 bg-white/2.5 p-5 mb-5">
                     <div className="flex items-center justify-between gap-3 mb-4">
                         <div>
                             <h3 className="font-black text-white">사업체/구인정보 선택</h3>
@@ -134,7 +134,7 @@ export function JobAnalysisDocumentTab({
                         <input
                             value={search}
                             onChange={e => onSearch(e.target.value)}
-                            className="input-field !pl-10"
+                            className="input-field pl-10!"
                             placeholder="사업체명, 직무, 지역, 직무내용으로 검색"
                             aria-label="사업체/구인정보 검색"
                         />
@@ -178,7 +178,7 @@ export function JobAnalysisDocumentTab({
                     )}
                 </section>
 
-                <section className="rounded-3xl border border-dashed border-white/15 bg-white/[0.025] p-5 mb-5">
+                <section className="rounded-3xl border border-dashed border-white/15 bg-white/2.5 p-5 mb-5">
                     <label className="flex flex-col items-center justify-center gap-3 text-center cursor-pointer">
                         <input
                             type="file"
@@ -217,15 +217,15 @@ export function JobAnalysisDocumentTab({
                 <div className="space-y-4">
                     <label className="block">
                         <span className="block text-sm font-medium text-white/70 mb-1.5">간략 사업체/직무 특성</span>
-                        <textarea value={form.traits} onChange={e => setForm(prev => ({ ...prev, traits: e.target.value }))} className="textarea-field !min-h-[110px] text-sm leading-relaxed" placeholder="사진으로 보이는 작업환경, 물품 이동, 협력작업, 작업 순서, 발달장애인 근로 시 고려사항을 적어주세요." />
+                        <textarea value={form.traits} onChange={e => setForm(prev => ({ ...prev, traits: e.target.value }))} className="textarea-field min-h-[110px]! text-sm leading-relaxed" placeholder="사진으로 보이는 작업환경, 물품 이동, 협력작업, 작업 순서, 발달장애인 근로 시 고려사항을 적어주세요." />
                     </label>
                     <label className="block">
                         <span className="block text-sm font-medium text-white/70 mb-1.5">사업주 면담 내용</span>
-                        <textarea value={form.interviewNotes} onChange={e => setForm(prev => ({ ...prev, interviewNotes: e.target.value }))} className="textarea-field !min-h-[110px] text-sm leading-relaxed" placeholder="직무조정, 향후 고용계획, 대체 직무 가능성, 사업체 요청사항 등을 적어주세요." />
+                        <textarea value={form.interviewNotes} onChange={e => setForm(prev => ({ ...prev, interviewNotes: e.target.value }))} className="textarea-field min-h-[110px]! text-sm leading-relaxed" placeholder="직무조정, 향후 고용계획, 대체 직무 가능성, 사업체 요청사항 등을 적어주세요." />
                     </label>
                     <label className="block">
                         <span className="block text-sm font-medium text-white/70 mb-1.5">추가 확인사항</span>
-                        <textarea value={form.environment} onChange={e => setForm(prev => ({ ...prev, environment: e.target.value }))} className="textarea-field !min-h-[90px] text-sm leading-relaxed" placeholder="현장 방문 후 추가로 확인한 작업환경, 안전, 동선, 도구, 배치 관련 사항을 적어주세요." />
+                        <textarea value={form.environment} onChange={e => setForm(prev => ({ ...prev, environment: e.target.value }))} className="textarea-field min-h-[90px]! text-sm leading-relaxed" placeholder="현장 방문 후 추가로 확인한 작업환경, 안전, 동선, 도구, 배치 관련 사항을 적어주세요." />
                     </label>
                 </div>
 

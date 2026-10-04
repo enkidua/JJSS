@@ -1,4 +1,4 @@
-import { generateText, PromptType, wrapAsData } from './gemini';
+import { generateText, PromptType, wrapAsData, type GenerateTextOptions } from './gemini';
 
 export interface RegenerationPromptOptions {
   documentTitle: string;
@@ -45,10 +45,21 @@ ${currentContent ? wrapAsData(currentContent) : '(현재 작성된 내용 없음
 `.trim();
 }
 
+/**
+ * 현재 작성칸 내용 기준 보완.
+ * `generateOptions`로 이 요청에 관련된 이름(knownNames)과 요청 구분(featureKey·documentType)을 넘긴다.
+ * 넘기지 않으면 보완 전용 구분을 쓴다 — 구분이 없으면 다른 화면의 같은 종류 요청과 실행 중복 판정·연속 실패
+ * 차단을 서로 공유해, 한 화면의 실패가 다른 화면을 막을 수 있다.
+ */
 export async function regenerateDocumentFromCurrent(
   type: PromptType,
   options: RegenerationPromptOptions,
+  generateOptions: GenerateTextOptions = {},
 ) {
   const prompt = buildCurrentContentRegenerationPrompt(options);
-  return generateText(type, prompt);
+  return generateText(type, prompt, undefined, {
+    featureKey: 'document-refine',
+    documentType: `refine:${type}`,
+    ...generateOptions,
+  });
 }

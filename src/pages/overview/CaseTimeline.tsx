@@ -17,7 +17,7 @@ const KIND_STYLES: Partial<Record<TimelineKind, string>> = {
 export function CaseTimeline({ entries }: { entries: TimelineEntry[] }) {
     const navigate = useNavigate();
     const [visible, setVisible] = useState(PAGE_SIZE);
-    return <section className="glass-card !p-5" aria-labelledby="timeline-title">
+    return <section className="glass-card p-5!" aria-labelledby="timeline-title">
         <h2 id="timeline-title" className="text-xl font-bold text-white flex items-center gap-2"><History className="w-5 h-5 text-blue-300" aria-hidden="true" /> 타임라인</h2>
         <p className="text-xs text-white/50 mt-1">최근 기록부터 표시합니다. 항목을 누르면 해당 화면으로 이동합니다.</p>
         {entries.length === 0

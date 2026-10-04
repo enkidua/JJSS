@@ -1,11 +1,13 @@
 import { Suspense, useEffect, useState, type ReactNode } from 'react';
 import { lazyPage, preloadAllPagesWhenIdle } from './pagePreload';
+import { runLegacyMigration } from './services/legacyMigration';
 import { createHashRouter, RouterProvider, Link } from 'react-router-dom';
 import Layout from './components/Layout';
 import Home from './pages/Home';
 import RouteErrorFallback from './components/RouteErrorFallback';
 import { ConfirmProvider } from './components/common/ConfirmProvider';
 import { GlobalToastProvider } from './components/Toast';
+import { PostRestoreNotice } from './components/PostRestoreNotice';
 
 // 첫 화면(Home)만 바로 불러오고, 나머지 화면은 메뉴를 열 때 불러옵니다.
 // 앱 실행 직후 유휴 시간에 모두 미리 받아 두므로, 평소에는 로딩 문구가 보이지 않습니다(pagePreload.ts).
@@ -30,7 +32,7 @@ function DelayedSkeleton() {
     return (
         <div role="status" aria-label="화면을 불러오는 중입니다" className="mx-auto max-w-7xl px-6 py-8 min-h-[60vh] animate-pulse">
             <div className="h-8 w-56 rounded-lg bg-white/10" />
-            <div className="mt-3 h-4 w-80 rounded bg-white/5" />
+            <div className="mt-3 h-4 w-80 rounded-sm bg-white/5" />
             <div className="mt-8 grid gap-4 md:grid-cols-3">
                 <div className="h-36 rounded-2xl bg-white/5" />
                 <div className="h-36 rounded-2xl bg-white/5" />
@@ -82,10 +84,19 @@ const router = createHashRouter([
 
 export default function App() {
     useEffect(() => { preloadAllPagesWhenIdle(); }, []);
+    // 예전 버전이 평문으로 남긴 직업평가 이력을 앱을 켤 때 바로 암호화 저장소로 옮긴다.
+    // 해당 화면에 들어가지 않는 사용자의 PC에 평문이 계속 남지 않게 하기 위한 것이다.
+    useEffect(() => {
+        void runLegacyMigration().catch(() => {
+            // 실패해도 원본은 지우지 않는다. 다음 실행이나 화면 진입 때 다시 시도한다.
+        });
+    }, []);
     return (
         <GlobalToastProvider>
+            <PostRestoreNotice />
             <ConfirmProvider>
-                <RouterProvider router={router} future={{ v7_startTransition: true }} />
+                {/* React Router 7: v6의 future 플래그(v7_startTransition 등)는 기본 동작이 되어 prop이 없어졌다. */}
+                <RouterProvider router={router} />
             </ConfirmProvider>
         </GlobalToastProvider>
     );

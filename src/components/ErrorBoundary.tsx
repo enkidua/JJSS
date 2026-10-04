@@ -74,7 +74,7 @@ export class ErrorBoundary extends Component<Props, State> {
                             <button
                                 type="button"
                                 onClick={this.handleReset}
-                                className="flex-1 btn-primary !bg-red-600 !hover:bg-red-500 flex items-center justify-center gap-2 py-4 rounded-2xl font-bold shadow-xl shadow-red-900/20"
+                                className="flex-1 btn-primary bg-red-600! !hover:bg-red-500 flex items-center justify-center gap-2 py-4 rounded-2xl font-bold shadow-xl shadow-red-900/20"
                             >
                                 <RefreshCw className="w-5 h-5" /> 다시 불러오기
                             </button>

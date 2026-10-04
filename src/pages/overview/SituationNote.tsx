@@ -58,7 +58,7 @@ export function SituationNote({ note, disabled, saving, onSave, buildPrompt, onD
     };
 
     const savedAt = note?.updatedAt ? formatSavedAt(note.updatedAt) : '';
-    return <section className="glass-card !p-5" aria-labelledby="situation-note-title">
+    return <section className="glass-card p-5!" aria-labelledby="situation-note-title">
         <h2 id="situation-note-title" className="text-xl font-bold text-white flex items-center gap-2"><NotebookPen className="w-5 h-5 text-amber-300" aria-hidden="true" /> 현재 상황 정리</h2>
         <p className="text-xs text-white/50 mt-1">담당자가 이 이용자의 현재 상황을 한 문단으로 정리합니다. AI 초안은 저장하지 않고 메모 칸에만 넣습니다.</p>
         <label htmlFor="situation-note" className="sr-only">현재 상황 정리 메모</label>
@@ -66,11 +66,11 @@ export function SituationNote({ note, disabled, saving, onSave, buildPrompt, onD
             onChange={event => setText(event.target.value)} disabled={disabled || generating}
             placeholder="예: 직업평가 후 사무보조 훈련 중이며, 출석은 안정적입니다. 다음 달 현장실습을 준비하고 있습니다." />
         <div className="flex flex-wrap items-center gap-3 mt-3">
-            <button type="button" className="btn-primary !px-4 !py-2" disabled={disabled || generating || !dirty}
+            <button type="button" className="btn-primary px-4! py-2!" disabled={disabled || generating || !dirty}
                 onClick={() => void onSave(text.trim()).then(ok => { if (ok && mounted.current) setText(text.trim()); })}>
                 {saving ? '저장 중...' : '저장'}
             </button>
-            <button type="button" className="btn-secondary !px-4 !py-2 inline-flex items-center gap-2" disabled={disabled || generating} onClick={() => void draftWithAI()}>
+            <button type="button" className="btn-secondary px-4! py-2! inline-flex items-center gap-2" disabled={disabled || generating} onClick={() => void draftWithAI()}>
                 {generating ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <Sparkles className="w-4 h-4" aria-hidden="true" />}
                 {generating ? 'AI 초안 만드는 중...' : 'AI로 요약 초안 만들기'}
             </button>

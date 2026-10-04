@@ -1,7 +1,18 @@
 import * as localDB from '../config/localDB';
-import { CaseDocument } from '../types/caseDocument';
+import { readTrainingStateAfterWrites } from '../pages/training/trainingWriteQueue';
+import { CaseDocument, CaseDocumentType } from '../types/caseDocument';
 import { Seeker } from '../types/matching';
 import { wrapAsData } from './gemini';
+
+/** AI 참고자료로 보내지 않는 사례문서 종류. 내부 JSON이거나 민감한 식별정보가 든 문서들입니다. */
+const AI_CONTEXT_EXCLUDED_TYPES = new Set<CaseDocumentType>([
+  'workflow',
+  'supported_employment',
+  've_episode',
+  've_session',
+  've_source_document',
+  've_report',
+]);
 
 interface TrainingRecord {
   plan?: string;
@@ -138,12 +149,22 @@ function buildSynthesis(seeker: Seeker, caseDocs: CaseDocument[], trainingText: 
 
 export async function buildClientContextSummary(seeker: Seeker, allSeekers: Seeker[] = []) {
   const caseDocs = (await localDB.getAll<CaseDocument>('caseDocuments'))
-    // 현황판 기록(workflow)과 지원고용 회차(계좌·연락처가 든 JSON)는 AI 참고자료에 넣지 않습니다.
-    .filter(doc => doc.type !== 'workflow' && doc.type !== 'supported_employment' && sameSeeker(doc, seeker, allSeekers))
+    // 현황판 기록(workflow)·지원고용 회차(계좌·연락처가 든 JSON)·직업평가 워크벤치 JSON은 AI 참고자료에 넣지 않습니다.
+    // 직업평가 자료는 해석 단계에서 별도 근거 패키지로만 전송합니다.
+    .filter(doc => !AI_CONTEXT_EXCLUDED_TYPES.has(doc.type) && sameSeeker(doc, seeker, allSeekers))
     .sort((a, b) => dateValue(b) - dateValue(a));
 
-  const trainingState = await localDB.getById<TrainingState>('trainingState', 'work-training').catch(() => undefined);
-  const trainingSummary = summarizeTraining(seeker, trainingState);
+  // 직업훈련 자료를 읽지 못한 것(보안 키 문제 등)을 "훈련 기록 없음"으로 바꿔 보내면 AI가 훈련 이력이 없는
+  // 사람처럼 문서를 쓴다. 읽지 못했으면 그 사실을 그대로 적는다.
+  let trainingReadFailed = false;
+  // 직업훈련 화면에서 예약된 저장을 기다린 뒤 읽는다(막 고친 훈련 기록이 빠진 채 AI에 가지 않게).
+  const trainingState = await readTrainingStateAfterWrites<TrainingState>().catch(() => {
+    trainingReadFailed = true;
+    return undefined;
+  });
+  const trainingSummary = trainingReadFailed
+    ? '최근 직업훈련 요약:\n직업훈련 자료를 이 PC에서 읽지 못했습니다(복구 필요). 훈련 이력이 없다고 판단하지 말고 확인 필요로 표시해 주세요.'
+    : summarizeTraining(seeker, trainingState);
 
   const trainingDocs = caseDocs.filter(doc => doc.source === 'training');
   const caseAreaDocs = caseDocs.filter(doc => doc.tab === 'case');
@@ -172,7 +193,7 @@ export async function buildClientContextSummary(seeker: Seeker, allSeekers: Seek
 
   return {
     summary: summary.slice(0, 9000),
-    hasRecords: caseDocs.length > 0 || !trainingSummary.includes('확인된 훈련 기록 없음'),
+    hasRecords: caseDocs.length > 0 || trainingReadFailed || !trainingSummary.includes('확인된 훈련 기록 없음'),
     recordCount: caseDocs.length,
     note: caseDocs.length === 0 ? '불러올 최근 직업훈련·고용지원 기록이 없습니다.' : '',
   };

@@ -12,7 +12,7 @@ interface Props {
 }
 
 const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
-const input = 'input-field !py-1 !px-2 text-sm';
+const input = 'input-field py-1! px-2! text-sm';
 const round2 = (value: number) => Math.round(value * 100) / 100;
 
 /** 직무지도원 출근부(D-2 #3, D-5). 훈련일지 시간에서 자동으로 채우고, 여기서 고친 값은 유지합니다. */
@@ -31,10 +31,10 @@ export function CoachTimesheetSection({ entries, onChange, onRebuild, hasLogs }:
         overtime: acc.overtime + entry.overtime,
     }), { hours: 0, oneToMany: 0, overtime: 0 });
 
-    return <section className="glass-card !p-5" aria-labelledby="se-timesheet-title">
+    return <section className="glass-card p-5!" aria-labelledby="se-timesheet-title">
         <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 id="se-timesheet-title" className="text-lg font-bold text-white">직무지도원 출근부</h3>
-            <button type="button" className="btn-secondary !px-3 !py-1.5 text-sm flex items-center gap-1" onClick={onRebuild} disabled={!hasLogs}>
+            <button type="button" className="btn-secondary px-3! py-1.5! text-sm flex items-center gap-1" onClick={onRebuild} disabled={!hasLogs}>
                 <RefreshCw className="w-4 h-4" aria-hidden="true" /> 훈련일지 시간으로 다시 채우기
             </button>
         </div>

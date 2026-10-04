@@ -26,13 +26,13 @@ const periodText = (item: SupportedEmploymentCase) =>
 
 /** 회차 목록(D-2 #1) */
 export function CaseList({ cases, loading, error, busy, onRetry, onCreate, onOpen, onCopy, onDelete }: Props) {
-    return <section className="glass-card !p-5" aria-labelledby="se-list-title">
+    return <section className="glass-card p-5!" aria-labelledby="se-list-title">
         <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
                 <h2 id="se-list-title" className="text-xl font-bold text-white">지원고용 회차</h2>
                 <p className="text-sm text-white/55 mt-1">회차를 누르면 훈련일지·평가기록부·수당 계산·결과보고 출력을 이어서 작성합니다.</p>
             </div>
-            <button type="button" className="btn-primary !px-4 !py-2 flex items-center gap-2" onClick={onCreate} disabled={busy || loading}>
+            <button type="button" className="btn-primary px-4! py-2! flex items-center gap-2" onClick={onCreate} disabled={busy || loading}>
                 <Plus className="w-4 h-4" aria-hidden="true" /> 새 회차
             </button>
         </div>
@@ -66,11 +66,11 @@ export function CaseList({ cases, loading, error, busy, onRetry, onCreate, onOpe
                                         <td className="py-2 pr-3"><span className={`rounded-full px-2 py-0.5 text-xs font-bold ${STATUS_STYLES[item.status] || ''}`}>{item.status}</span></td>
                                         <td className="py-2 pr-3 text-right text-white font-semibold">{formatWon(total)}</td>
                                         <td className="py-2 whitespace-nowrap text-right">
-                                            <button type="button" className="btn-ghost !px-2 !py-1 text-xs inline-flex items-center gap-1" onClick={() => onCopy(item)} disabled={busy}
+                                            <button type="button" className="btn-ghost px-2! py-1! text-xs inline-flex items-center gap-1" onClick={() => onCopy(item)} disabled={busy}
                                                 aria-label={`${item.round}차를 다음 회차로 복사`}>
                                                 <Copy className="w-3.5 h-3.5" aria-hidden="true" /> 다음 회차로 복사
                                             </button>
-                                            <button type="button" className="btn-ghost !px-2 !py-1 text-xs inline-flex items-center gap-1 text-red-200" onClick={() => onDelete(item)} disabled={busy}
+                                            <button type="button" className="btn-ghost px-2! py-1! text-xs inline-flex items-center gap-1 text-red-200" onClick={() => onDelete(item)} disabled={busy}
                                                 aria-label={`${item.round}차 삭제`}>
                                                 <Trash2 className="w-3.5 h-3.5" aria-hidden="true" /> 삭제
                                             </button>

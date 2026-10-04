@@ -108,11 +108,26 @@ async function getDataKey(options) {
     return pendingKeyRequests.get(keyPath);
 }
 
+/** 렌더러에 알려 주는 최소 상태(키 값·경로 없음). 배포용 앱의 fail-closed 판단에 쓴다. */
+function getSecureStatus({ app, safeStorage, platform = process.platform }) {
+    let available = false;
+    try {
+        available = isEncryptionUsable(safeStorage, platform);
+    } catch {
+        available = false;
+    }
+    return { available, packaged: Boolean(app?.isPackaged), platform: String(platform) };
+}
+
 function registerDataKeyIpc({ app, ipcMain, safeStorage, expectedIndexPath }) {
     ipcMain.handle('jjss-secure:get-data-key', async event => {
         validateSender(event, expectedIndexPath);
         return getDataKey({ app, safeStorage });
     });
+    ipcMain.handle('jjss-secure:get-status', async event => {
+        validateSender(event, expectedIndexPath);
+        return getSecureStatus({ app, safeStorage });
+    });
 }
 
-module.exports = { DATA_KEY_FILE_NAME, getDataKey, registerDataKeyIpc };
+module.exports = { DATA_KEY_FILE_NAME, getDataKey, getSecureStatus, registerDataKeyIpc };

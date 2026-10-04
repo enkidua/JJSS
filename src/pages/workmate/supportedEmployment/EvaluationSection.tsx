@@ -50,6 +50,8 @@ export function EvaluationSection({ draft, onChange, onOpinionsChange, onBusyCha
         try {
             const text = await generateText('evaluation', buildOpinionPrompt(draft), undefined, {
                 featureKey: 'workmate', documentType: 'supported-employment-opinion',
+                // 이 회차와 관련 있는 이름(훈련생·직무지도원·담당자)만 비식별화 이름 사전에 더합니다.
+                knownNames: [draft.seekerName, draft.coach.name, draft.documentOptions?.staffName],
             });
             if (request !== requestRef.current) return;
             const parsed = parseOpinionDraft(text);
@@ -78,7 +80,7 @@ export function EvaluationSection({ draft, onChange, onOpinionsChange, onBusyCha
         }
     };
 
-    return <section className="glass-card !p-5" aria-labelledby="se-eval-title">
+    return <section className="glass-card p-5!" aria-labelledby="se-eval-title">
         <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 id="se-eval-title" className="text-lg font-bold text-white">훈련생 종합 평가기록부</h3>
             <p className="text-sm text-white/80" aria-live="polite">
@@ -102,7 +104,7 @@ export function EvaluationSection({ draft, onChange, onOpinionsChange, onBusyCha
                             return <tr key={item} className="border-t border-white/5">
                                 <td className="py-1 pr-2 text-white/80">{item}</td>
                                 {(['pre', 'field'] as const).map(phase => <td key={phase} className="py-1">
-                                    <select aria-label={`${item} ${phase === 'pre' ? '사전' : '현장'} 점수`} className="input-field !py-1 !px-1 text-sm"
+                                    <select aria-label={`${item} ${phase === 'pre' ? '사전' : '현장'} 점수`} className="input-field py-1! px-1! text-sm"
                                         value={evaluation[phase][index] ?? ''} onChange={e => setScore(phase, index, e.target.value)}>
                                         <option value="">-</option>
                                         {SCORES.map(score => <option key={score} value={score}>{score}</option>)}
@@ -120,7 +122,7 @@ export function EvaluationSection({ draft, onChange, onOpinionsChange, onBusyCha
             </fieldset>)}
         </div>
         <div className="mt-4 flex flex-wrap items-center gap-3">
-            <button type="button" className="btn-secondary !px-4 !py-2 text-sm flex items-center gap-2" onClick={() => void handleDraft()} disabled={generating} aria-busy={generating}>
+            <button type="button" className="btn-secondary px-4! py-2! text-sm flex items-center gap-2" onClick={() => void handleDraft()} disabled={generating} aria-busy={generating}>
                 <Sparkles className="w-4 h-4" aria-hidden="true" /> {generating ? '소견 초안 작성 중...' : 'AI로 소견 초안'}
             </button>
             <span className="text-xs text-white/50">훈련일지 지도사항과 점수를 비식별화해 보내고, 결과는 칸에 채우기만 합니다(자동 저장하지 않음).</span>

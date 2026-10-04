@@ -299,7 +299,7 @@ export default function BudgetManagement() {
                     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
                         className="glass-strong rounded-2xl p-5 border border-white/10">
                         <div className="flex items-center gap-3">
-                            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center">
+                            <div className="w-12 h-12 rounded-xl bg-linear-to-br from-green-500 to-emerald-600 flex items-center justify-center">
                                 <Receipt className="w-6 h-6 text-white" />
                             </div>
                             <div>
@@ -311,7 +311,7 @@ export default function BudgetManagement() {
                     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}
                         className="glass-strong rounded-2xl p-5 border border-white/10">
                         <div className="flex items-center gap-3">
-                            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-600 flex items-center justify-center">
+                            <div className="w-12 h-12 rounded-xl bg-linear-to-br from-blue-500 to-cyan-600 flex items-center justify-center">
                                 <DollarSign className="w-6 h-6 text-white" />
                             </div>
                             <div>
@@ -326,7 +326,7 @@ export default function BudgetManagement() {
                     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
                         className="glass-strong rounded-2xl p-5 border border-white/10">
                         <div className="flex items-center gap-3">
-                            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500 to-violet-600 flex items-center justify-center">
+                            <div className="w-12 h-12 rounded-xl bg-linear-to-br from-purple-500 to-violet-600 flex items-center justify-center">
                                 <FileText className="w-6 h-6 text-white" />
                             </div>
                             <div>

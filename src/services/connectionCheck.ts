@@ -84,15 +84,11 @@ async function readErrorPayload(response: Response): Promise<{ type: string; mes
 }
 
 async function fetchForCheck(provider: ConnectionCheckProvider, url: string, init: RequestInit, userSignal?: AbortSignal): Promise<Response> {
-    const timed = createTimedSignal(userSignal);
     try {
-        return await fetch(url, { ...init, signal: timed.signal });
+        return await fetch(url, { ...init, signal: userSignal });
     } catch (error: any) {
-        if (timed.isTimedOut()) throw connectionError(provider, 'timeout');
         if (userSignal?.aborted || error?.name === 'AbortError') throw createAbortError();
         throw connectionError(provider, 'network');
-    } finally {
-        timed.cleanup();
     }
 }
 
@@ -188,26 +184,37 @@ export async function checkProviderConnection(
 ): Promise<string> {
     const key = String(apiKey ?? '').trim();
     if (!key) throw new Error('API 키를 먼저 입력해 주세요.');
-    switch (provider) {
-        case 'gemini': {
-            const timed = createTimedSignal(options.signal);
-            try {
-                return await checkGeminiConnection(key, options.model, timed.signal);
-            } catch (error) {
-                if (timed.isTimedOut()) throw connectionError('gemini', 'timeout');
-                if (options.signal?.aborted) throw createAbortError();
-                throw error;
-            } finally {
-                timed.cleanup();
-            }
+    // Keep cancellation active until body parsing is finished, not only until
+    // fetch resolves with HTTP headers. Body readers may catch AbortError, so
+    // check the signal again before returning a successful message.
+    const timed = createTimedSignal(options.signal);
+    const requestOptions = { ...options, signal: timed.signal };
+    try {
+        if (timed.signal.aborted) throw createAbortError();
+        let message: string;
+        switch (provider) {
+            case 'gemini':
+                message = await checkGeminiConnection(key, options.model, timed.signal);
+                break;
+            case 'openai':
+                message = await checkOpenAI(key, requestOptions);
+                break;
+            case 'anthropic':
+                message = await checkAnthropic(key, requestOptions);
+                break;
+            case 'vision':
+                message = await checkVision(key, requestOptions);
+                break;
+            default:
+                throw new Error('알 수 없는 AI 제공업체입니다.');
         }
-        case 'openai':
-            return checkOpenAI(key, options);
-        case 'anthropic':
-            return checkAnthropic(key, options);
-        case 'vision':
-            return checkVision(key, options);
-        default:
-            throw new Error('알 수 없는 AI 제공업체입니다.');
+        if (timed.signal.aborted) throw createAbortError();
+        return message;
+    } catch (error) {
+        if (timed.isTimedOut()) throw connectionError(provider, 'timeout');
+        if (options.signal?.aborted) throw createAbortError();
+        throw error;
+    } finally {
+        timed.cleanup();
     }
 }

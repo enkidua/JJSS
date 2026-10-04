@@ -47,6 +47,7 @@ export function useClientContext(
         requestRef.current += 1;
         setSummary('');
         setLoading(false);
+        return () => { requestRef.current += 1; };
     }, [changeKey]);
 
     const clear = useCallback(() => {

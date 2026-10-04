@@ -36,7 +36,7 @@ const DEFAULT_WIDGETS: Widget[] = [
 
 const THEMES = {
     dark: { bg: 'bg-[#1e293b]', border: 'border-white/10' },
-    gradient: { bg: 'bg-gradient-to-br from-indigo-900 via-purple-900 to-slate-900', border: 'border-white/20' },
+    gradient: { bg: 'bg-linear-to-br from-indigo-900 via-purple-900 to-slate-900', border: 'border-white/20' },
     glass: { bg: 'bg-white/10 backdrop-blur-3xl', border: 'border-white/30 shadow-[0_8px_32px_rgba(255,255,255,0.1)]' }
 };
 
@@ -159,7 +159,7 @@ export function DashboardView({ onBack, onDirtyChange }: DashboardViewProps) {
                         accept=".csv,.txt,.json"
                         onFiles={handleFiles}
                         ariaLabel="데이터 파일 불러오기"
-                        className="cursor-pointer flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 border border-dashed border-white/20 text-white/80 hover:bg-white/10 hover:text-white transition-all font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+                        className="cursor-pointer flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 border border-dashed border-white/20 text-white/80 hover:bg-white/10 hover:text-white transition-all font-medium focus:outline-hidden focus-visible:ring-2 focus-visible:ring-emerald-400"
                         activeClassName="border-emerald-400 bg-emerald-500/10"
                     >
                         <FileUp className="w-4 h-4" aria-hidden="true" /> 데이터 파일 불러오기
@@ -246,7 +246,7 @@ export function DashboardView({ onBack, onDirtyChange }: DashboardViewProps) {
                                             <div className="flex items-center justify-between mb-4">
                                                 <span className="text-white/50 text-xs font-bold uppercase tracking-wider flex items-center gap-1.5">
                                                     {w.title}
-                                                    {w.sample && <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] text-amber-200 normal-case">예시</span>}
+                                                    {w.sample && <span className="rounded-sm bg-amber-500/20 px-1.5 py-0.5 text-[10px] text-amber-200 normal-case">예시</span>}
                                                 </span>
                                                 <div className={`w-8 h-8 rounded-lg ${w.color} flex items-center justify-center text-white`}>
                                                     {w.type === 'kpi' ? <PieChart className="w-4 h-4" /> : <BarChart3 className="w-4 h-4" />}
@@ -291,7 +291,7 @@ export function DashboardView({ onBack, onDirtyChange }: DashboardViewProps) {
                 {/* ─── 사이드바: 편집 도구 ─── */}
                 <div className="lg:col-span-1">
                     <div className="sticky top-8 space-y-6">
-                        <div className="glass-strong rounded-[2rem] p-6 border border-white/10 h-fit">
+                        <div className="glass-strong rounded-4xl p-6 border border-white/10 h-fit">
                             <h3 className="text-lg font-bold text-white mb-6 flex items-center gap-2">
                                 <Palette className="w-5 h-5 text-purple-400" />
                                 테마 설정
@@ -318,7 +318,7 @@ export function DashboardView({ onBack, onDirtyChange }: DashboardViewProps) {
                                             type="text"
                                             value={editingWidget.title}
                                             onChange={(e) => updateWidget(editingWidget.id, { title: e.target.value })}
-                                            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white outline-none focus:border-emerald-500/50"
+                                            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white outline-hidden focus:border-emerald-500/50"
                                         />
                                     </div>
                                     <div>
@@ -332,7 +332,7 @@ export function DashboardView({ onBack, onDirtyChange }: DashboardViewProps) {
                                             max={editingWidget.type === 'progress' ? 100 : undefined}
                                             value={editingWidget.value}
                                             onChange={(e) => updateWidget(editingWidget.id, { value: e.target.value, sample: false })}
-                                            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white outline-none focus:border-emerald-500/50"
+                                            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white outline-hidden focus:border-emerald-500/50"
                                         />
                                     </div>
                                     <div>
@@ -342,7 +342,7 @@ export function DashboardView({ onBack, onDirtyChange }: DashboardViewProps) {
                                             type="text"
                                             value={editingWidget.subValue ?? ''}
                                             onChange={(e) => updateWidget(editingWidget.id, { subValue: e.target.value })}
-                                            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white outline-none focus:border-emerald-500/50"
+                                            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white outline-hidden focus:border-emerald-500/50"
                                         />
                                     </div>
                                     <div>
@@ -377,7 +377,7 @@ export function DashboardView({ onBack, onDirtyChange }: DashboardViewProps) {
                             )}
                         </div>
 
-                        <div className="bg-gradient-to-br from-indigo-500/20 to-purple-600/20 rounded-[2rem] p-6 border border-white/10">
+                        <div className="bg-linear-to-br from-indigo-500/20 to-purple-600/20 rounded-4xl p-6 border border-white/10">
                             <h4 className="text-white font-bold mb-2">사용 팁</h4>
                             <p className="text-xs text-white/50 leading-relaxed">
                                 KPI 카드와 진척도 게이지를 조합하여 나만의 데이터 리포트를 만드세요. 편집 모드에서 위젯의 수치와 색상을 자유롭게 변경할 수 있습니다. 이 화면의 내용은 저장되지 않으니 "복사"로 옮겨 두세요.

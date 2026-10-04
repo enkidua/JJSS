@@ -12,15 +12,15 @@ interface Props {
 export function SeekerHeader({ seeker, stage }: Props) {
     const currentIndex = REHAB_STAGES.indexOf(stage);
     const registeredAt = timestampDateKey(seeker.createdAt);
-    return <section className="glass-card !p-5" aria-labelledby="overview-seeker-name">
+    return <section className="glass-card p-5!" aria-labelledby="overview-seeker-name">
         <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="flex items-center gap-4 min-w-0">
                 <div className="w-12 h-12 rounded-2xl bg-accent-500/20 flex items-center justify-center text-accent-300 shrink-0">
                     <UserRound className="w-6 h-6" aria-hidden="true" />
                 </div>
                 <div className="min-w-0">
-                    <h2 id="overview-seeker-name" className="text-2xl font-black text-white break-words">{seeker.name}</h2>
-                    <p className="text-sm text-white/60 mt-1 break-words">
+                    <h2 id="overview-seeker-name" className="text-2xl font-black text-white wrap-break-word">{seeker.name}</h2>
+                    <p className="text-sm text-white/60 mt-1 wrap-break-word">
                         {[seeker.disabilityType && `${seeker.disabilityType}${seeker.severity ? ` (${seeker.severity})` : ''}`,
                             `등록일 ${registeredAt || '기록 없음'}`,
                             seeker.status && `현재 상황 ${seeker.status}`,

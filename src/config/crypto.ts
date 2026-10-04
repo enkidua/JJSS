@@ -2,13 +2,16 @@
  * 로컬 데이터·API 키 암호화 (Web Crypto AES-GCM 256비트)
  *
  * 저장 형식
- * - `enc:v2:<iv>.<암호문>` Windows DPAPI(Electron safeStorage)로 보호되는 데이터 키로 암호화
- * - `enc:v1:<iv>.<암호문>` 데이터 키를 쓸 수 없을 때(브라우저 개발 모드 등) APP_SEED + 설치 ID 파생 키로 암호화
+ * - `enc:v2:<iv>.<암호문>` 운영체제 보안 저장소(Electron safeStorage: Windows DPAPI, macOS Keychain)로 보호되는 데이터 키로 암호화
+ * - `enc:v1:<iv>.<암호문>` 개발 모드(브라우저, 패키징하지 않은 Electron)에서 데이터 키가 없을 때만 APP_SEED + 설치 ID 파생 키로 암호화.
+ *   배포용(패키징된) 앱에서 데이터 키를 쓸 수 없으면 새 민감정보 저장을 막는다(SecureStorageUnavailableError). 기존 v1은 계속 읽는다.
  * - `<iv>.<암호문>`        이전 버전 형식(접두어 없음). 설치 ID 키 → 머신 지문 키 순서로 복호화
  * 암호문 형식이 아닌 값은 평문으로 그대로 읽는다(다음 저장 때 암호화).
  *
  * 백업 파일 비밀번호 암호화(PBKDF2-SHA256 → AES-GCM 봉투 형식)도 이 파일에 있다.
  */
+
+import type { JjssSecureStatus } from '../types/jjssSecure';
 
 const APP_SEED = 'JJSS-Desktop-Secure-2026';
 
@@ -24,6 +27,28 @@ const DATA_KEY_BYTES = 32;
 const BASE64_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
 
 export type CipherScheme = 'v2' | 'v1' | 'legacy';
+
+// ─── 배포용 앱 fail-closed ───
+
+export const SECURE_STORAGE_UNAVAILABLE_MESSAGE = '운영체제 보안 저장소를 사용할 수 없어 개인정보를 안전하게 저장할 수 없습니다. 앱을 재실행하거나 운영체제 보안 설정을 확인해 주세요.';
+/** 암호화된 값을 읽지 못했을 때 공통 안내 */
+export const DECRYPT_FAILURE_MESSAGE = '보안 키를 불러오지 못했습니다. 기존 데이터를 삭제하지 않았습니다.';
+/** 새 민감정보 저장을 막았을 때 화면 안내용 이벤트 */
+export const SECURE_STORAGE_UNAVAILABLE_EVENT = 'jjss:secure-storage-unavailable';
+const SECURE_STORAGE_UNAVAILABLE_CODE = 'SECURE_STORAGE_UNAVAILABLE';
+
+/** 배포용 앱에서 운영체제 보안 저장소(데이터 키)를 쓸 수 없어 새 민감정보를 암호화하지 않았다. */
+export class SecureStorageUnavailableError extends Error {
+    readonly code = SECURE_STORAGE_UNAVAILABLE_CODE;
+    constructor() {
+        super(SECURE_STORAGE_UNAVAILABLE_MESSAGE);
+        this.name = 'SecureStorageUnavailableError';
+    }
+}
+
+export function isSecureStorageUnavailableError(error: unknown): error is SecureStorageUnavailableError {
+    return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === SECURE_STORAGE_UNAVAILABLE_CODE;
+}
 
 export interface DecryptResult {
     /** 복호화된 값. 실패하면 '' (암호문을 화면에 보여 주지 않는다) */
@@ -109,6 +134,12 @@ export function isEncrypted(value: unknown): boolean {
     return typeof value === 'string' && value.length > 0 && parseStoredCipher(value) !== null;
 }
 
+/** 저장값의 암호문 형식(복호화하지 않고 형식만 본다). 암호문이 아니면 null. */
+export function getCipherScheme(value: unknown): CipherScheme | null {
+    if (typeof value !== 'string' || !value) return null;
+    return parseStoredCipher(value)?.scheme ?? null;
+}
+
 // ─── 키 관리 (모듈 범위 캐시: 호출마다 PBKDF2를 반복하지 않는다) ───
 
 function readInstallationId(): string | null {
@@ -167,6 +198,10 @@ async function deriveKeyFromSeed(seed: string): Promise<CryptoKey> {
 }
 
 let dataKeyPromise: Promise<CryptoKey | null> | null = null;
+let dataKeyMissingSince = 0;
+/** 키를 못 받은 뒤 다시 물어보기까지의 최소 간격(보안 저장소가 늦게 준비되는 경우 대비) */
+const DATA_KEY_RETRY_INTERVAL_MS = 5_000;
+let secureStatusPromise: Promise<JjssSecureStatus | null> | null = null;
 let installationKeyCache: { id: string; key: Promise<CryptoKey> } | null = null;
 let legacyKeyPromise: Promise<CryptoKey> | null = null;
 
@@ -182,26 +217,74 @@ async function loadDataKey(): Promise<{ key: CryptoKey | null; retry: boolean }>
         return { key: null, retry: true };
     }
     const raw = typeof encoded === 'string' ? base64ToBytes(encoded.trim()) : null;
+    encoded = null;
     if (!raw || raw.length !== DATA_KEY_BYTES) return { key: null, retry: false };
     try {
+        // extractable=false로 가져오므로 이 CryptoKey에서 원시 키를 다시 꺼낼 수 없다.
         const key = await crypto.subtle.importKey('raw', toArrayBuffer(raw), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
         return { key, retry: false };
     } catch {
         return { key: null, retry: false };
+    } finally {
+        // 가져오기가 끝나면 원시 바이트를 즉시 지운다(메모리에 남는 시간을 줄인다).
+        // 주의: 중간에 거친 base64 문자열은 JavaScript 문자열이라 덮어쓸 수 없고 GC에 맡긴다.
+        raw.fill(0);
     }
 }
 
-/** DPAPI로 보호되는 데이터 키 (없으면 null). 앱 실행 중 한 번만 불러온다. */
+/**
+ * 운영체제 보안 저장소로 보호되는 데이터 키 (없으면 null). 받은 키는 실행 중 계속 쓴다.
+ * 받지 못했으면 잠시 뒤 다시 물어본다(키 파일을 새로 만들거나 덮어쓰는 일은 main 프로세스가 막는다).
+ */
 function getDataKey(): Promise<CryptoKey | null> {
-    if (!dataKeyPromise) {
+    if (dataKeyPromise === null || (dataKeyMissingSince && Date.now() - dataKeyMissingSince > DATA_KEY_RETRY_INTERVAL_MS)) {
+        dataKeyMissingSince = 0;
         const pending = loadDataKey();
         const keyPromise = pending.then(result => result.key);
         dataKeyPromise = keyPromise;
         void pending.then(result => {
-            if (result.retry && dataKeyPromise === keyPromise) dataKeyPromise = null;
+            if (dataKeyPromise !== keyPromise) return;
+            if (result.retry) dataKeyPromise = null;
+            else if (!result.key) dataKeyMissingSince = Date.now();
         });
     }
     return dataKeyPromise;
+}
+
+/** Electron main이 알려 주는 보안 저장소 상태. 브라우저 개발 모드(jjssSecure 없음)면 null. */
+function getSecureStatus(): Promise<JjssSecureStatus | null> {
+    const api = typeof window !== 'undefined' ? window.jjssSecure : undefined;
+    if (!api) return Promise.resolve(null);
+    if (!secureStatusPromise) {
+        const pending: Promise<JjssSecureStatus | null> = typeof api.getStatus === 'function'
+            ? api.getStatus().then(
+                status => (status && typeof status === 'object' ? status : null),
+                () => null,
+            )
+            : Promise.resolve(null);
+        secureStatusPromise = pending;
+        // 상태를 받지 못했으면 다음에 다시 물어본다.
+        void pending.then(status => { if (!status && secureStatusPromise === pending) secureStatusPromise = null; });
+    }
+    return secureStatusPromise;
+}
+
+/**
+ * 데이터 키가 없을 때 새 민감정보 저장을 막아야 하는지.
+ * - 브라우저 개발 모드(jjssSecure 없음): 막지 않음(v1 허용)
+ * - Electron인데 상태를 확인하지 못함: 안전하게 막음
+ * - 패키징된 배포용 앱: 막음 / 패키징하지 않은 개발 실행: v1 허용
+ */
+async function mustFailClosed(): Promise<boolean> {
+    const api = typeof window !== 'undefined' ? window.jjssSecure : undefined;
+    if (!api) return false;
+    const status = await getSecureStatus();
+    return !status || status.packaged !== false;
+}
+
+function notifySecureStorageUnavailable() {
+    if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function' || typeof CustomEvent !== 'function') return;
+    window.dispatchEvent(new CustomEvent(SECURE_STORAGE_UNAVAILABLE_EVENT));
 }
 
 /** v1·이전 형식 키 (APP_SEED + 설치 ID). create=false면 설치 ID가 없을 때 null. */
@@ -231,9 +314,31 @@ function getLegacyKey(): Promise<CryptoKey> {
     return legacyKeyPromise;
 }
 
-/** 현재 새 값을 암호화할 때 쓰는 키 종류 (설정 화면 안내용) */
-export async function getEncryptionKeyKind(): Promise<'data-key' | 'installation'> {
-    return (await getDataKey()) ? 'data-key' : 'installation';
+export type EncryptionKeyKind = 'data-key' | 'installation' | 'unavailable';
+
+export interface EncryptionKeyInfo {
+    /** data-key: 보안 저장소 키 / installation: 개발 모드 기본 암호화(v1) / unavailable: 배포용 앱에서 새 민감정보 저장 차단 */
+    kind: EncryptionKeyKind;
+    /** process.platform (브라우저 개발 모드면 null) */
+    platform: string | null;
+}
+
+/** 현재 새 값을 암호화할 때 쓰는 키 종류와 실행 플랫폼 (설정 화면 안내용) */
+export async function getEncryptionKeyInfo(): Promise<EncryptionKeyInfo> {
+    const status = await getSecureStatus();
+    const platform = status && typeof status.platform === 'string' ? status.platform : null;
+    if (await getDataKey()) return { kind: 'data-key', platform };
+    return { kind: (await mustFailClosed()) ? 'unavailable' : 'installation', platform };
+}
+
+/**
+ * 저장된 값을 일괄 재암호화할 때 목표로 삼을 형식.
+ * 데이터 키가 있으면 'v2', 개발 모드(브라우저·패키징하지 않은 Electron)에서 키가 없으면 'v1',
+ * 배포용 앱에서 키를 쓸 수 없으면 null(아무것도 쓰지 않는다).
+ */
+export async function getAtRestTargetScheme(): Promise<'v2' | 'v1' | null> {
+    if (await getDataKey()) return 'v2';
+    return (await mustFailClosed()) ? null : 'v1';
 }
 
 // ─── 암호화 / 복호화 ───
@@ -264,15 +369,22 @@ async function aesDecrypt(key: CryptoKey | null, payload: CipherPayload): Promis
 
 /**
  * 평문 → 암호문
- * 데이터 키가 있으면 `enc:v2:`, 없으면(브라우저 개발 모드 등) `enc:v1:` 형식으로 저장한다.
+ * 데이터 키가 있으면 `enc:v2:`. 없으면 개발 모드에서만 `enc:v1:`로 저장하고,
+ * 배포용 앱에서는 평문·v1로 저장하지 않고 SecureStorageUnavailableError를 던진다.
  */
 export async function encrypt(plaintext: string): Promise<string> {
     if (!plaintext) return '';
     const dataKey = await getDataKey();
-    const prefix = dataKey ? CIPHER_PREFIX_V2 : CIPHER_PREFIX_V1;
-    const key = dataKey || await getInstallationKey(true);
-    const { iv, ct } = await aesEncrypt(key, plaintext);
-    return `${prefix}${bytesToBase64(iv)}.${bytesToBase64(ct)}`;
+    if (dataKey) {
+        const { iv, ct } = await aesEncrypt(dataKey, plaintext);
+        return `${CIPHER_PREFIX_V2}${bytesToBase64(iv)}.${bytesToBase64(ct)}`;
+    }
+    if (await mustFailClosed()) {
+        notifySecureStorageUnavailable();
+        throw new SecureStorageUnavailableError();
+    }
+    const { iv, ct } = await aesEncrypt(await getInstallationKey(true), plaintext);
+    return `${CIPHER_PREFIX_V1}${bytesToBase64(iv)}.${bytesToBase64(ct)}`;
 }
 
 function plainResult(value: string): DecryptResult {

@@ -184,7 +184,8 @@ export default function WorkMate() {
 
     const meetingSaved = Boolean(caseMeetingDoc) && caseMeetingDoc?.content === meetingText;
     const planSaved = Boolean(casePlanDoc) && casePlanDoc?.content === planText;
-    const caseBusy = isGenerating || savingCaseDocType !== null;
+    // 저장된 문서를 불러오는 동안에도 생성·저장 버튼을 잠근다.
+    const caseBusy = isGenerating || savingCaseDocType !== null || pipeline.caseLoading;
     const { selectedEmploymentSeeker, employmentContext } = employment;
 
     // 탭 본문. 새 탭을 추가하면 여기에 case 하나를 더합니다(빠뜨리면 타입 검사에서 알려 줍니다).
@@ -239,7 +240,7 @@ export default function WorkMate() {
                                                     <p className="text-white/40 font-medium">희망직무: {caseSeeker.desiredJob1} / 지역: {caseSeeker.desiredLocation} / 연령: {caseSeeker.age}세</p>
                                                 </div>
                                             </div>
-                                            <button type="button" onClick={() => void handleResetCase()} className="btn-ghost !bg-white/5 border border-white/10 !px-5 !py-2.5 rounded-xl font-bold text-xs hover:bg-white/10">이용자 변경</button>
+                                            <button type="button" onClick={() => void handleResetCase()} className="btn-ghost bg-white/5! border border-white/10 px-5! py-2.5! rounded-xl font-bold text-xs hover:bg-white/10">이용자 변경</button>
                                         </div>
                                         <div className="absolute top-0 right-0 p-8 opacity-5">
                                             <UserCheck className="w-40 h-40" />
@@ -328,7 +329,7 @@ export default function WorkMate() {
                                         onSaveHistory={(document, content, type) => void pipeline.saveCaseDoc(document, content, type)}
                                         writeMode={pipeline.followUpMode}
                                         setWriteMode={pipeline.setFollowUpMode}
-                                        isBusy={isGenerating}
+                                        isBusy={isGenerating || pipeline.caseLoading}
 
                                         counselInput={counselInput}
                                         setCounselInput={setCounselInput}
@@ -412,6 +413,7 @@ export default function WorkMate() {
                         result={employment.interviewText}
                         setResult={employment.setInterviewText}
                         resultPlaceholder="AI가 작성한 면접일지가 여기에 표시됩니다."
+                        loading={employment.interviewLoading}
                         busy={employment.employmentBusy}
                         isGenerating={employment.employmentGenerating === 'interview'}
                         isRefining={employment.employmentGenerating === 'interviewRefine'}

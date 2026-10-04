@@ -86,7 +86,7 @@ export function FollowUpStage({
         <motion.div
             layout
             onClick={() => !isActive && onActivate()}
-            className={`glass-strong rounded-[2rem] border transition-all overflow-hidden ${isActive
+            className={`glass-strong rounded-4xl border transition-all overflow-hidden ${isActive
                     ? 'border-accent-500/50 ring-1 ring-accent-500/20 shadow-2xl shadow-accent-500/5'
                     : hasHistory
                         ? 'border-emerald-500/30 bg-emerald-500/5 cursor-pointer opacity-80 hover:opacity-100'
@@ -123,7 +123,7 @@ export function FollowUpStage({
                                 return (
                                     <div key={h.id || i} className="relative">
                                         {/* 타임라인 점 */}
-                                        <div className={`absolute -left-[23px] top-4 w-3 h-3 rounded-full border-4 border-[#12121a] ${isCounsel ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                                        <div className={`absolute left-[-23px] top-4 w-3 h-3 rounded-full border-4 border-[#12121a] ${isCounsel ? 'bg-emerald-400' : 'bg-amber-400'}`} />
 
                                         <div className={`p-5 sm:p-6 rounded-2xl border ${isCounsel ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-amber-500/5 border-amber-500/20'}`}>
                                             <div className="flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center mb-4">
@@ -133,9 +133,9 @@ export function FollowUpStage({
                                                     {h.createdAt && <span className="text-white/35 font-normal ml-1 text-xs">{new Date(typeof h.createdAt === 'object' && 'seconds' in h.createdAt ? h.createdAt.seconds * 1000 : h.createdAt).toLocaleDateString('ko-KR')}</span>}
                                                 </span>
                                                 <div className="flex gap-1.5">
-                                                    <button type="button" disabled={locked} onClick={() => onSaveHistory(h, h.content, historyType)} className="p-2 rounded-lg text-emerald-300/70 hover:text-emerald-200 hover:bg-emerald-400/10 focus:outline-none focus:ring-2 focus:ring-emerald-300/40 transition-colors disabled:opacity-40" title="저장" aria-label="저장"><Save className="w-4 h-4" /></button>
-                                                    <CopyButton text={h.content} label="복사" iconOnly className="p-2 rounded-lg text-blue-300/70 hover:text-blue-200 hover:bg-blue-400/10 focus:outline-none focus:ring-2 focus:ring-blue-300/40 transition-colors disabled:opacity-40" />
-                                                    {h.id && <button type="button" disabled={locked} onClick={() => onDeleteHistory(h.id!, historyType)} className="p-2 rounded-lg text-red-300/70 hover:text-red-200 hover:bg-red-400/10 focus:outline-none focus:ring-2 focus:ring-red-300/40 transition-colors disabled:opacity-40" title="삭제" aria-label="삭제"><Trash2 className="w-4 h-4" /></button>}
+                                                    <button type="button" disabled={locked} onClick={() => onSaveHistory(h, h.content, historyType)} className="p-2 rounded-lg text-emerald-300/70 hover:text-emerald-200 hover:bg-emerald-400/10 focus:outline-hidden focus:ring-2 focus:ring-emerald-300/40 transition-colors disabled:opacity-40" title="저장" aria-label="저장"><Save className="w-4 h-4" /></button>
+                                                    <CopyButton text={h.content} label="복사" iconOnly className="p-2 rounded-lg text-blue-300/70 hover:text-blue-200 hover:bg-blue-400/10 focus:outline-hidden focus:ring-2 focus:ring-blue-300/40 transition-colors disabled:opacity-40" />
+                                                    {h.id && <button type="button" disabled={locked} onClick={() => onDeleteHistory(h.id!, historyType)} className="p-2 rounded-lg text-red-300/70 hover:text-red-200 hover:bg-red-400/10 focus:outline-hidden focus:ring-2 focus:ring-red-300/40 transition-colors disabled:opacity-40" title="삭제" aria-label="삭제"><Trash2 className="w-4 h-4" /></button>}
                                                 </div>
                                             </div>
                                             <textarea
@@ -145,7 +145,7 @@ export function FollowUpStage({
                                                     const newContent = e.target.value;
                                                     setHistory(prev => prev.map(p => (p.id === h.id || (!p.id && p === h)) ? { ...p, content: newContent } : p));
                                                 }}
-                                                className="textarea-field !bg-black/20 !border-white/10 !p-5 rounded-2xl !min-h-[260px] sm:!min-h-[300px] !max-h-[520px] text-sm sm:text-[15px] leading-7 text-white/85 focus:ring-1 focus:ring-accent-500/50 resize-y custom-scrollbar"
+                                                className="textarea-field bg-black/20! border-white/10! p-5! rounded-2xl min-h-[260px]! sm:min-h-[300px]! max-h-[520px]! text-sm sm:text-[15px] leading-7 text-white/85 focus:ring-1 focus:ring-accent-500/50 resize-y custom-scrollbar"
                                             />
                                         </div>
                                     </div>
@@ -181,7 +181,7 @@ export function FollowUpStage({
                             value={counselText || evalText}
                             readOnly={locked}
                             onChange={e => counselText ? setCounselText(e.target.value) : setEvalText(e.target.value)}
-                            className="textarea-field !bg-black/30 border-accent-500/20 !min-h-[160px] !max-h-[400px] text-sm leading-relaxed font-sans resize-y"
+                            className="textarea-field bg-black/30! border-accent-500/20 min-h-[160px]! max-h-[400px]! text-sm leading-relaxed font-sans resize-y"
                         />
                     </div>
                 )}
@@ -220,7 +220,7 @@ export function FollowUpStage({
                                 value={writeMode === 'counseling' ? counselInput : evalInput}
                                 onChange={e => writeMode === 'counseling' ? setCounselInput(e.target.value) : setEvalInput(e.target.value)}
                                 readOnly={isGeneratingCounsel || isGeneratingEval}
-                                className="textarea-field !bg-black/40 border-white/5 !min-h-[120px] text-sm leading-relaxed mb-4"
+                                className="textarea-field bg-black/40! border-white/5 min-h-[120px]! text-sm leading-relaxed mb-4"
                                 placeholder={writeMode === 'counseling'
                                     ? "상담 일시, 장소, 주요 대화 내용 및 진전 피드백을 입력하세요. (이전 타임라인 흐름이 기록됩니다)"
                                     : "평가 관점, 단기목표 달성에 대한 소견, 앞으로 변경이 필요한 계획 등을 자유롭게 입력하세요."}
@@ -235,7 +235,7 @@ export function FollowUpStage({
                                     type="button"
                                     onClick={() => writeMode === 'counseling' ? onGenerateCounsel() : onGenerateEval()}
                                     disabled={locked}
-                                    className={`btn-primary !px-5 !py-2.5 rounded-xl flex items-center gap-2 font-bold text-sm shadow-xl shrink-0 disabled:opacity-60 disabled:cursor-not-allowed ${writeMode === 'counseling' ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-500/20' : 'bg-amber-600 hover:bg-amber-500 shadow-amber-500/20'}`}
+                                    className={`btn-primary px-5! py-2.5! rounded-xl flex items-center gap-2 font-bold text-sm shadow-xl shrink-0 disabled:opacity-60 disabled:cursor-not-allowed ${writeMode === 'counseling' ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-500/20' : 'bg-amber-600 hover:bg-amber-500 shadow-amber-500/20'}`}
                                 >
                                     {(writeMode === 'counseling' ? isGeneratingCounsel : isGeneratingEval)
                                         ? <Loader2 className="w-4 h-4 animate-spin" />

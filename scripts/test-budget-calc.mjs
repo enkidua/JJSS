@@ -116,6 +116,13 @@ test('부가세 포함(총액 → 공급가액+부가세): 합이 항상 총액�
         assert.ok(Number.isInteger(supplyAmount) && Number.isInteger(vat));
     }
     assert.equal(splitVatIncludedTotal(10001).vat, 909); // 909.18 → 버림
+    // 부동소수 오차로 1원씩 어긋나던 금액들(3300 → 299/3001)
+    for (const [total, vat] of [[3300, 300], [33, 3], [99, 9], [209, 19], [110, 10], [6600, 600], [1100000, 100000], [7700, 700]]) {
+        assert.deepEqual(splitVatIncludedTotal(total), { supplyAmount: total - vat, vat }, `${total}원`);
+    }
+    for (let total = 11; total <= 110000; total += 11) {
+        assert.equal(splitVatIncludedTotal(total).vat, total / 11, `${total}원은 정확히 나눠져야 합니다`);
+    }
 });
 
 test('수량×단가 반올림', () => {
@@ -396,6 +403,38 @@ test('CSV 수식 실행 방지', () => {
     assert.equal(csvEscape('-3000'), "'-3000");
     assert.equal(csvEscape(-3000), '-3000'); // 숫자 음수는 그대로
     assert.equal(csvEscape('a,b'), '"a,b"');
+});
+
+const currencyModule = await loadTs('../src/utils/currency.ts');
+const receiptModule = await loadTs('../src/pages/budget/receiptAmounts.ts', { '../../utils/currency': currencyModule.url });
+
+test('금액 입력: 소수점은 원 단위 반올림, 자릿점·OCR 오인식 점은 자릿수로 본다', () => {
+    const { parseCurrencyInput, toAmount } = currencyModule.module;
+    assert.equal(parseCurrencyInput('1234.5'), 1235, '소수점을 지우기만 하면 12,345원이 된다');
+    assert.equal(parseCurrencyInput('1,234.4원'), 1234);
+    assert.equal(parseCurrencyInput('1.234'), 1234, 'OCR이 쉼표를 점으로 읽은 경우');
+    assert.equal(parseCurrencyInput('1.234.567'), 1234567);
+    assert.equal(parseCurrencyInput('12,000원'), 12000);
+    assert.equal(parseCurrencyInput('-3,000', { allowNegative: true }), -3000);
+    assert.equal(parseCurrencyInput('1234.5'), toAmount(1234.5), '문자열과 숫자 해석이 같다');
+});
+
+test('영수증 OCR: 총액만 읽으면 이전 입력의 공급가액·부가세·단가를 남기지 않는다', () => {
+    const { planReceiptAmounts } = receiptModule.module;
+    const totalOnly = planReceiptAmounts({ amount: '11,000' });
+    assert.deepEqual(totalOnly, { quantity: 1, unitPrice: 0, supplyAmount: 0, vat: 0, amount: 11000, missing: ['공급가액', '부가세', '단가'] });
+    const withSupply = planReceiptAmounts({ amount: 11000, supplyAmount: 10000 });
+    assert.equal(withSupply.vat, 1000, '총액 − 공급가액');
+    assert.equal(withSupply.unitPrice, 10000);
+    assert.deepEqual(withSupply.missing, []);
+    const exempt = planReceiptAmounts({ amount: 5000, supplyAmount: 5000 });
+    assert.equal(exempt.vat, 0, '면세: 공급가액 = 총액');
+    assert.deepEqual(exempt.missing, []);
+    const withVat = planReceiptAmounts({ amount: 3300, vat: 300, quantity: 3 });
+    assert.deepEqual([withVat.supplyAmount, withVat.quantity, withVat.unitPrice], [3000, 3, 1000]);
+    assert.deepEqual(planReceiptAmounts({ amount: 3300, vat: 300, quantity: 7 }).missing, ['단가'], '나누어떨어지지 않으면 단가를 추측하지 않음');
+    assert.equal(planReceiptAmounts({ quantity: 2, unitPrice: 1500 }).amount, 3000);
+    assert.equal(planReceiptAmounts({ vendor: '합성' }), null, '총액이 없으면 금액 칸을 건드리지 않음');
 });
 
 console.log(`\n${passed}개 테스트 통과`);

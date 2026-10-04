@@ -38,7 +38,15 @@ async function transpile(sourcePath) {
 }
 
 await rm(outDir, { recursive: true, force: true });
-for (const file of [...await collect(featureDir), path.join(root, 'src', 'utils', 'date.ts')]) await transpile(file);
+for (const file of [
+    ...await collect(featureDir),
+    path.join(root, 'src', 'utils', 'date.ts'),
+    path.join(root, 'src', 'features', 'docx', 'blocks.ts'),
+    // 예산 연동(지출 초안 중복 방지)은 화면 폴더에 있지만 순수 함수만 쓴다.
+    path.join(root, 'src', 'pages', 'budget', 'budgetUtils.ts'),
+    path.join(root, 'src', 'pages', 'workmate', 'supportedEmployment', 'caseEditing.ts'),
+    path.join(root, 'src', 'pages', 'workmate', 'supportedEmployment', 'budgetLink.ts'),
+]) await transpile(file);
 
 const load = relative => import(pathToFileURL(path.join(outDir, 'features', 'supportedEmployment', relative)).href);
 const model = await load('model.mjs');
@@ -48,6 +56,31 @@ const { generateTrainingDays, syncDailyLogs, buildCoachTimesheetFromLogs, timeRa
 const { summarizeAttendance } = await load('attendance.mjs');
 const { calculatePayments, formatWon } = await load('calc.mjs');
 const docs = await load('docs/index.mjs');
+const { RECORDING_OUTLINE, missingRecordFields, appendRecordingOutline, hasRecordingContent, printableRecordingNote } = await load('recording.mjs');
+
+// 작성 틀만 넣은 기록은 "작성됨"이 아니고, 서류에는 틀 제목이 찍히지 않는다.
+assert.equal(hasRecordingContent(RECORDING_OUTLINE), false);
+assert.equal(hasRecordingContent(`${RECORDING_OUTLINE}\n\n${RECORDING_OUTLINE}`), false, '틀이 두 번 들어가도 미작성');
+assert.equal(hasRecordingContent(RECORDING_OUTLINE.replace(/\n\n/g, '\n \n')), false, '틀 사이 공백 줄도 미작성');
+assert.equal(printableRecordingNote(RECORDING_OUTLINE), '');
+const partlyWritten = RECORDING_OUTLINE.replace('[실시한 지도·지원]\n', '[실시한 지도·지원]\n포장 순서를 시범으로 보여 줌\n');
+assert.equal(hasRecordingContent(partlyWritten), true);
+assert.equal(printableRecordingNote(partlyWritten), '[실시한 지도·지원]\n포장 순서를 시범으로 보여 줌');
+assert.equal(printableRecordingNote('직접 쓴 메모\n\n\n둘째 줄'), '직접 쓴 메모\n\n둘째 줄');
+assert.equal(appendRecordingOutline(`앞 메모\n${RECORDING_OUTLINE.replace('[지도 후 반응·변화]\n', '[지도 후 반응·변화]\n잘 따라 함\n')}`).split('[관찰한 행동·수행 결과]').length, 2, '틀 제목이 이미 있으면 다시 넣지 않음');
+
+assert.equal(appendRecordingOutline('기존 관찰'), `기존 관찰\n\n${RECORDING_OUTLINE}`);
+assert.equal(appendRecordingOutline(RECORDING_OUTLINE), RECORDING_OUTLINE);
+assert.equal(appendRecordingOutline('가'.repeat(1000)), null);
+const incompleteLog = { attendance: '출석', start: '', end: '', task: '', performanceHours: '', note: '' };
+assert.equal(missingRecordFields(incompleteLog).length, 4);
+assert.deepEqual(missingRecordFields({ ...incompleteLog, attendance: '결석' }), ['결석 사유·확인사항']);
+assert.deepEqual(missingRecordFields({ ...incompleteLog, attendance: '결석', note: '담당자 확인' }), []);
+assert.deepEqual(missingRecordFields({ ...incompleteLog, attendance: '결석', note: RECORDING_OUTLINE }), ['결석 사유·확인사항']);
+assert.deepEqual(missingRecordFields({ ...incompleteLog, attendance: '결석', note: `  ${RECORDING_OUTLINE}\n` }), ['결석 사유·확인사항']);
+assert.ok(missingRecordFields({ ...incompleteLog, note: RECORDING_OUTLINE }).includes('평가 및 지도사항'));
+assert.deepEqual(missingRecordFields({ ...incompleteLog, start: '09:00', end: '16:00', task: '분류', performanceHours: '30분 10개', note: '실제 관찰 기록' }), []);
+console.log('PASS 기록 도우미: 기존 내용 보존, 중복 틀 방지, 길이 제한, 결석/미작성 확인');
 
 let passed = 0;
 async function test(name, run) {
@@ -144,6 +177,9 @@ await test('공휴일 2026: 설·추석 연휴, 대체공휴일(3·1절·부처�
     for (const date of ['2026-02-16', '2026-02-17', '2026-02-18', '2026-09-24', '2026-09-25', '2026-09-26', '2026-05-24']) {
         assert.ok(dates.has(date), date);
     }
+    // 근로자의 날(5/1): 사업체 유급휴일이라 훈련 제외일. 금요일이라 대체공휴일 대상도 아니어야 한다.
+    assert.equal(holidays.getHolidayName('2026-05-01'), '근로자의 날');
+    assert.equal(holidays.getHolidayName('2025-05-01'), '근로자의 날');
     const substitutes = list.filter(item => item.substitute).map(item => item.date);
     assert.deepEqual(substitutes, ['2026-03-02', '2026-05-25', '2026-08-17', '2026-10-05']);
     // 추석 연휴 마지막 날이 토요일이어도 설·추석은 대체공휴일 없음
@@ -224,6 +260,10 @@ await test('훈련일 생성: 주말·공휴일·기관 휴무 제외, 앞 N일�
     assert.deepEqual(generateTrainingDays('2026-08-21', '2026-08-10'), []);
     assert.equal(timeRangeHours('09:00', '15:30'), 6.5);
     assert.equal(timeRangeHours('15:00', '09:00'), 0);
+    assert.equal(timeRangeHours('23:00', '24:00'), 1);
+    assert.equal(timeRangeHours('23:00', '24:30'), 0);
+    assert.equal(timeRangeHours('24:01', '24:59'), 0);
+    assert.equal(timeRangeHours('09:60', '15:00'), 0);
 });
 
 await test('직렬화: serialize → parse 왕복, 버전·형식 검사', () => {
@@ -280,59 +320,154 @@ scored.evaluation.pre = Array.from({ length: 20 }, () => 3);
 scored.evaluation.field = Array.from({ length: 20 }, () => 4);
 scored.evaluation.opinions.attitude = '출근 시간을 잘 지킴';
 
-await test('DOCX ① 결과보고', async () => {
-    const xml = await documentXml(docs.buildResultReport(scored, { staffName: '담당테스트', organizationName: '가상기관' }));
-    for (const text of ['지원고용 훈련 결과보고', '훈련 개요', '수당 지급 내역', '1,250,100', '560,000', '290,100', '400,000', '사전 60점', '현장 80점', '맑은 고딕', TRAINEE]) {
-        assert.ok(xml.includes(text), text);
+// 서식은 기관 제출 원본("지원고용 결과보고 서류모음" — 공단 붙임 서식 스캔본)을 그대로 따른다.
+// 칸 이름·순서뿐 아니라 열 폭(mm → twip)과 쪽 여백까지 원본 기준으로 검사한다.
+const twip = mm => Math.round(mm * 56.6929);
+/** document.xml의 글자만 문단 단위로 모은다(칸 안 줄바꿈은 문단이 나뉜다). */
+function docText(xml) {
+    return [...xml.matchAll(/<w:p[ >][\s\S]*?<\/w:p>/g)]
+        .map(match => [...match[0].matchAll(/<w:t(?: [^>]*)?>([^<]*)<\/w:t>/g)].map(t => t[1]).join(''))
+        .join('\n');
+}
+function gridCols(xml) {
+    return [...xml.matchAll(/<w:tblGrid>([\s\S]*?)<\/w:tblGrid>/g)].map(grid => [...grid[1].matchAll(/w:w="(\d+)"/g)].map(m => Number(m[1])));
+}
+function pageMargins(xml) {
+    const m = /<w:pgMar ([^>]*)\/>/.exec(xml);
+    const get = name => Number(new RegExp(`w:${name}="(\\d+)"`).exec(m[1])[1]);
+    return { left: get('left'), right: get('right') };
+}
+const closeTo = (actual, expected, label) => assert.ok(Math.abs(actual - expected) <= 2, `${label}: ${actual} ≠ ${expected}`);
+
+await test('서식 원본 폭: 7종 모두 원본에서 잰 열 폭(mm)을 그대로 쓰고 좌우 여백이 같다', async () => {
+    const expected = {
+        resultReport: [[28.7, 25.0, 32.8, 24.8, 25.5, 23.2], [16.5, 15.5, 12.3, 12.5, 13.4, 17.1, 18.0, 17.5, 17.5, 19.7], [53.4, 53.3, 53.3]],
+        paymentStatement: [[15.8, 20.2, 30.7, 38.2, 18.1, 29.2]],
+        trainingLog: [[16.9, 45.2, 26.7, 25.3, 22.1, 25.5], [6.7, 10.3, 16.5, 22.9, 18.2, 25.3, 14.8, 47.0]],
+        evaluationRecord: [[9.5, 7.7, 18.7, 47.4, 11.0, 11.7, 10.4, 43.4]],
+        coachTimesheet: [[34.8, 47.8, 30.0, 46.1], [18.3, 20.3, 20.0, 20.1, 20.0, 19.9, 20.0, 20.1]],
+        safetyChecklist: [[39.6, 39.4, 39.4, 40.1], [13.5, 109.7, 35.0], [158.2]],
+        otherIncomeStatement: [[26.9, 56.8, 27.9, 55.9]],
+    };
+    for (const item of docs.SUPPORTED_EMPLOYMENT_DOCUMENTS) {
+        const xml = await documentXml(docs.buildDocument(item.kind, case16));
+        const grids = gridCols(xml);
+        for (const [index, widths] of expected[item.kind].entries()) {
+            assert.ok(grids[index], `${item.kind} 표 ${index + 1} 없음`);
+            assert.deepEqual(grids[index], widths.map(twip), `${item.kind} 표 ${index + 1} 열 폭`);
+        }
+        const margins = pageMargins(xml);
+        closeTo(margins.left, margins.right, `${item.kind} 좌우 여백`);
+        const widest = Math.max(...expected[item.kind].map(widths => widths.reduce((a, b) => a + b, 0)));
+        assert.ok(twip(210) - margins.left - margins.right >= twip(widest) - 5, `${item.kind}: 본문 폭이 원본 표보다 좁음`);
     }
 });
 
-await test('DOCX ② 지원고용 수당 지급명세서 (열 순서 별지 제9호)', async () => {
+await test('DOCX ① 결과보고 (원본: 훈련개요 6칸·훈련결과 2단 머리·수당지급내역 3칸)', async () => {
+    const xml = await documentXml(docs.buildResultReport(scored, { staffName: '담당테스트', organizationName: '가상기관' }));
+    const text = docText(xml);
+    for (const value of ['14', '차 지원고용 결과보고', '1. 훈련개요', '2. 훈련결과', '3. 수당지급내역', '※ 지원고용수당 지급명세서 첨부', TRAINEE, EMPLOYER]) {
+        assert.ok(text.includes(value), value);
+    }
+    const order = ['사업체명', '훈련직무', '훈련기간', '계획인원', '수료인원', '취업인원'].map(label => text.indexOf(label));
+    assert.deepEqual([...order].sort((a, b) => a - b), order, '훈련개요 열 순서');
+    for (const value of ['훈련일수', '수당지급내역', '실제\n종료일', '사전\n훈련', '현장\n훈련', '사업주\n보조금', '취업일자\n(예정일)', '총 지급액(세전)']) {
+        assert.ok(text.includes(value), value);
+    }
+    for (const value of ['1,250,100원', '560,000원', '290,100원', '400,000원', '사전훈련: 1일\n현장훈련: 15일', '현장훈련: 15일']) {
+        assert.ok(text.includes(value), value);
+    }
+    assert.ok(xml.includes('w:gridSpan w:val="4"'), '훈련일수 4칸 병합');
+    assert.ok(xml.includes('바탕'), '원본 본문 글꼴(바탕)');
+    assert.equal(text.includes('담당테스트'), false, '원본 결과보고에는 서명란이 없다');
+});
+
+await test('DOCX ② [붙임 28] 지원고용 수당 지급명세서 (원본 열 순서)', async () => {
     const xml = await documentXml(docs.buildPaymentStatement(case15));
-    const order = ['구분', '성명(사업장명)', '수령인(송금계좌번호)', '연락처', '지급명세', '금액'].map(label => xml.indexOf(`>${label}<`));
+    const text = docText(xml);
+    // 제목("…지급명세서")과 섞이지 않게 표 머리 행부터 찾는다.
+    const table = text.slice(text.indexOf('(단위 : 원)'));
+    const order = ['구분', '성    명', '연락처', '지급명세', '금  액', '수령인'].map(label => table.indexOf(label));
     assert.ok(order.every(index => index >= 0), '열 제목 누락');
-    assert.deepEqual([...order].sort((a, b) => a - b), order, '열 순서');
-    for (const text of ['지원고용 수당 지급명세서', '(단위 : 원)', '훈련수당', '사업주보조금', '직무지도원수당', '525,000', '270,760', '375,000', '1,170,760', '35,000원 × 15일', '000-00-000003', EMPLOYER]) {
-        assert.ok(xml.includes(text), text);
+    assert.deepEqual([...order].sort((a, b) => a - b), order, '열 순서: 구분 | 성명(사업장명) | 연락처 | 지급명세 | 금액 | 수령인(송금계좌번호)');
+    for (const value of ['[붙임 28] 지원고용 수당 지급명세서', '지원고용 수당 지급명세서', '(단위 : 원)', '훈련\n수당', '사업주\n보조금', '직무지도\n원 수당', '525,000', '270,760', '375,000', '1,170,760', '사전+현장훈련\n35,000원 * 15일', '19,340원 * 14일', '가상은행\n000-00-000003', EMPLOYER]) {
+        assert.ok(text.includes(value), value);
     }
     assert.ok(xml.includes('w:w="11906"') && xml.includes('w:h="16838"'), 'A4');
 });
 
-await test('DOCX ③ 지원고용 훈련일지 (반복 머리행·일자별 행)', async () => {
-    const xml = await documentXml(docs.buildTrainingLog(case16));
-    for (const text of ['지원고용 훈련일지', '직무지도원 성명', '직무지도시간', '직무지도원 구분', '직무지도일수', '1:多 지도여부', '주휴수당', '평가 및 지도사항', '수행정도', '07.20(월)', '08.10(월)', '위와 같이 실시하였음을 확인함', '지도사항 16', '16일']) {
-        assert.ok(xml.includes(text), text);
+await test('DOCX ③ 지원고용 훈련일지 (원본 머리표 3줄·8칸 일지·쪽마다 머리행)', async () => {
+    const xml = await documentXml(docs.buildTrainingLog(case16, { staffName: '담당테스트', employerContactName: '업체테스트' }));
+    const text = docText(xml);
+    for (const value of ['지원고용 훈련일지', '훈련생명', '직무지도원\n성명', '직무지도\n시간', '직무지도원\n구분', '직무지도\n일수', '1:多 지도여부', '주휴수당 등', '평가 및 지도사항', '수행정도\n(측정시\n간)', '출퇴근\n지도 및\n휴게시간\n지도 여부', '7/20', '8/10', '위와 같이 실시하였음을 확인함', '지도사항 16', '16일', '6h']) {
+        assert.ok(text.includes(value), value);
+    }
+    assert.ok(text.includes('사\n전\n훈\n련') && text.includes('현\n장\n훈\n련'), '구분 칸 세로쓰기');
+    for (const value of ['(공단/위탁기관) 담당자:', '업체담당자:', '직무지도원:', '담당테스트', '업체테스트', '(서명 또는 인)']) {
+        assert.ok(text.includes(value), value);
     }
     assert.ok(xml.includes('<w:tblHeader/>') || xml.includes('<w:tblHeader'), '반복 머리행');
 });
 
-await test('훈련일지 직무지도일수 내역: coachDaysBasis(훈련일/출석일)와 일치', async () => {
+await test('훈련일지는 쪽마다 표를 나누고, 쪽마다 머리행과 구분 칸을 다시 그린다', async () => {
+    const model3 = docs.buildHtmlPreview(case16, 'trainingLog');
+    const breaks = (model3.match(/class="page-break"/g) || []).length;
+    assert.ok(breaks >= 1, '16일 일지는 두 쪽 이상');
+    assert.equal((model3.match(/평가 및 지도사항/g) || []).length, breaks + 1, '쪽마다 머리행');
+});
+
+await test('훈련일지 직무지도일수: coachDaysBasis(훈련일/출석일)와 일치', async () => {
     const c = structuredClone(case16);
     c.dailyLogs[0].attendance = '결석'; // 사전
     c.dailyLogs[5].attendance = '결석'; // 현장
-    assert.ok((await documentXml(docs.buildTrainingLog(c))).includes('16일 (사전 1일, 현장 15일)'));
-    const attended = await documentXml(docs.buildTrainingLog(c, { coachDaysBasis: 'attended' }));
-    assert.ok(attended.includes('14일 (출석 기준: 사전 0일, 현장 14일)'));
-    assert.equal(attended.includes('16일 (사전'), false);
+    assert.ok(docText(await documentXml(docs.buildTrainingLog(c))).split('\n').includes('16일'));
+    const attended = docText(await documentXml(docs.buildTrainingLog(c, { coachDaysBasis: 'attended' }))).split('\n');
+    assert.ok(attended.includes('14일'));
+    assert.equal(attended.includes('16일'), false);
 });
 
-await test('DOCX ④ 훈련생 종합 평가기록부 (20항목 문구·총점·비고)', async () => {
-    const xml = await documentXml(docs.buildEvaluationRecord(scored));
+await test('DOCX ④ 훈련생 종합 평가기록부 (원본: 영역 세로쓰기·20항목·총점·비고)', async () => {
+    const xml = await documentXml(docs.buildEvaluationRecord(scored, { staffName: '담당테스트' }));
+    const text = docText(xml);
     for (const group of model.EVALUATION_GROUPS) {
-        assert.ok(xml.includes(group.label), group.label);
-        for (const item of group.items) assert.ok(xml.includes(item), item);
+        assert.ok(text.includes([...group.label].join('\n')), group.label);
+        for (const item of group.items) assert.ok(text.includes(item), item);
     }
-    for (const text of ['지원고용 훈련생 종합 평가기록부', '총점(만점 100점)', '※ 항목별 점수채점 : 우수 5점, 양호 4점, 보통 3점, 미흡 2점, 불량 1점', '>60<', '>80<', '(위탁기관) 담당자', '출근 시간을 잘 지킴']) {
-        assert.ok(xml.includes(text), text);
+    for (const value of ['지원고용 훈련생 종합 평가기록부', '훈련생명', '사업체명', '훈련기간', '평 가 소 견', '총 점(만점 100점)', '※ 항목별 점수채점 : 우수 5점, 양호 4점, 보통 3점, 미흡 2점, 불량 1점', '60', '80', '직무지도원:', '(위탁기관) 담당자:', '담당테스트', '출근 시간을 잘 지킴']) {
+        assert.ok(text.includes(value), value);
     }
 });
 
-await test('DOCX ⑤ 직무지도원 출근부 (주간 격자)', async () => {
-    const xml = await documentXml(docs.buildCoachTimesheet(case16));
-    for (const text of ['직무지도원 출근부', '배치사업체명', '지도기간', '지도일수 및 시간', '16일 / 96시간', '1:多 지도시간', '연장 지도시간', '1주차', '4주차', '07.20', '30시간', '위와 같이 근무하였음을 확인함', COACH]) {
-        assert.ok(xml.includes(text), text);
+await test('DOCX ⑤ [붙임 19] 직무지도원 출근부 (원본: 머리표 5줄·주간 근무상황표)', async () => {
+    const xml = await documentXml(docs.buildCoachTimesheet(case16, { branchName: '가상지사', staffName: '담당테스트', employerContactName: '업체테스트' }));
+    const text = docText(xml);
+    for (const value of ['[붙임 19] 직무지도원 출근부', '가상지사 직무지도원 출근부', '배치사업체명', '지도기간', '지도일수 및 시간\n(주휴미포함)', '총 16일,   총 96h', '일반 지도시간\n(1:1 지도시간)', '1:多 지도시간\n(2인 이상)', '연장 지도시간\n(1:1 지도시간)', '※ 주휴수당은 위탁기관 담당자가 작성', '■ 근무상황표', '일자', '총\n지도시간', '1:多 지도', '7/20', '09:00 ~\n15:00\n6(h)', '위와 같이 근무(출근) 하였음을 확인함', '공단/위탁기관 담당자:', '사업체담당자:', COACH]) {
+        assert.ok(text.includes(value), value);
     }
-    for (const day of ['월', '화', '수', '목', '금', '토', '일']) assert.ok(xml.includes(`>${day}<`), day);
+    for (const day of ['월', '화', '수', '목', '금', '토', '일']) assert.ok(text.split('\n').includes(day), day);
+    assert.ok(text.split('\n').includes('/'), '기간 밖 날짜는 / 로 표시');
+});
+
+await test('DOCX ⑥ [붙임 41] 현장훈련 안전체크리스트 (원본 문구 33항목)', async () => {
+    const xml = await documentXml(docs.buildSafetyChecklist(case16, { staffName: '담당테스트' }));
+    const text = docText(xml);
+    const { SAFETY_CHECKLIST } = await load('docs/builders.mjs');
+    assert.equal(SAFETY_CHECKLIST.reduce((total, group) => total + group.items.length, 0), 33);
+    for (const group of SAFETY_CHECKLIST) for (const item of group.items) assert.ok(text.includes(item), item);
+    for (const value of ['[붙임 41] 지원고용 현장훈련 안전체크리스트', '점검 담당자', '점검일', '업체명', '지원고용 훈련기간', '□양호   □개선필요', '□ 개선필요에 대한 조치사항 기입', '담당테스트', EMPLOYER]) {
+        assert.ok(text.includes(value), value);
+    }
+    assert.ok(xml.includes('w:u w:val="single"'), '안내문 밑줄');
+});
+
+await test('DOCX ⑦ 기타소득 지급내역서 (주민등록번호는 앱이 채우지 않는다)', async () => {
+    const xml = await documentXml(docs.buildOtherIncomeStatement(case16, { organizationName: '가상기관' }));
+    const text = docText(xml);
+    for (const value of ['(별지 제37-4호 서식)', '기타소득 지급내역서', '□ 건명: 제14차 중증장애인지원고용 직무지도원 수당지급', '□ 지급대상자 정보', '주민등록번호', '소속기관', '가상기관', '지급은행', '000-00-000001', '400,000원', '위 지급대상자 본인은 상기 내역을 이해하고', '(서명 또는 인)', COACH]) {
+        assert.ok(text.includes(value), value);
+    }
+    assert.equal(/\d{6}-[1-8]\d{6}/.test(text), false, '주민등록번호 형식 값이 들어가면 안 된다');
+    assert.ok(xml.includes('w:u w:val="double"'), '제목 이중 밑줄');
 });
 
 await test('HTML 미리보기·파일명(이용자 이름 미포함)', () => {
@@ -352,6 +487,78 @@ await test('HTML 미리보기·파일명(이용자 이름 미포함)', () => {
     for (const item of docs.SUPPORTED_EMPLOYMENT_DOCUMENTS) {
         assert.equal(docs.buildDocumentFileName(item.kind, case16).includes(TRAINEE), false);
     }
+});
+
+await test('훈련일지: 틀 제목만 있는 지도사항은 비워 인쇄하고, 한 쪽보다 긴 행만 쪽 경계에서 나눈다', async () => {
+    const c = structuredClone(case16);
+    c.dailyLogs[0].note = RECORDING_OUTLINE;
+    c.dailyLogs[1].note = '가나다라마바사 '.repeat(260).trim();
+    const xml = await documentXml(docs.buildTrainingLog(c));
+    assert.equal(docText(xml).includes('[관찰한 행동·수행 결과]'), false, '틀 제목이 서식에 찍힘');
+    const rows = [...xml.matchAll(/<w:tr[ >][\s\S]*?<\/w:tr>/g)].map(match => match[0]);
+    const longRow = rows.find(row => row.includes('가나다라마바사'));
+    assert.ok(longRow, '긴 지도사항 행 없음');
+    assert.equal(/<w:cantSplit\/>/.test(longRow), false, '긴 행은 나눌 수 있어야 함');
+    const normalRow = rows.find(row => row.includes('지도사항 3'));
+    assert.ok(/<w:cantSplit\/>/.test(normalRow), '보통 행은 그대로 나누지 않음');
+});
+
+await test('기간 변경: 시간·출근부만 고친 날도 빠질 때 "내용 있음"으로 알린다', async () => {
+    const { planSchedule } = await import(pathToFileURL(path.join(outDir, 'pages', 'workmate', 'supportedEmployment', 'caseEditing.mjs')).href);
+    const blank = structuredClone(case16);
+    blank.dailyLogs = blank.dailyLogs.map(log => ({ ...log, task: '', note: '', performanceHours: '' }));
+    blank.coachTimesheet = buildCoachTimesheetFromLogs(blank.dailyLogs);
+    const shorten = { period: { ...blank.period, end: '2026-08-07' } };
+    assert.deepEqual(planSchedule(blank, shorten).droppedWithContent, [], '손대지 않은 날은 조용히 정리');
+    const lastIndex = blank.dailyLogs.length - 1;
+    const timeChanged = structuredClone(blank);
+    timeChanged.dailyLogs[lastIndex] = { ...timeChanged.dailyLogs[lastIndex], start: '10:00' };
+    assert.deepEqual(planSchedule(timeChanged, shorten).droppedWithContent, [blank.dailyLogs[lastIndex].date]);
+    const overtime = structuredClone(blank);
+    overtime.coachTimesheet = overtime.coachTimesheet.map(entry => (entry.date === blank.dailyLogs[lastIndex].date ? { ...entry, overtime: 1 } : entry));
+    assert.deepEqual(planSchedule(overtime, shorten).droppedWithContent, [blank.dailyLogs[lastIndex].date]);
+});
+
+await test('출근부: 7주 이상이면 쪽마다 근무상황표를 나누고 요일 머리 행을 다시 그린다', async () => {
+    // 2026-07-20(월) ~ 2026-09-11(금): 8주
+    const long = makeCase({ start: '2026-07-20', end: '2026-09-11', round: 20 });
+    const xml = await documentXml(docs.buildDocument('coachTimesheet', long));
+    const grids = gridCols(xml).filter(cols => cols.length === 8);
+    assert.equal(grids.length, 2, '5주 + 3주 두 장');
+    assert.equal((xml.match(/<w:br w:type="page"\/>/g) || []).length, 1);
+    const headerRows = docText(xml).split('\n').filter(line => line === '구분').length;
+    assert.equal(headerRows, 2, '쪽마다 구분·요일 머리 행');
+    // 쪽 나눔 문단은 1pt로 고정해 다음 쪽 맨 위에 빈 줄 자리를 남기지 않는다.
+    const breakParagraph = [...xml.matchAll(/<w:p>[\s\S]*?<\/w:p>/g)].map(match => match[0]).find(p => p.includes('<w:br w:type="page"/>'));
+    assert.ok(breakParagraph && /w:line="20"/.test(breakParagraph) && /w:lineRule="exact"/.test(breakParagraph), breakParagraph);
+    // 6주 이하(보통 회차)는 지금처럼 한 장
+    const shortXml = await documentXml(docs.buildDocument('coachTimesheet', case16));
+    assert.equal(gridCols(shortXml).filter(cols => cols.length === 8).length, 1);
+});
+
+await test('예산 연동: 비고 표식이 지워져도 회차에 연결된 지출은 다시 만들지 않는다', async () => {
+    const budgetLink = await import(pathToFileURL(path.join(outDir, 'pages', 'workmate', 'supportedEmployment', 'budgetLink.mjs')).href);
+    const project = { id: 'project-1', name: '가상 사업', totalBudget: 10000000, items: [] };
+    const target = { ...case16, id: 'case-1' };
+    const fresh = budgetLink.planExpenseDrafts(target, project, []);
+    assert.equal(fresh.toCreate.length, 3);
+    assert.deepEqual(fresh.staleLinkedIds, []);
+    // 처음 만든 초안 3건 — 사용자가 그중 하나의 비고를 고쳐 표식을 지웠다.
+    const created = budgetLink.buildExpenseDrafts(target, project).map((draft, index) => ({ ...draft, id: `expense-${index}` }));
+    created[1] = { ...created[1], notes: '지급 완료' };
+    const linked = { ...target, expenseIds: created.map(item => item.id) };
+    const again = budgetLink.planExpenseDrafts(linked, project, created);
+    assert.equal(again.toCreate.length, 0, '표식이 지워진 항목도 연결 ID로 찾아야 합니다');
+    assert.deepEqual([...again.existingIds].sort(), ['expense-0', 'expense-1', 'expense-2']);
+    // 표식도 연결도 없는 회차는 그 항목만 새로 만든다.
+    const unlinked = budgetLink.planExpenseDrafts(target, project, created);
+    assert.equal(unlinked.toCreate.length, 1);
+    assert.equal(unlinked.toCreate[0].budgetItem, created[1].budgetItem);
+    // 예산 관리에서 지운 지출 ID는 정리 대상이 되고, 그 항목은 다시 만든다.
+    const afterDelete = budgetLink.planExpenseDrafts(linked, project, created.filter(item => item.id !== 'expense-2'));
+    assert.deepEqual(afterDelete.staleLinkedIds, ['expense-2']);
+    assert.equal(afterDelete.toCreate.length, 1);
+    assert.equal(afterDelete.toCreate[0].budgetItem, created[2].budgetItem);
 });
 
 await rm(outDir, { recursive: true, force: true });

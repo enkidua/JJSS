@@ -6,6 +6,7 @@ import {
     type PremiumUseDecision,
 } from '../utils/aiUsagePrompt';
 import { useDialogFocus } from '../hooks/useDialogFocus';
+import AttachmentSendConsentDialog from './privacy/AttachmentSendConsentDialog';
 
 interface PendingRequest extends PremiumUseConfirmDetail {
     id: number;
@@ -52,10 +53,12 @@ export default function PremiumUseConfirmDialog() {
 
     const dialogRef = useDialogFocus(Boolean(current), () => finish('cancel'));
 
-    if (!current) return null;
-
+    // 원본 파일 전송 확인창(동의 C)도 AI 확인창과 같은 자리에 함께 둔다(레이아웃 파일 변경 없이 앱 전체에서 동작).
+    // 항상 같은 위치에 그려 고성능 확인창이 열리고 닫혀도 전송 확인 대기열이 초기화되지 않게 한다.
     return (
-        <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/70 p-4">
+        <>
+        <AttachmentSendConsentDialog />
+        {current && <div className="fixed inset-0 z-130 flex items-center justify-center bg-black/70 p-4">
             <div
                 key={current.id}
                 ref={dialogRef}
@@ -64,7 +67,7 @@ export default function PremiumUseConfirmDialog() {
                 aria-labelledby="premium-use-title"
                 aria-describedby="premium-use-desc"
                 tabIndex={-1}
-                className="glass-card w-full max-w-lg !p-6 shadow-2xl focus:outline-none"
+                className="glass-card w-full max-w-lg p-6! shadow-2xl focus:outline-hidden"
             >
                 <div className="mb-4 flex items-center gap-3">
                     <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/20">
@@ -82,11 +85,12 @@ export default function PremiumUseConfirmDialog() {
                     <p className="mt-2 text-xs text-white/45">확인을 기다리는 다른 작업이 {queue.length - 1}건 더 있습니다.</p>
                 )}
                 <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-                    <button type="button" className="btn-ghost !px-4 !py-2" onClick={() => finish('cancel')}>취소</button>
-                    <button type="button" className="btn-secondary !px-4 !py-2" onClick={() => finish('skip')}>저비용 모델 유지</button>
-                    <button type="button" className="btn-primary !px-4 !py-2" onClick={() => finish('use')}>사용</button>
+                    <button type="button" className="btn-ghost px-4! py-2!" onClick={() => finish('cancel')}>취소</button>
+                    <button type="button" className="btn-secondary px-4! py-2!" onClick={() => finish('skip')}>저비용 모델 유지</button>
+                    <button type="button" className="btn-primary px-4! py-2!" onClick={() => finish('use')}>사용</button>
                 </div>
             </div>
-        </div>
+        </div>}
+        </>
     );
 }

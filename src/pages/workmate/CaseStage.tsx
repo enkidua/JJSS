@@ -34,7 +34,7 @@ export function CaseStage({
         <motion.div
             layout
             onClick={() => !isActive && onActivate()}
-            className={`glass-strong rounded-[2rem] border transition-all overflow-hidden ${isSaved ? 'border-emerald-500/30 bg-emerald-500/5' : isActive ? 'border-accent-500/50 ring-1 ring-accent-500/20' : isDone ? 'border-amber-500/30 bg-amber-500/5' : 'border-white/5'
+            className={`glass-strong rounded-4xl border transition-all overflow-hidden ${isSaved ? 'border-emerald-500/30 bg-emerald-500/5' : isActive ? 'border-accent-500/50 ring-1 ring-accent-500/20' : isDone ? 'border-amber-500/30 bg-amber-500/5' : 'border-white/5'
                 }`}
         >
             <div className="p-8">
@@ -76,7 +76,7 @@ export function CaseStage({
                                 type="button"
                                 onClick={onGenerate}
                                 disabled={isBusy}
-                                className="btn-primary !px-6 !py-2.5 rounded-xl flex items-center gap-2 font-bold text-sm shadow-xl shadow-accent-500/20 disabled:opacity-60 disabled:cursor-not-allowed"
+                                className="btn-primary px-6! py-2.5! rounded-xl flex items-center gap-2 font-bold text-sm shadow-xl shadow-accent-500/20 disabled:opacity-60 disabled:cursor-not-allowed"
                             >
                                 {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
                                 새 초안 생성
@@ -97,7 +97,7 @@ export function CaseStage({
                                 value={input}
                                 onChange={e => setInput(e.target.value)}
                                 readOnly={isGenerating}
-                                className="textarea-field !bg-black/40 border-white/5 !min-h-[160px] text-sm leading-relaxed"
+                                className="textarea-field bg-black/40! border-white/5 min-h-[160px]! text-sm leading-relaxed"
                                 placeholder={placeholder}
                             />
                             <p className="text-[11px] text-white/20 font-medium flex items-center gap-1.5"><Sparkles className="w-3 h-3" /> 입력한 키워드를 바탕으로 전문적인 문서가 자동 구성됩니다.</p>
@@ -113,7 +113,7 @@ export function CaseStage({
                                     value={result}
                                     onChange={e => setResult(e.target.value)}
                                     readOnly={isGenerating || isSaving}
-                                    className={`textarea-field !min-h-[200px] !max-h-[400px] text-sm leading-relaxed font-sans ${isDone ? '!bg-transparent border-emerald-500/10' : '!bg-black/20'}`}
+                                    className={`textarea-field min-h-[200px]! max-h-[400px]! text-sm leading-relaxed font-sans ${isDone ? 'bg-transparent! border-emerald-500/10' : 'bg-black/20!'}`}
                                 />
                             )}
                         </motion.div>

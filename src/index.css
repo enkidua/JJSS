@@ -1,155 +1,228 @@
-/* 오프라인에서도 같은 글꼴이 보이도록 Noto Sans KR(가변 굵기 100~900)을 앱에 포함한다. */
-@import '@fontsource-variable/noto-sans-kr';
+@import 'tailwindcss';
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@theme {
+  --font-sans:
+    'Noto Sans KR Variable', 'Noto Sans KR', 'Malgun Gothic',
+    'Apple SD Gothic Neo', Pretendard, Inter, system-ui, -apple-system,
+    sans-serif;
 
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
+  --color-primary-50: #f5f3ff;
+  --color-primary-100: #ede9fe;
+  --color-primary-200: #ddd6fe;
+  --color-primary-300: #c4b5fd;
+  --color-primary-400: #a78bfa;
+  --color-primary-500: #8b5cf6;
+  --color-primary-600: #7c3aed;
+  --color-primary-700: #6d28d9;
+  --color-primary-800: #5b21b6;
+  --color-primary-900: #4c1d95;
+  --color-primary-950: #2e1065;
+
+  --color-accent-50: #eff6ff;
+  --color-accent-100: #dbeafe;
+  --color-accent-200: #bfdbfe;
+  --color-accent-300: #93c5fd;
+  --color-accent-400: #60a5fa;
+  --color-accent-500: #3b82f6;
+  --color-accent-600: #2563eb;
+  --color-accent-700: #1d4ed8;
+  --color-accent-800: #1e40af;
+  --color-accent-900: #1e3a8a;
+  --color-accent-950: #172554;
+
+  --background-image-gradient-dark: linear-gradient(
+    135deg,
+    #0a0a1a 0%,
+    #11162b 50%,
+    #0a0a1a 100%
+  );
+
+  --shadow-glow: 0 0 24px rgba(124, 58, 237, 0.25);
 }
 
-body {
-  font-family: 'Noto Sans KR Variable', 'Noto Sans KR', 'Malgun Gothic', 'Apple SD Gothic Neo', 'Pretendard', 'Inter', system-ui, -apple-system, sans-serif;
-  background: #0a0a1a;
-  color: #e2e8f0;
-  min-height: 100vh;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
+/*
+  The default border color has changed to `currentcolor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
 
-/* Native and ARIA dropdown contrast (Windows Chromium included) */
-select {
-  color-scheme: dark;
-  background-color: #111827;
-  color: #f8fafc;
-}
-
-select option,
-select optgroup {
-  background-color: #0f172a;
-  color: #f8fafc;
-}
-
-select option:checked {
-  background-color: #5b21b6;
-  color: #ffffff;
-}
-
-select option:hover,
-select option:focus {
-  background-color: #334155;
-  color: #ffffff;
-}
-
-[role='listbox'] {
-  background-color: #0f172a;
-  color: #f8fafc;
-  border-color: #475569;
-}
-
-[role='option'] {
-  color: #f8fafc;
-}
-
-[role='option']:hover,
-[role='option'][aria-selected='true'] {
-  background-color: #5b21b6;
-  color: #ffffff;
-}
-
-/* Custom scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-}
-
-::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.5);
-}
-
-::-webkit-scrollbar-thumb {
-  background: rgba(124, 58, 237, 0.5);
-  border-radius: 3px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(124, 58, 237, 0.8);
-}
-
-/* Glassmorphism */
-@layer components {
-  .glass {
-    @apply bg-white/5 backdrop-blur-xl border border-white/10;
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
   }
+}
 
-  .glass-strong {
-    @apply bg-white/10 backdrop-blur-2xl border border-white/20;
-  }
+@utility glass {
+  @apply bg-white/5 backdrop-blur-xl border border-white/10;
+}
 
-  .glass-card {
-    @apply bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 transition-all duration-300;
-  }
+@utility glass-strong {
+  @apply bg-white/10 backdrop-blur-2xl border border-white/20;
+}
 
-  .glass-card:hover {
+@utility glass-card {
+  @apply bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 transition-all duration-300;
+
+  &:hover {
     @apply bg-white/10 border-white/20 shadow-glow;
     transform: translateY(-2px);
   }
+}
 
-  .btn-primary {
-    @apply px-6 py-3 bg-gradient-to-r from-primary-600 to-accent-600 rounded-xl font-semibold text-white hover:from-primary-500 hover:to-accent-500 transition-all duration-300 hover:shadow-glow active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed;
+@utility btn-primary {
+  @apply px-6 py-3 bg-linear-to-r from-primary-600 to-accent-600 rounded-xl font-semibold text-white hover:from-primary-500 hover:to-accent-500 transition-all duration-300 hover:shadow-glow active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed;
+}
+
+@utility btn-secondary {
+  @apply px-6 py-3 glass rounded-xl font-semibold text-white/80 hover:bg-white/10 hover:text-white transition-all duration-300 active:scale-95;
+}
+
+@utility btn-ghost {
+  @apply px-4 py-2 rounded-lg text-white/60 hover:text-white hover:bg-white/5 transition-all duration-200;
+}
+
+@utility input-field {
+  @apply w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/30 focus:outline-hidden focus:border-primary-500 focus:ring-1 focus:ring-primary-500/50 transition-all duration-200;
+
+  &select {
+    background-color: #111827;
+    color: #f8fafc;
+  }
+  pointer-events: auto;
+  user-select: text;
+}
+
+@utility textarea-field {
+  @apply w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/30 focus:outline-hidden focus:border-primary-500 focus:ring-1 focus:ring-primary-500/50 transition-all duration-200 resize-none;
+  pointer-events: auto;
+  user-select: text;
+}
+
+@utility section-title {
+  @apply text-2xl md:text-3xl font-bold bg-linear-to-r from-primary-400 to-accent-400 bg-clip-text text-transparent;
+}
+
+@utility badge {
+  @apply inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-primary-500/20 text-primary-300 border border-primary-500/30;
+}
+
+/*
+  요소(태그) 기본 규칙은 base 층에 둔다. Tailwind 4는 실제 CSS 계층(@layer)을 쓰므로, 이 규칙들을 utilities 층이나
+  층 밖에 두면 `* { margin: 0 }`이 space-y-*/space-x-* 같은 유틸리티 여백을 지워 버린다(v3에서는 선택자 우선순위로
+  유틸리티가 이겼다). base 층에 두면 v3와 같이 유틸리티 클래스가 요소 규칙을 덮는다.
+*/
+@layer base {
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
   }
 
-  .btn-secondary {
-    @apply px-6 py-3 glass rounded-xl font-semibold text-white/80 hover:bg-white/10 hover:text-white transition-all duration-300 active:scale-95;
+  /* 고정 상단 메뉴 아래에 포커스/자동 스크롤 대상이 가려지지 않도록 한다. */
+  html {
+    scroll-padding-top: 5rem;
   }
 
-  .btn-ghost {
-    @apply px-4 py-2 rounded-lg text-white/60 hover:text-white hover:bg-white/5 transition-all duration-200;
+  body {
+    font-family:
+      'Noto Sans KR Variable',
+      'Noto Sans KR',
+      'Malgun Gothic',
+      'Apple SD Gothic Neo',
+      'Pretendard',
+      'Inter',
+      system-ui,
+      -apple-system,
+      sans-serif;
+    background: #0a0a1a;
+    color: #e2e8f0;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
-  .input-field {
-    @apply w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/30 focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500/50 transition-all duration-200;
-  }
-
-  select.input-field {
+  /* Native and ARIA dropdown contrast (Windows Chromium included) */
+  select {
+    color-scheme: dark;
     background-color: #111827;
     color: #f8fafc;
   }
 
-  .textarea-field {
-    @apply w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/30 focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500/50 transition-all duration-200 resize-none;
+  select option,
+  select optgroup {
+    background-color: #0f172a;
+    color: #f8fafc;
   }
 
-  .input-field,
-  .textarea-field {
-    pointer-events: auto;
-    user-select: text;
+  select option:checked {
+    background-color: #5b21b6;
+    color: #ffffff;
   }
 
-  .section-title {
-    @apply text-2xl md:text-3xl font-bold bg-gradient-to-r from-primary-400 to-accent-400 bg-clip-text text-transparent;
+  select option:hover,
+  select option:focus {
+    background-color: #334155;
+    color: #ffffff;
   }
 
-  .badge {
-    @apply inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-primary-500/20 text-primary-300 border border-primary-500/30;
+  [role='listbox'] {
+    background-color: #0f172a;
+    color: #f8fafc;
+    border-color: #475569;
   }
+
+  [role='option'] {
+    color: #f8fafc;
+  }
+
+  [role='option']:hover,
+  [role='option'][aria-selected='true'] {
+    background-color: #5b21b6;
+    color: #ffffff;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: rgba(15, 23, 42, 0.5);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(124, 58, 237, 0.5);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(124, 58, 237, 0.8);
+  }
+
+  /* Glassmorphism */
 }
 
-/* Gradient text */
-button:focus-visible, a:focus-visible, [role='button']:focus-visible,
-input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible {
-  outline: 2px solid #a5b4fc;
-  outline-offset: 3px;
-}
+/* 키보드 초점 테두리·동작 줄이기: base 층에 두어 focus:outline-hidden 같은 유틸리티가 v3처럼 우선하게 한다. */
+@layer base {
+  button:focus-visible, a:focus-visible, [role='button']:focus-visible,
+  input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible {
+    outline: 2px solid #a5b4fc;
+    outline-offset: 3px;
+  }
 
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    scroll-behavior: auto !important;
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      scroll-behavior: auto !important;
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 }
 

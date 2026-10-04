@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as localDB from '../../config/localDB';
 import { safeErrorMetadata } from '../../utils/safeError';
+import { setTrainingNamesFromState } from '../../services/trainingNamesCache';
+import { enqueueTrainingWrite, waitForTrainingWrites } from './trainingWriteQueue';
 import {
     initialRooms,
     sanitizeTrainingRecords,
@@ -52,7 +54,8 @@ interface UseTrainingStateOptions {
  * 직업훈련 화면의 저장 상태를 관리합니다.
  * - 변경 0.5초 뒤 자동 저장, 실패하면 오류 알림과 저장 상태 표시
  * - saveNow(): 즉시 저장하고 실제 결과를 돌려줌
- * - 화면을 떠날 때(unmount)·창을 닫을 때 대기 중인 변경을 바로 저장
+ * - 화면을 떠날 때(unmount) 대기 중인 변경을 바로 저장. 재진입 조회는 그 저장을 기다림
+ * - 창 종료 시 저장을 시도하나, 비동기 작업 완료는 종료 이벤트만으로 보장할 수 없음
  * - 불러오기에 실패하면 기존 자료를 덮어쓰지 않도록 자동 저장을 멈춤
  */
 export function useTrainingState({ showToast, defaultYear, onLoaded }: UseTrainingStateOptions) {
@@ -65,6 +68,10 @@ export function useTrainingState({ showToast, defaultYear, onLoaded }: UseTraini
     const [loadState, setLoadState] = useState<TrainingLoadState>('loading');
     const [saveStatus, setSaveStatus] = useState<TrainingSaveStatus>('idle');
     const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+    // 외부 AI 비식별화 사전에 훈련생·담당 교사·담당자 이름을 최신으로 반영한다(새로 추가한 훈련생 포함).
+    useEffect(() => {
+        if (loadState === 'ready') setTrainingNamesFromState({ rooms, manager });
+    }, [rooms, manager, loadState]);
 
     const latestRef = useRef<TrainingSnapshot>({ rooms, attendanceBook, progressYear, progressBook, trainingRecords, manager });
     latestRef.current = { rooms, attendanceBook, progressYear, progressBook, trainingRecords, manager };
@@ -78,7 +85,6 @@ export function useTrainingState({ showToast, defaultYear, onLoaded }: UseTraini
     defaultYearRef.current = defaultYear;
 
     const timerRef = useRef<number | undefined>(undefined);
-    const queueRef = useRef<Promise<unknown>>(Promise.resolve());
     const changeVersionRef = useRef(0);
     const savedVersionRef = useRef(0);
     const skipNextChangeRef = useRef(false);
@@ -88,9 +94,9 @@ export function useTrainingState({ showToast, defaultYear, onLoaded }: UseTraini
 
     const persist = useCallback((reason: SaveReason): Promise<boolean> => {
         window.clearTimeout(timerRef.current);
+        const version = changeVersionRef.current;
+        const snapshot = latestRef.current;
         const run = async () => {
-            const version = changeVersionRef.current;
-            const snapshot = latestRef.current;
             if (mountedRef.current) setSaveStatus('saving');
             try {
                 await localDB.addDoc<PersistedTrainingState>('trainingState', {
@@ -120,9 +126,8 @@ export function useTrainingState({ showToast, defaultYear, onLoaded }: UseTraini
                 return false;
             }
         };
-        const next = queueRef.current.then(run, run);
-        queueRef.current = next.catch(() => undefined);
-        return next;
+        // 같은 화면을 재진입해도 이전 인스턴스의 마지막 저장을 먼저 마친다(다른 화면의 읽기도 이 큐를 기다린다).
+        return enqueueTrainingWrite(run);
     }, []);
     const persistRef = useRef(persist);
     persistRef.current = persist;
@@ -132,6 +137,8 @@ export function useTrainingState({ showToast, defaultYear, onLoaded }: UseTraini
         window.clearTimeout(timerRef.current);
         setLoadState('loading');
         try {
+            await waitForTrainingWrites();
+            if (requestId !== loadRequestRef.current || !mountedRef.current) return;
             const saved = await localDB.getById<PersistedTrainingState>('trainingState', TRAINING_STATE_ID);
             if (requestId !== loadRequestRef.current || !mountedRef.current) return;
             let nextRooms = initialRooms;

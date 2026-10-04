@@ -8,7 +8,7 @@ export function WorkflowRecordStatus({ record }: { record: RehabWorkflowRecord }
         {record.error && <div role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
             <p>{record.error}</p>
             {record.corrupt && <p className="mt-1">백업 파일로 되돌리려면 <Link to={{ pathname: '/settings', hash: 'files-backup' }} className="underline text-red-100">설정 &gt; 파일·백업</Link>에서 확인해 주세요.</p>}
-            {record.loadFailed && !record.loading && <button type="button" className="btn-secondary !px-4 !py-2 text-sm mt-3" onClick={record.reload}>다시 불러오기</button>}
+            {record.loadFailed && !record.loading && <button type="button" className="btn-secondary px-4! py-2! text-sm mt-3" onClick={record.reload}>다시 불러오기</button>}
         </div>}
         {record.notice && <p role="status" className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">{record.notice}</p>}
     </>;

@@ -43,7 +43,7 @@ export function ResultSection({ draft, update, projects, expenses, expensesLoade
     }));
 
     return <div className="space-y-5">
-        <section className="glass-card !p-5" aria-labelledby="se-result-title">
+        <section className="glass-card p-5!" aria-labelledby="se-result-title">
             <h3 id="se-result-title" className="text-lg font-bold text-white">결과 확정</h3>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 mt-3">
                 <label className="text-sm text-white/75" htmlFor="se-status">상태
@@ -74,12 +74,12 @@ export function ResultSection({ draft, update, projects, expenses, expensesLoade
             </label>
         </section>
 
-        <section className="glass-card !p-5" aria-labelledby="se-budget-title">
+        <section className="glass-card p-5!" aria-labelledby="se-budget-title">
             <h3 id="se-budget-title" className="text-lg font-bold text-white flex items-center gap-2"><Wallet className="w-5 h-5 text-amber-200" aria-hidden="true" /> 예산 연동</h3>
             <p className="text-xs text-white/55 mt-1">상태를 수료·취업으로 저장하면 예산 관리에 지출 초안 3건(훈련수당·사업주보조금·직무지도원수당)을 만들지 묻습니다. 이미 만든 지출은 자동으로 고치지 않습니다.</p>
             <div className="flex flex-wrap items-end gap-3 mt-3">
                 <label className="text-sm text-white/75" htmlFor="se-budget-project">예산 사업
-                    <select id="se-budget-project" className="input-field mt-1 min-w-[14rem]" value={draft.budgetProjectId || ''}
+                    <select id="se-budget-project" className="input-field mt-1 min-w-56" value={draft.budgetProjectId || ''}
                         onChange={e => update(c => {
                             const next = { ...c };
                             if (e.target.value) next.budgetProjectId = e.target.value; else delete next.budgetProjectId;
@@ -90,7 +90,7 @@ export function ResultSection({ draft, update, projects, expenses, expensesLoade
                         {projects.map(project => <option key={project.id} value={project.id}>{project.name}{project.period ? ` (${project.period})` : ''}</option>)}
                     </select>
                 </label>
-                {canOfferCreate && <button type="button" className="btn-secondary !px-4 !py-2 text-sm"
+                {canOfferCreate && <button type="button" className="btn-secondary px-4! py-2! text-sm"
                     disabled={creatingExpenses || dirty || !isClosed(draft.status) || !draft.budgetProjectId || Boolean(projectMissing)}
                     onClick={onCreateExpenses}>
                     {creatingExpenses ? '지출 초안 만드는 중...' : linkedCount > 0 ? `빠진 지출 초안 만들기(${missingLabels.length}건)` : '지출 초안 만들기'}

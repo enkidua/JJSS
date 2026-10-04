@@ -4,7 +4,9 @@ DMG는 macOS의 디스크 이미지 도구(`hdiutil`)로만 만들 수 있어 Wi
 
 ## 방법 1. 맥에서 직접 빌드 (권장)
 
-준비: Apple Silicon 맥, Node.js 22 이상, 이 프로젝트 폴더(예: USB·git clone으로 복사).
+준비: Apple Silicon 맥, Node.js 22.12 이상(Electron 44의 요구 사항), 이 프로젝트 폴더(예: USB·git clone으로 복사).
+
+- Electron 42부터 `npm ci`는 Electron 실행 파일을 내려받지 않습니다. 처음 `electron`을 실행하는 순간(테스트·빌드)에 내려받으므로, 그때 인터넷 연결이 필요합니다.
 
 ```bash
 cd "JJSS prod"

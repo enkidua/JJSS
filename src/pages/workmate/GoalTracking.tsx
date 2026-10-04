@@ -51,17 +51,17 @@ export function GoalTracking({ record, onDirtyChange }: Props) {
                 <option value="">별도 기록 · 계획서 연결 없음</option>
                 {planDocuments.map(doc => <option key={doc.id} value={doc.id}>{caseDocumentDate(doc) || '-'} 작성 계획서</option>)}
             </select></label>
-            <div className="sm:col-span-3"><button type="submit" className="btn-primary !px-4 !py-2" disabled={unavailable}>목표 추가</button></div>
+            <div className="sm:col-span-3"><button type="submit" className="btn-primary px-4! py-2!" disabled={unavailable}>목표 추가</button></div>
         </form>
         <div className="mt-5 space-y-4">
             {workflow.goals.length === 0 && <p className="text-sm text-white/50">아직 추적 목표가 없습니다.</p>}
             {workflow.goals.map(goal => <article key={goal.id} className="rounded-xl bg-white/5 border border-white/10 p-4">
-                <h4 className="font-semibold text-white break-words">{goal.title}</h4>
-                <div className="grid sm:grid-cols-3 gap-2 mt-2 text-sm"><p className="text-white/70 break-words">출발점: {goal.baseline}</p><p className="text-violet-200 break-words">현재: {latestGoalLevel(goal)}</p><p className="text-white/70 break-words">목표: {goal.target}</p></div>
+                <h4 className="font-semibold text-white wrap-break-word">{goal.title}</h4>
+                <div className="grid sm:grid-cols-3 gap-2 mt-2 text-sm"><p className="text-white/70 wrap-break-word">출발점: {goal.baseline}</p><p className="text-violet-200 wrap-break-word">현재: {latestGoalLevel(goal)}</p><p className="text-white/70 wrap-break-word">목표: {goal.target}</p></div>
                 {goal.sourceDocumentId && <p className="text-xs text-white/50 mt-2">연결 계획서: {documentDate(goal.sourceDocumentId)}</p>}
                 <div className="mt-3 border-l-2 border-violet-500/30 pl-3 space-y-2">
                     {goal.checkIns.length === 0 && <p className="text-sm text-white/50">기록된 변화가 없습니다.</p>}
-                    {[...goal.checkIns].sort((a, b) => b.date.localeCompare(a.date)).map(entry => <p key={entry.id} className="text-sm text-white/75 break-words"><time dateTime={entry.date} className="text-violet-300 mr-2">{entry.date}</time>{entry.currentLevel && <span className="text-white/90 mr-2">현재 {entry.currentLevel}</span>}{entry.note}</p>)}
+                    {[...goal.checkIns].sort((a, b) => b.date.localeCompare(a.date)).map(entry => <p key={entry.id} className="text-sm text-white/75 wrap-break-word"><time dateTime={entry.date} className="text-violet-300 mr-2">{entry.date}</time>{entry.currentLevel && <span className="text-white/90 mr-2">현재 {entry.currentLevel}</span>}{entry.note}</p>)}
                 </div>
                 <form className="grid gap-2 mt-4 sm:grid-cols-[9rem_12rem_1fr_auto] items-end" onSubmit={async event => {
                     event.preventDefault();
@@ -78,7 +78,7 @@ export function GoalTracking({ record, onDirtyChange }: Props) {
                     <label className="text-xs text-white/65">관찰일<input type="date" className="input-field mt-1" value={checkInDates[goal.id] || localDateKey()} onChange={event => setCheckInDates(current => ({ ...current, [goal.id]: event.target.value }))} required disabled={unavailable} /></label>
                     <label className="text-xs text-white/65">현재 수준<input className="input-field mt-1" value={checkInLevels[goal.id] || ''} maxLength={200} onChange={event => setCheckInLevels(current => ({ ...current, [goal.id]: event.target.value }))} placeholder="예: 혼자 3회 수행" required disabled={unavailable} /></label>
                     <label className="text-xs text-white/65" htmlFor={`goal-checkin-${goal.id}`}>{goal.title} 관찰 근거<input id={`goal-checkin-${goal.id}`} className="input-field mt-1" value={checkInNotes[goal.id] || ''} maxLength={500} onChange={event => setCheckInNotes(current => ({ ...current, [goal.id]: event.target.value }))} placeholder="직접 확인한 사례·근거" required disabled={unavailable} /></label>
-                    <button type="submit" className="btn-secondary !px-4 !py-2" disabled={unavailable}>변화 기록</button>
+                    <button type="submit" className="btn-secondary px-4! py-2!" disabled={unavailable}>변화 기록</button>
                 </form>
             </article>)}
         </div>

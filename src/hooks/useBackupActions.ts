@@ -8,7 +8,8 @@ import {
     parseEncryptedBackupEnvelope,
     type EncryptedBackupEnvelope,
 } from '../config/crypto';
-import { createBackupJson, importAllData, parseBackupJson, type ParsedBackupData } from '../config/localDB';
+import { BackupIncompleteError, createBackupJson, importAllData, isRestoreStorageMixedError, parseBackupJson, type ParsedBackupData } from '../config/localDB';
+import { allowUnloadWithoutPrompt } from './unloadBypass';
 import type { JjssSaveResult } from '../types/jjssFiles';
 import { localDateKey } from '../utils/date';
 import { saveJjssText } from '../utils/jjssFileService';
@@ -32,7 +33,8 @@ function errorMessage(error: unknown, fallback: string): string {
 
 /**
  * 데이터 백업(내보내기)·복원(불러오기) 공용 동작. 상단 메뉴와 설정 화면이 함께 사용한다.
- * - 내보내기: 비밀번호 암호화를 권장하고, 비밀번호 없이 저장할 때는 평문 경고를 확인받는다.
+ * - 내보내기: 기본은 비밀번호 암호화 백업. 암호화 없이 저장은 고급 옵션에서 평문 경고를 확인받은 경우에만 한다.
+ *   비밀번호는 저장하지 않으며, API 키(평문·암호문)는 createBackupJson에서 제외된다.
  * - 복원: 암호화된 백업이면 비밀번호를 묻고, 예전(평문) 백업도 그대로 복원한다.
  * 반환된 backupDialog를 컴포넌트 안 아무 곳에나 렌더링하면 된다(document.body에 그려짐).
  */
@@ -78,12 +80,17 @@ export function useBackupActions(options: UseBackupActionsOptions = {}) {
             showToast(
                 password
                     ? '비밀번호로 암호화한 백업 파일을 저장했습니다. 비밀번호를 잊지 않도록 보관해 주세요.'
-                    : '백업 파일을 저장했습니다. 개인정보가 들어 있으니 안전한 곳에 보관해 주세요.',
+                    : '암호화하지 않은 백업 파일을 저장했습니다. 이 파일에는 개인정보가 평문으로 포함됩니다. 보안이 확보된 저장장소에서만 사용하세요.',
                 'success',
                 5000,
             );
             for (const warning of warnings) showToast(warning, 'info', 8000);
         } catch (error) {
+            // 읽지 못한 암호화 항목 때문에 막힌 경우에는 그 사유를 그대로 보여 준다(재시도 안내가 아니다).
+            if (error instanceof BackupIncompleteError) {
+                showToast(error.message, 'error', 12000);
+                return;
+            }
             showToast(`백업 파일을 만들지 못했습니다. ${errorMessage(error, '잠시 후 다시 시도해 주세요.')}`, 'error');
         } finally {
             endBusy();
@@ -109,9 +116,22 @@ export function useBackupActions(options: UseBackupActionsOptions = {}) {
         if (!beginBusy()) return;
         try {
             await importAllData(data);
-            showToast('데이터 복원이 완료되었습니다. 화면을 다시 불러옵니다.', 'success');
-            window.setTimeout(() => window.location.reload(), 1200);
+            // 복원이 끝나면 저장소는 다시 불러올 때까지 봉인된다(localDB). 화면에 남은 복원 전 입력이
+            // 복원 데이터를 덮지 않게, 미저장 확인 없이 바로 다시 불러온다.
+            // 구형 백업의 평문 이력 이관과 그 결과 안내는 다시 불러온 첫 화면(PostRestoreNotice)이 맡는다 —
+            // "복원 완료"는 이관까지 확인한 뒤에만 알린다.
+            showToast('백업을 불러왔습니다. 화면을 다시 불러와 확인합니다.', 'info');
+            allowUnloadWithoutPrompt();
+            window.setTimeout(() => window.location.reload(), 800);
         } catch (error) {
+            if (isRestoreStorageMixedError(error)) {
+                // 저장소가 섞여 봉인됐다. 화면의 복원 전 상태로 더 일하지 않도록 다시 불러오고,
+                // 시작 화면의 "복원 미완료" 안내(복원 표지)에서 확인하게 한다.
+                showToast(`데이터 복원에 실패했고 일부 데이터를 되돌리지 못했습니다. ${errorMessage(error, '')} 화면을 다시 불러옵니다.`, 'error', 9000);
+                allowUnloadWithoutPrompt();
+                window.setTimeout(() => window.location.reload(), 2500);
+                return;
+            }
             showToast(`데이터 복원에 실패했습니다. ${errorMessage(error, '올바른 백업 파일인지 확인해 주세요.')}`, 'error');
             endBusy();
         }

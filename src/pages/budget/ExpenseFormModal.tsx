@@ -192,7 +192,7 @@ export default function ExpenseFormModal({ editingExpense, defaultProject, budge
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4"
             onClick={requestClose}
         >
             <motion.div
@@ -218,7 +218,7 @@ export default function ExpenseFormModal({ editingExpense, defaultProject, budge
                 </div>
 
                 {/* 영수증 OCR 보조 입력 */}
-                <div className="mb-6 p-4 rounded-xl bg-gradient-to-br from-green-500/10 to-emerald-500/10 border border-green-500/20">
+                <div className="mb-6 p-4 rounded-xl bg-linear-to-br from-green-500/10 to-emerald-500/10 border border-green-500/20">
                     <div className="flex items-center justify-between gap-3 mb-3">
                         <p className="text-green-300 text-sm font-medium flex items-center gap-2">
                             <Camera className="w-4 h-4" />
@@ -466,7 +466,7 @@ export default function ExpenseFormModal({ editingExpense, defaultProject, budge
                                     type="checkbox"
                                     checked={autoVat}
                                     onChange={e => toggleAutoVat(e.target.checked)}
-                                    className="rounded"
+                                    className="rounded-sm"
                                 />
                                 자동 계산(10%)
                             </label>

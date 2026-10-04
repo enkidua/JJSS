@@ -2,8 +2,29 @@ import { create } from 'zustand';
 import * as localDB from '../config/localDB';
 import { Seeker, JobOpening } from '../types/matching';
 import { CaseDocument } from '../types/caseDocument';
+
+export type CaseDocumentUpdateExtra = Partial<Pick<CaseDocument, 'photoFileNames' | 'photoCount'>>;
 import { Expense } from '../types/budget';
 import { safeErrorMetadata } from '../utils/safeError';
+import { isSecureStorageUnavailableError } from '../config/crypto';
+import { setTrainingNamesFromState, TRAINING_STATE_ID } from '../services/trainingNamesCache';
+
+let directoryRevision = 0;
+let directoryRequest = 0;
+let expenseRevision = 0;
+let expenseRequest = 0;
+let documentRequest = 0;
+let documentRevision = 0;
+
+/** 조회 도중 성공한 저장·삭제가 있으면 최신 저장소를 다시 읽는다. */
+async function readStable<T>(revision: () => number, read: () => Promise<T>): Promise<T> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        const before = revision();
+        const result = await read();
+        if (before === revision()) return result;
+    }
+    throw new Error('데이터가 변경되고 있어 목록을 확정하지 못했습니다. 잠시 후 다시 불러와 주세요.');
+}
 
 interface DataState {
     seekers: Seeker[];
@@ -22,7 +43,8 @@ interface DataState {
     deleteJob: (id: string) => Promise<void>;
     fetchCaseDocuments: (seeker: string | Seeker) => Promise<CaseDocument[]>;
     addCaseDocument: (doc: Omit<CaseDocument, 'id' | 'organization' | 'createdAt'>) => Promise<CaseDocument>;
-    updateCaseDocument: (id: string, content: string) => Promise<void>;
+    /** extra: 직무분석지 사진 목록처럼 본문과 함께 바뀌는 메타 정보(본문만 고칠 때는 생략) */
+    updateCaseDocument: (id: string, content: string, extra?: CaseDocumentUpdateExtra) => Promise<void>;
     saveMatchingOpinion: (doc: {
         seekerId: string;
         seekerName: string;
@@ -32,13 +54,24 @@ interface DataState {
         content: string;
     }) => Promise<CaseDocument>;
     deleteCaseDocument: (id: string) => Promise<void>;
-    /** 이용자에게 연결된 사례문서를 모두 삭제하고 삭제한 개수를 돌려준다. 이용자 삭제(deleteSeeker) 전에 호출한다. */
+    /**
+     * 이용자에게 연결된 사례문서만 삭제한다(이용자는 남긴다).
+     * 이용자까지 함께 지울 때는 반드시 `deleteSeekerWithDocuments`를 쓴다 —
+     * 이 함수 뒤에 `deleteSeeker`를 따로 부르면 중간 실패 시 문서만 사라진다.
+     */
     deleteCaseDocumentsForSeeker: (seekerId: string) => Promise<number>;
+    /** 이용자와 연결 사례문서를 한 트랜잭션에서 함께 삭제한다(중간 실패로 문서만 사라지는 일이 없다). */
+    deleteSeekerWithDocuments: (seekerId: string) => Promise<number>;
     // 예산 관리
     fetchExpenses: () => Promise<Expense[]>;
     addExpense: (expense: Omit<Expense, 'id' | 'organization' | 'createdAt' | 'createdBy'>) => Promise<Expense>;
     updateExpense: (id: string, data: Partial<Expense>) => Promise<void>;
     deleteExpense: (id: string) => Promise<void>;
+}
+
+/** 보안 저장소를 쓸 수 없어 저장을 막은 경우에는 그 안내를, 아니면 기본 문구를 보여 준다. */
+function storageErrorMessage(error: unknown, fallback: string): string {
+    return isSecureStorageUnavailableError(error) ? error.message : fallback;
 }
 
 function addLookupKey(keys: Set<string>, value: unknown) {
@@ -113,6 +146,24 @@ function resolveCaseDocumentSeeker(doc: CaseDocument, seekers: Seeker[]): Seeker
     return matches.length === 1 ? matches[0] : null;
 }
 
+/**
+ * 한 이용자에게 연결된 사례문서 ID를 모은다.
+ * 문서 목록(fetchCaseDocuments)에 보이던 것과 같은 기준을 쓴다 — 지우는 범위와 보이는 범위가 달라지면 안 된다.
+ */
+async function collectSeekerDocumentIds(seekerId: string, seekers: Seeker[]): Promise<string[]> {
+    const seekerKeys = getPrimarySeekerKeys(seekerId, seekers);
+    const matchedSeeker = seekers.find(item => item.id === seekerId || item.seekerId === seekerId);
+    const seekerName = matchedSeeker?.name || '';
+    const allowNameFallback = Boolean(matchedSeeker) && isUniqueSeekerName(seekerName, seekers);
+    const docs = await localDB.query<CaseDocument>('caseDocuments', (d) => {
+        const docKeys = getCaseDocumentPrimaryKeys(d as any);
+        if ([...docKeys].some(key => seekerKeys.has(key))) return true;
+        if (!allowNameFallback || docKeys.size > 0) return false;
+        return getCaseDocumentNames(d as any).has(seekerName);
+    });
+    return docs.map(doc => doc.id).filter((id): id is string => Boolean(id));
+}
+
 async function migrateCaseDocumentSeekerIds(seekers: Seeker[]) {
     if (seekers.length === 0) return;
     const docs = await localDB.getAll<CaseDocument>('caseDocuments');
@@ -140,11 +191,24 @@ export const useDataStore = create<DataState>()((set, get) => ({
 
     fetchData: async (force = false) => {
         if (get().initialized && !force) return;
+        const request = ++directoryRequest;
         
         set({ loading: true, error: null });
         try {
-            const seekers = await localDB.getAll<Seeker>('seekers');
-            const jobs = await localDB.getAll<JobOpening>('jobs');
+            const { seekers, jobs } = await readStable(() => directoryRevision, async () => ({
+                seekers: await localDB.getAll<Seeker>('seekers'),
+                jobs: await localDB.getAll<JobOpening>('jobs'),
+            }));
+            if (request !== directoryRequest) return;
+            // 외부 AI 비식별화 사전이 직업훈련 훈련생·담당자 이름도 알도록, "준비됨"으로 표시하기 전에 채운다.
+            // 직업훈련 자료를 읽지 못해도 이용자·사업체 사전은 그대로 쓰고(직업훈련 화면이 따로 복구를 안내한다),
+            // 규칙 기반 비식별화는 계속 적용된다.
+            try {
+                setTrainingNamesFromState(await localDB.getById('trainingState', TRAINING_STATE_ID));
+            } catch (trainingError) {
+                console.warn('[DataStore] 직업훈련 이름 사전을 채우지 못했습니다.', safeErrorMetadata(trainingError, 'training-names'));
+            }
+            if (request !== directoryRequest) return;
             set({ seekers, jobs, loading: false, initialized: true });
             try {
                 await migrateCaseDocumentSeekerIds(seekers);
@@ -153,7 +217,7 @@ export const useDataStore = create<DataState>()((set, get) => ({
             }
         } catch (error: any) {
             console.error('Error fetching data:', safeErrorMetadata(error, 'data-fetch'));
-            set({ error: '데이터를 불러오는 중 오류가 발생했습니다.', loading: false });
+            if (request === directoryRequest) set({ error: '데이터를 불러오는 중 오류가 발생했습니다.', loading: false });
         }
     },
 
@@ -166,13 +230,14 @@ export const useDataStore = create<DataState>()((set, get) => ({
                 createdAt: localDB.localTimestamp() as any,
             };
             const saved = await localDB.addDoc<Seeker>('seekers', newSeeker as Seeker);
+            directoryRevision += 1;
             set({
                 seekers: [...get().seekers, saved],
                 loading: false,
             });
         } catch (error: any) {
             console.error('Add Seeker Error:', safeErrorMetadata(error, 'seeker-add'));
-            set({ error: '구직자 등록 중 오류가 발생했습니다.', loading: false });
+            set({ error: storageErrorMessage(error, '구직자 등록 중 오류가 발생했습니다.'), loading: false });
             throw error;
         }
     },
@@ -187,13 +252,14 @@ export const useDataStore = create<DataState>()((set, get) => ({
                 createdAt: localDB.localTimestamp() as any,
             };
             const saved = await localDB.addDoc<JobOpening>('jobs', newJob as JobOpening);
+            directoryRevision += 1;
             set({
                 jobs: [...get().jobs, saved],
                 loading: false,
             });
         } catch (error: any) {
             console.error('Add Job Error:', safeErrorMetadata(error, 'job-add'));
-            set({ error: '구인공고 등록 중 오류가 발생했습니다.', loading: false });
+            set({ error: storageErrorMessage(error, '구인공고 등록 중 오류가 발생했습니다.'), loading: false });
             throw error;
         }
     },
@@ -212,13 +278,14 @@ export const useDataStore = create<DataState>()((set, get) => ({
                 updatedAt: localDB.localTimestamp() as any,
             } as Partial<Seeker>;
             await localDB.updateDoc<Seeker>('seekers', id, protectedData);
+            directoryRevision += 1;
             set({
                 seekers: get().seekers.map(seeker => seeker.id === id ? { ...seeker, ...protectedData } as Seeker : seeker),
                 loading: false,
             });
         } catch (error: any) {
             console.error('Update Seeker Error:', safeErrorMetadata(error, 'seeker-update'));
-            const message = '이용자 정보 수정 중 오류가 발생했습니다.';
+            const message = storageErrorMessage(error, '이용자 정보 수정 중 오류가 발생했습니다.');
             set({ error: message, loading: false });
             throw new Error(message);
         }
@@ -238,13 +305,14 @@ export const useDataStore = create<DataState>()((set, get) => ({
                 updatedAt: localDB.localTimestamp() as any,
             } as Partial<JobOpening>;
             await localDB.updateDoc<JobOpening>('jobs', id, protectedData);
+            directoryRevision += 1;
             set({
                 jobs: get().jobs.map(job => job.id === id ? { ...job, ...protectedData } as JobOpening : job),
                 loading: false,
             });
         } catch (error: any) {
             console.error('Update Job Error:', safeErrorMetadata(error, 'job-update'));
-            const message = '사업체/구인 정보 수정 중 오류가 발생했습니다.';
+            const message = storageErrorMessage(error, '사업체/구인 정보 수정 중 오류가 발생했습니다.');
             set({ error: message, loading: false });
             throw new Error(message);
         }
@@ -253,6 +321,7 @@ export const useDataStore = create<DataState>()((set, get) => ({
     deleteSeeker: async (id: string) => {
         try {
             await localDB.deleteDoc('seekers', id);
+            directoryRevision += 1;
             set({ seekers: get().seekers.filter(s => s.id !== id) });
         } catch (error: any) {
             console.error('Delete Seeker Error:', safeErrorMetadata(error, 'seeker-delete'));
@@ -265,6 +334,7 @@ export const useDataStore = create<DataState>()((set, get) => ({
     deleteJob: async (id: string) => {
         try {
             await localDB.deleteDoc('jobs', id);
+            directoryRevision += 1;
             set({ jobs: get().jobs.filter(j => j.id !== id) });
         } catch (error: any) {
             console.error('Delete Job Error:', safeErrorMetadata(error, 'job-delete'));
@@ -275,19 +345,20 @@ export const useDataStore = create<DataState>()((set, get) => ({
     },
 
     fetchCaseDocuments: async (seeker: string | Seeker) => {
+        const request = ++documentRequest;
         try {
             const seekers = get().seekers;
             const seekerKeys = getPrimarySeekerKeys(seeker, seekers);
             const seekerName = getSeekerName(seeker, seekers);
             const allowNameFallback = isUniqueSeekerName(seekerName, seekers);
-            const docs = await localDB.query<CaseDocument>('caseDocuments', (d) => {
+            const docs = await readStable(() => documentRevision, () => localDB.query<CaseDocument>('caseDocuments', (d) => {
                 const docKeys = getCaseDocumentPrimaryKeys(d as any);
                 const primaryMatched = [...docKeys].some(key => seekerKeys.has(key));
                 if (primaryMatched) return true;
                 if (!allowNameFallback) return false;
                 const docNames = getCaseDocumentNames(d as any);
                 return docKeys.size === 0 && docNames.has(seekerName);
-            });
+            }));
             // 클라이언트 사이드 정렬 (createdAt 기준 내림차순)
             docs.sort((a, b) => {
                 const getTime = (ts: any): number => {
@@ -299,12 +370,12 @@ export const useDataStore = create<DataState>()((set, get) => ({
                 };
                 return getTime(b.createdAt) - getTime(a.createdAt);
             });
-            set({ caseDocuments: docs });
+            if (request === documentRequest) set({ caseDocuments: docs });
             return docs;
         } catch (error: any) {
             console.error('[fetchCaseDocuments] Error:', safeErrorMetadata(error, 'case-document-fetch'));
             const message = '문서를 불러오는 중 오류가 발생했습니다. 기존 데이터는 삭제하지 않았습니다.';
-            set({ error: message });
+            if (request === documentRequest) set({ error: message });
             throw new Error(message);
         }
     },
@@ -317,28 +388,30 @@ export const useDataStore = create<DataState>()((set, get) => ({
                 createdAt: localDB.localTimestamp(),
             };
             const saved = await localDB.addDoc<CaseDocument>('caseDocuments', newDoc as CaseDocument);
+            documentRevision += 1;
             set({ caseDocuments: [saved, ...get().caseDocuments] });
             return saved;
         } catch (error: any) {
             console.error('[addCaseDocument] Error:', safeErrorMetadata(error, 'case-document-add'));
-            const message = '문서 저장 중 오류가 발생했습니다.';
+            const message = storageErrorMessage(error, '문서 저장 중 오류가 발생했습니다.');
             set({ error: message });
             throw new Error(error?.message || message);
         }
     },
 
-    updateCaseDocument: async (id: string, content: string) => {
+    updateCaseDocument: async (id: string, content: string, extra?: CaseDocumentUpdateExtra) => {
         try {
             const updatedAt = localDB.localTimestamp();
-            await localDB.updateDoc('caseDocuments', id, { content, updatedAt } as any);
+            await localDB.updateDoc('caseDocuments', id, { ...(extra || {}), content, updatedAt } as any);
+            documentRevision += 1;
             set(state => ({
                 caseDocuments: state.caseDocuments.map(d =>
-                    d.id === id ? { ...d, content, updatedAt } : d
+                    d.id === id ? { ...d, ...(extra || {}), content, updatedAt } : d
                 )
             }));
         } catch (error: any) {
             console.error('Update CaseDocument Error:', safeErrorMetadata(error, 'case-document-update'));
-            const message = '문서 수정 중 오류가 발생했습니다.';
+            const message = storageErrorMessage(error, '문서 수정 중 오류가 발생했습니다.');
             set({ error: message });
             throw new Error(error?.message || message);
         }
@@ -368,6 +441,7 @@ export const useDataStore = create<DataState>()((set, get) => ({
                     updatedAt: now,
                 };
                 await localDB.updateDoc<CaseDocument>('caseDocuments', existing[0].id, updated);
+                documentRevision += 1;
                 const saved = { ...existing[0], ...updated } as CaseDocument;
                 set(state => ({
                     caseDocuments: state.caseDocuments.some(d => d.id === saved.id)
@@ -392,11 +466,12 @@ export const useDataStore = create<DataState>()((set, get) => ({
                 jobRole: docData.jobRole,
             };
             const saved = await localDB.addDoc<CaseDocument>('caseDocuments', newDoc);
+            documentRevision += 1;
             set({ caseDocuments: [saved, ...get().caseDocuments] });
             return saved;
         } catch (error: any) {
             console.error('[saveMatchingOpinion] Error:', safeErrorMetadata(error, 'matching-opinion-save'));
-            const message = '매칭 의견 저장 중 오류가 발생했습니다.';
+            const message = storageErrorMessage(error, '매칭 의견 저장 중 오류가 발생했습니다.');
             set({ error: message });
             throw new Error(error?.message || message);
         }
@@ -405,6 +480,7 @@ export const useDataStore = create<DataState>()((set, get) => ({
     deleteCaseDocument: async (id: string) => {
         try {
             await localDB.deleteDoc('caseDocuments', id);
+            documentRevision += 1;
             set({ caseDocuments: get().caseDocuments.filter(d => d.id !== id) });
         } catch (error: any) {
             console.error('Delete CaseDocument Error:', safeErrorMetadata(error, 'case-document-delete'));
@@ -414,23 +490,34 @@ export const useDataStore = create<DataState>()((set, get) => ({
         }
     },
 
+    deleteSeekerWithDocuments: async (seekerId: string) => {
+        if (!seekerId) throw new Error('삭제할 이용자 ID가 없습니다.');
+        try {
+            const ids = await collectSeekerDocumentIds(seekerId, get().seekers);
+            await localDB.deleteSeekerWithDocuments(seekerId, ids);
+            directoryRevision += 1;
+            documentRevision += 1;
+            const deleted = new Set(ids);
+            set(state => ({
+                seekers: state.seekers.filter(item => item.id !== seekerId),
+                caseDocuments: state.caseDocuments.filter(doc => !doc.id || !deleted.has(doc.id)),
+            }));
+            return ids.length;
+        } catch (error: any) {
+            console.error('Delete Seeker With Documents Error:', safeErrorMetadata(error, 'seeker-delete-cascade'));
+            const message =
+                error?.message || '이용자와 사례문서를 삭제하는 중 오류가 발생했습니다. 아무것도 삭제하지 않았습니다.';
+            set({ error: message });
+            throw new Error(message);
+        }
+    },
+
     deleteCaseDocumentsForSeeker: async (seekerId: string) => {
         if (!seekerId) throw new Error('삭제할 이용자 ID가 없습니다.');
         try {
-            const seekers = get().seekers;
-            const seekerKeys = getPrimarySeekerKeys(seekerId, seekers);
-            const matchedSeeker = seekers.find(item => item.id === seekerId || item.seekerId === seekerId);
-            const seekerName = matchedSeeker?.name || '';
-            // 문서 목록(fetchCaseDocuments)에 보이던 것과 같은 기준으로 고른다.
-            const allowNameFallback = Boolean(matchedSeeker) && isUniqueSeekerName(seekerName, seekers);
-            const docs = await localDB.query<CaseDocument>('caseDocuments', (d) => {
-                const docKeys = getCaseDocumentPrimaryKeys(d as any);
-                if ([...docKeys].some(key => seekerKeys.has(key))) return true;
-                if (!allowNameFallback || docKeys.size > 0) return false;
-                return getCaseDocumentNames(d as any).has(seekerName);
-            });
-            const ids = docs.map(doc => doc.id).filter((id): id is string => Boolean(id));
+            const ids = await collectSeekerDocumentIds(seekerId, get().seekers);
             await localDB.deleteDocs('caseDocuments', ids);
+            documentRevision += 1;
             const deleted = new Set(ids);
             set(state => ({ caseDocuments: state.caseDocuments.filter(d => !d.id || !deleted.has(d.id)) }));
             return ids.length;
@@ -445,19 +532,20 @@ export const useDataStore = create<DataState>()((set, get) => ({
     // ── 예산 관리 ──
 
     fetchExpenses: async () => {
+        const request = ++expenseRequest;
         try {
-            const expenses = await localDB.getAll<Expense>('expenses');
+            const expenses = await readStable(() => expenseRevision, () => localDB.getAll<Expense>('expenses'));
             expenses.sort((a, b) => {
                 const ta = (a.createdAt as any)?.seconds || 0;
                 const tb = (b.createdAt as any)?.seconds || 0;
                 return tb - ta;
             });
-            set({ expenses });
+            if (request === expenseRequest) set({ expenses });
             return expenses;
         } catch (error: any) {
             console.error('Fetch Expenses Error:', safeErrorMetadata(error, 'expense-fetch'));
             const message = '지출 내역을 불러오는 중 오류가 발생했습니다.';
-            set({ error: message });
+            if (request === expenseRequest) set({ error: message });
             throw new Error(message);
         }
     },
@@ -471,11 +559,12 @@ export const useDataStore = create<DataState>()((set, get) => ({
                 createdAt: localDB.localTimestamp(),
             };
             const saved = await localDB.addDoc<Expense>('expenses', newExpense as Expense);
+            expenseRevision += 1;
             set({ expenses: [saved, ...get().expenses] });
             return saved;
         } catch (error: any) {
             console.error('Add Expense Error:', safeErrorMetadata(error, 'expense-add'));
-            const message = '지출 내역 저장 중 오류가 발생했습니다.';
+            const message = storageErrorMessage(error, '지출 내역 저장 중 오류가 발생했습니다.');
             set({ error: message });
             throw new Error(error?.message || message);
         }
@@ -484,6 +573,7 @@ export const useDataStore = create<DataState>()((set, get) => ({
     updateExpense: async (id: string, data: Partial<Expense>) => {
         try {
             await localDB.updateDoc('expenses', id, data);
+            expenseRevision += 1;
             set(state => ({
                 expenses: state.expenses.map(e =>
                     e.id === id ? { ...e, ...data } : e
@@ -491,7 +581,7 @@ export const useDataStore = create<DataState>()((set, get) => ({
             }));
         } catch (error: any) {
             console.error('Update Expense Error:', safeErrorMetadata(error, 'expense-update'));
-            const message = '지출 내역 수정 중 오류가 발생했습니다.';
+            const message = storageErrorMessage(error, '지출 내역 수정 중 오류가 발생했습니다.');
             set({ error: message });
             throw new Error(error?.message || message);
         }
@@ -500,6 +590,7 @@ export const useDataStore = create<DataState>()((set, get) => ({
     deleteExpense: async (id: string) => {
         try {
             await localDB.deleteDoc('expenses', id);
+            expenseRevision += 1;
             set({ expenses: get().expenses.filter(e => e.id !== id) });
         } catch (error: any) {
             console.error('Delete Expense Error:', safeErrorMetadata(error, 'expense-delete'));
@@ -511,3 +602,46 @@ export const useDataStore = create<DataState>()((set, get) => ({
 }));
 
 // (자동 로드 코드 제거됨 - Layout 컴포넌트에서 초기화 제어)
+
+// ─── 저장 데이터 일괄 재암호화 (앱 시작 후 백그라운드) ───
+
+const AT_REST_MIGRATION_DELAY_MS = 1_500;
+let atRestMigrationStarted: Promise<localDB.AtRestMigrationResult | null> | null = null;
+
+/**
+ * 초기 화면을 띄운 뒤 백그라운드에서 한 번, 수정되지 않은 오래된 레코드까지 현재 형식으로 다시 암호화한다.
+ * 화면 표시를 막지 않으며, 실패해도 기존 데이터는 그대로이고 다음 실행 때 다시 시도한다.
+ * 값은 복호화하면 같으므로 메모리 상태를 다시 불러올 필요가 없다.
+ * 로그에는 개수·상태 같은 메타데이터만 남긴다(개인정보·암호문 없음).
+ */
+export function startAtRestMigration(delayMs = AT_REST_MIGRATION_DELAY_MS): Promise<localDB.AtRestMigrationResult | null> {
+    if (atRestMigrationStarted) return atRestMigrationStarted;
+    atRestMigrationStarted = new Promise<void>(resolve => setTimeout(resolve, delayMs))
+        .then(() => localDB.migrateAtRestEncryption())
+        .then(result => {
+            const summary = {
+                status: result.status,
+                ...(result.reason ? { reason: result.reason } : {}),
+                ...(result.scheme ? { scheme: result.scheme } : {}),
+                scanned: result.scanned,
+                updatedRecords: result.updatedRecords,
+                convertedFields: result.convertedFields,
+                unreadableFields: result.unreadableFields,
+                failedRecords: result.failedRecords,
+            };
+            if (result.status === 'failed') {
+                console.info('[DataStore] 저장 데이터 암호화 점검을 마치지 못했습니다. 기존 데이터는 그대로이며 다음 실행 때 다시 시도합니다.', {
+                    ...summary,
+                    ...(result.error ? { error: safeErrorMetadata(result.error, 'at-rest-migration') } : {}),
+                });
+            } else if (result.updatedRecords > 0 || result.unreadableFields > 0) {
+                console.info('[DataStore] 저장 데이터 암호화 점검 완료', summary);
+            }
+            return result;
+        })
+        .catch(error => {
+            console.info('[DataStore] 저장 데이터 암호화 점검을 마치지 못했습니다. 다음 실행 때 다시 시도합니다.', safeErrorMetadata(error, 'at-rest-migration'));
+            return null;
+        });
+    return atRestMigrationStarted;
+}

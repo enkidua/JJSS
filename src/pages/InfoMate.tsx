@@ -8,6 +8,7 @@ import * as localDB from '../config/localDB';
 import { useAuthStore } from '../store/authStore';
 import { safeErrorMetadata } from '../utils/safeError';
 import { useDialogFocus } from '../hooks/useDialogFocus';
+import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 import { useConfirm } from '../components/common/ConfirmProvider';
 import { useAppToast } from '../components/Toast';
 
@@ -30,11 +31,19 @@ const categories = [
     { id: 'blog', label: '블로그', icon: Pen, color: 'from-amber-500 to-orange-600' },
 ];
 
+/**
+ * 저장·표시를 허용하는 링크.
+ * 설치형 앱은 외부 링크를 https만 열기 때문에(electron/externalUrl.cjs) 여기서도 https만 받는다.
+ * http를 받아 두면 저장은 되는데 클릭해도 열리지 않아 사용자가 원인을 알 수 없다.
+ */
 function getAllowedResourceUrl(value: string): string | null {
     if (!value.trim()) return null;
     try {
         const parsed = new URL(value.trim());
-        return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? parsed.href : null;
+        if (parsed.protocol !== 'https:') return null;
+        // 주소에 아이디·비밀번호가 들어간 링크는 받지 않는다.
+        if (parsed.username || parsed.password) return null;
+        return parsed.href;
     } catch {
         return null;
     }
@@ -106,6 +115,8 @@ export default function InfoMate() {
         ? formTitle !== editingResource.title || formLink !== editingResource.link || formMemo !== editingResource.memo
         : Boolean(formTitle.trim() || formLink.trim() || formMemo.trim());
 
+    useUnsavedGuard(modalOpen && (saving || isFormDirty()));
+
     const closeModal = async (force = false) => {
         if (!force && (saveInFlightRef.current || closeConfirmPendingRef.current)) return;
         if (!force && isFormDirty()) {
@@ -130,7 +141,7 @@ export default function InfoMate() {
         if (!formTitle.trim()) { showToast('자료 제목을 입력해 주세요.', 'error'); return; }
         const safeLink = formLink.trim() ? getAllowedResourceUrl(formLink) : '';
         if (formLink.trim() && !safeLink) {
-            showToast('링크는 http:// 또는 https:// 주소만 입력할 수 있습니다.', 'error');
+            showToast('링크는 https:// 주소만 입력할 수 있습니다. 설치형 앱은 안전한 주소만 열 수 있습니다.', 'error');
             return;
         }
         const fields = {
@@ -240,7 +251,7 @@ export default function InfoMate() {
                             placeholder="검색..."
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
-                            className="input-field !pl-10"
+                            className="input-field pl-10!"
                         />
                     </div>
                     <button onClick={openCreateModal} className="btn-primary flex items-center gap-2 whitespace-nowrap">
@@ -264,12 +275,12 @@ export default function InfoMate() {
                     </div>
                 ) : filtered.length === 0 ? (
                     <div className="text-center py-20">
-                        <div className={`w-16 h-16 rounded-2xl bg-gradient-to-br ${activeCat.color} flex items-center justify-center mx-auto mb-4 opacity-30`}>
+                        <div className={`w-16 h-16 rounded-2xl bg-linear-to-br ${activeCat.color} flex items-center justify-center mx-auto mb-4 opacity-30`}>
                             <ActiveCategoryIcon className="w-8 h-8 text-white" />
                         </div>
                         <p className="text-white/70 text-lg mb-2">{searchTerm.trim() ? `“${searchTerm.trim()}”에 맞는 자료가 없습니다` : '등록된 리소스가 없습니다'}</p>
                         <p className="text-white/55 text-sm">{searchTerm.trim() ? '검색어를 바꾸거나 검색을 초기화해 보세요.' : '위 버튼을 눌러 새 리소스를 추가해 보세요.'}</p>
-                        {searchTerm.trim() && <button type="button" onClick={() => setSearchTerm('')} className="btn-secondary mt-4 !px-4 !py-2 text-sm">검색 초기화</button>}
+                        {searchTerm.trim() && <button type="button" onClick={() => setSearchTerm('')} className="btn-secondary mt-4 px-4! py-2! text-sm">검색 초기화</button>}
                     </div>
                 ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -291,17 +302,17 @@ export default function InfoMate() {
                                                 rel="noopener noreferrer"
                                                 className="inline-flex items-center gap-1 text-sm text-primary-400 hover:text-primary-300 mt-1 truncate max-w-full"
                                             >
-                                                <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                                                <ExternalLink className="w-3 h-3 shrink-0" />
                                                 <span className="truncate">{res.link}</span>
                                             </a>
                                         )}
                                         {res.memo && <p className="text-white/50 text-sm mt-2 line-clamp-2">{res.memo}</p>}
                                     </div>
                                     <div className="flex items-center gap-1">
-                                        <button type="button" aria-label={`${res.title} 수정`} onClick={() => openEditModal(res)} className="btn-ghost !p-2">
+                                        <button type="button" aria-label={`${res.title} 수정`} onClick={() => openEditModal(res)} className="btn-ghost p-2!">
                                             <Edit3 className="w-4 h-4" />
                                         </button>
-                                        <button type="button" aria-label={`${res.title} 삭제`} onClick={() => { void handleDelete(res); }} className="btn-ghost !p-2 hover:!text-red-400">
+                                        <button type="button" aria-label={`${res.title} 삭제`} onClick={() => { void handleDelete(res); }} className="btn-ghost p-2! hover:text-red-400!">
                                             <Trash2 className="w-4 h-4" />
                                         </button>
                                     </div>
@@ -332,7 +343,7 @@ export default function InfoMate() {
                                 <h2 id="resource-modal-title" className="text-xl font-bold text-white">
                                     {editingResource ? '리소스 수정' : '새 리소스 추가'}
                                 </h2>
-                                <button type="button" aria-label="자료 편집 창 닫기" onClick={() => { void closeModal(); }} className="btn-ghost !p-2">
+                                <button type="button" aria-label="자료 편집 창 닫기" onClick={() => { void closeModal(); }} className="btn-ghost p-2!">
                                     <X className="w-5 h-5" />
                                 </button>
                             </div>
@@ -373,7 +384,7 @@ export default function InfoMate() {
                                         className="textarea-field"
                                     />
                                 </div>
-                                <button type="button" disabled={saving} onClick={handleSave} className="btn-primary w-full !py-3 disabled:opacity-50">
+                                <button type="button" disabled={saving} onClick={handleSave} className="btn-primary w-full py-3! disabled:opacity-50">
                                     {saving ? '저장 중…' : editingResource ? '수정 완료' : '추가하기'}
                                 </button>
                             </div>

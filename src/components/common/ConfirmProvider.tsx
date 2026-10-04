@@ -36,17 +36,21 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
     const confirm = useCallback<ConfirmFn>((options) => new Promise<boolean>(resolve => {
         const normalized = typeof options === 'string' ? { message: options } : options;
         counter.current += 1;
-        setQueue(prev => [...prev, { id: counter.current, options: normalized, resolve }]);
+        const id = counter.current;
+        setQueue(prev => [...prev, { id, options: normalized, resolve }]);
     }), []);
 
     const current = queue[0];
     const settle = useCallback((value: boolean) => {
+        if (!current) return;
         setQueue(prev => {
             const [head, ...rest] = prev;
-            head?.resolve(value);
-            return rest;
+            return head?.id === current.id ? rest : prev;
         });
-    }, []);
+        // Promise resolution is a side effect, not part of a React state updater.
+        // Repeated events from this dialog must never answer the next dialog.
+        current.resolve(value);
+    }, [current]);
 
     return (
         <ConfirmContext.Provider value={confirm}>
@@ -62,7 +66,7 @@ function ConfirmDialog({ options, onSettle }: { options: ConfirmOptions; onSettl
     const titleId = 'jjss-confirm-title';
     const descId = 'jjss-confirm-desc';
     return (
-        <div className="fixed inset-0 z-[10001] flex items-center justify-center bg-black/60 p-4" onMouseDown={event => { if (event.target === event.currentTarget) onSettle(false); }}>
+        <div className="fixed inset-0 z-10001 flex items-center justify-center bg-black/60 p-4" onMouseDown={event => { if (event.target === event.currentTarget) onSettle(false); }}>
             <div
                 ref={dialogRef}
                 role="alertdialog"
@@ -70,12 +74,12 @@ function ConfirmDialog({ options, onSettle }: { options: ConfirmOptions; onSettl
                 aria-labelledby={titleId}
                 aria-describedby={descId}
                 tabIndex={-1}
-                className="w-full max-w-md rounded-2xl border border-white/10 bg-[#141731] p-6 shadow-2xl focus:outline-none"
+                className="w-full max-w-md rounded-2xl border border-white/10 bg-[#141731] p-6 shadow-2xl focus:outline-hidden"
             >
                 <div className="flex items-start gap-3">
                     {danger
-                        ? <AlertTriangle className="mt-0.5 h-6 w-6 flex-shrink-0 text-amber-400" aria-hidden="true" />
-                        : <HelpCircle className="mt-0.5 h-6 w-6 flex-shrink-0 text-blue-300" aria-hidden="true" />}
+                        ? <AlertTriangle className="mt-0.5 h-6 w-6 shrink-0 text-amber-400" aria-hidden="true" />
+                        : <HelpCircle className="mt-0.5 h-6 w-6 shrink-0 text-blue-300" aria-hidden="true" />}
                     <div className="min-w-0 flex-1">
                         <h2 id={titleId} className="text-lg font-bold text-white">{options.title || (danger ? '확인이 필요합니다' : '계속할까요?')}</h2>
                         <div id={descId} className="mt-2 whitespace-pre-line text-sm leading-relaxed text-white/75">{options.message}</div>

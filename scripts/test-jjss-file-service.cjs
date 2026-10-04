@@ -184,7 +184,7 @@ async function main() {
         assert.equal(saveDialogCalls, 1);
         await fs.access(externalFolder);
         const preferences = await readPreferences(mockApp);
-        assert.equal(preferences.lastSaveDirectories['rehab-plan'], path.resolve(externalFolder));
+        assert.equal(preferences.lastSaveDirectories['rehab-plan'], undefined, 'Choosing a path alone is not a successful save');
         assert.equal(preferences.jjssRoot, path.join(documents, 'JJSS'));
         let rememberedDefaultPath = '';
         const cancelResult = await chooseSavePath({
@@ -200,7 +200,7 @@ async function main() {
             },
         });
         assert.equal(cancelResult.canceled, true);
-        assert.equal(path.dirname(rememberedDefaultPath), path.resolve(externalFolder));
+        assert.equal(path.dirname(rememberedDefaultPath), path.resolve(jjssPaths.categories['rehab-plan']));
         const pngPath = path.join(externalFolder, '한글 이미지.png');
         const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02]);
         const savedPng = await saveBuffer({
@@ -214,6 +214,75 @@ async function main() {
         assert.equal(savedPng.filePath, path.resolve(pngPath));
         assert.match(savedPng.openToken, /^[0-9a-f-]{36}$/i);
         assert.deepEqual(await fs.readFile(pngPath), pngBytes);
+        assert.equal((await readPreferences(mockApp)).lastSaveDirectories['rehab-plan'], path.resolve(externalFolder));
+
+        // A partial write or failed replacement must preserve the old document
+        // and must not promote the failed destination to the last saved folder.
+        const failureFolder = path.join(tempRoot, '실패 경로');
+        await fs.mkdir(failureFolder);
+        const failurePath = path.join(failureFolder, '기존.png');
+        const originalBytes = Buffer.from('original synthetic document');
+        await fs.writeFile(failurePath, originalBytes);
+        const writeFileOriginal = fs.writeFile;
+        const renameOriginal = fs.rename;
+        for (const failure of ['partial-write', 'rename']) {
+            try {
+                fs.writeFile = async (target, data, options) => {
+                    if (failure === 'partial-write' && path.dirname(target) === failureFolder) {
+                        await writeFileOriginal(target, Buffer.from('partial'), options);
+                        throw Object.assign(new Error('synthetic disk full'), { code: 'ENOSPC' });
+                    }
+                    return writeFileOriginal(target, data, options);
+                };
+                fs.rename = async (from, to) => {
+                    if (failure === 'rename' && to === failurePath) {
+                        throw Object.assign(new Error('synthetic locked file'), { code: 'EBUSY' });
+                    }
+                    return renameOriginal(from, to);
+                };
+                await assert.rejects(saveBuffer({
+                    app: mockApp, rootOptions, category: 'rehab-plan',
+                    fileName: '기존.png', data: pngBytes,
+                    dialog: { showSaveDialog: async () => ({ canceled: false, filePath: failurePath }) },
+                }), failure === 'partial-write' ? /저장 공간/ : /다른 프로그램/);
+            } finally {
+                fs.writeFile = writeFileOriginal;
+                fs.rename = renameOriginal;
+            }
+            assert.deepEqual(await fs.readFile(failurePath), originalBytes);
+            assert.deepEqual(await fs.readdir(failureFolder), ['기존.png']);
+            assert.equal((await readPreferences(mockApp)).lastSaveDirectories['rehab-plan'], path.resolve(externalFolder));
+        }
+        // OneDrive·백신이 잠깐 잡고 있는 경우: 처음 두 번은 EPERM/EBUSY, 세 번째에 풀린다 → 다시 시도해 저장된다.
+        {
+            const renameOriginal = fs.rename;
+            let attempts = 0;
+            fs.rename = async (from, to) => {
+                if (to === failurePath && attempts < 2) {
+                    attempts += 1;
+                    throw Object.assign(new Error('synthetic transient lock'), { code: attempts === 1 ? 'EPERM' : 'EBUSY' });
+                }
+                return renameOriginal(from, to);
+            };
+            try {
+                await saveBuffer({
+                    app: mockApp, rootOptions, category: 'rehab-plan', fileName: '기존.png', data: pngBytes,
+                    dialog: { showSaveDialog: async () => ({ canceled: false, filePath: failurePath }) },
+                });
+            } finally {
+                fs.rename = renameOriginal;
+            }
+            assert.equal(attempts, 2, 'transient lock was retried');
+            assert.deepEqual(await fs.readFile(failurePath), pngBytes, 'replacement succeeds after a transient lock');
+            assert.deepEqual(await fs.readdir(failureFolder), ['기존.png'], 'no temp file left after retry');
+            await fs.writeFile(failurePath, originalBytes);
+        }
+        await saveBuffer({
+            app: mockApp, rootOptions, category: 'rehab-plan', fileName: '기존.png', data: pngBytes,
+            dialog: { showSaveDialog: async () => ({ canceled: false, filePath: failurePath }) },
+        });
+        assert.deepEqual(await fs.readFile(failurePath), pngBytes, 'Successful replacement updates the file');
+        console.log('PASS failed overwrite preserves original, cleans partial file, retries transient OneDrive/antivirus locks, and remembers only successful saves');
 
         // PDF: 임시 HTML 파일을 loadFile로 불러오고, 인쇄 창은 JavaScript·이동을 막으며, 임시 파일은 지운다.
         const pdfPath = path.join(externalFolder, '한글 문서.pdf');
@@ -266,16 +335,26 @@ async function main() {
         assert.equal(navigationBlocked, true);
         assert.deepEqual(printWindow.windowOpenHandler({ url: 'https://example.com' }), { action: 'deny' });
 
-        // 강제 종료로 남은 오래된 PDF 임시 폴더만 정리한다.
+        // 나이를 지정하면 그보다 오래된 PDF 임시 폴더만 정리한다.
         const staleTemp = path.join(mockApp.getPath('temp'), 'jjss-pdf-Stale1');
         const freshTemp = path.join(mockApp.getPath('temp'), 'jjss-pdf-Fresh1');
+        const otherTemp = path.join(mockApp.getPath('temp'), 'other-program-tmp');
         await fs.mkdir(staleTemp, { recursive: true });
         await fs.mkdir(freshTemp, { recursive: true });
+        await fs.mkdir(otherTemp, { recursive: true });
         const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
         await fs.utimes(staleTemp, twoHoursAgo, twoHoursAgo);
-        assert.equal(await cleanupStalePdfTempFiles(mockApp), 1);
+        assert.equal(await cleanupStalePdfTempFiles(mockApp, 60 * 60 * 1000), 1);
         await assert.rejects(fs.access(staleTemp));
         await fs.access(freshTemp);
+
+        // 앱 시작 시(기본값)에는 남아 있는 JJSS PDF 임시 폴더를 나이와 상관없이 모두 지운다.
+        // 개인정보가 담긴 임시 HTML을 필요 이상으로 오래 두지 않기 위해서다.
+        assert.equal(await cleanupStalePdfTempFiles(mockApp), 1);
+        await assert.rejects(fs.access(freshTemp));
+        // 다른 프로그램의 임시 폴더는 건드리지 않는다.
+        await fs.access(otherTemp);
+        await fs.rm(otherTemp, { recursive: true, force: true });
 
         await fs.rm(externalFolder, { recursive: true, force: true });
         let missingFolderFallback = '';
