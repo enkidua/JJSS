@@ -115,7 +115,13 @@ try {
         }
     }
 
-    check('자동 업데이트 게시 설정 없음', build.publish === null, `publish=${JSON.stringify(build.publish)}`);
+    // 자동 업데이트는 공개 GitHub 저장소(enkidua/JJSS)의 Releases만 본다. 빌드가 스스로 게시하는 일은 없어야 한다
+    // (검증한 설치파일과 latest*.yml을 사람이 올린다).
+    const publish = build.publish || {};
+    check('자동 업데이트 출처가 GitHub enkidua/JJSS로 고정', publish.provider === 'github' && publish.owner === 'enkidua' && publish.repo === 'JJSS', `publish=${JSON.stringify(build.publish)}`);
+    const builderScripts = Object.entries(scripts).filter(([, command]) => typeof command === 'string' && command.includes('electron-builder'));
+    const autoPublishing = builderScripts.filter(([, command]) => !command.includes('--publish never'));
+    check('빌드 스크립트가 자동 게시하지 않음(--publish never)', builderScripts.length > 0 && autoPublishing.length === 0, autoPublishing.length ? autoPublishing.map(([name]) => name).join(', ') : `${builderScripts.length}개 스크립트`);
 
     const electronRequires = findElectronRuntimeRequires();
     const runtimeDependencies = Object.keys(packageJson.dependencies || {});

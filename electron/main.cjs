@@ -2,9 +2,10 @@ const { app, BrowserWindow, Menu, dialog, ipcMain, safeStorage, shell } = requir
 const path = require('path');
 const { fileURLToPath } = require('url');
 const { getAllowedExternalUrl } = require('./externalUrl.cjs');
-const { cleanupStalePdfTempFiles, ensureJjssFolders, registerJjssFileIpc } = require('./fileService.cjs');
+const { cleanupStalePdfTempFiles, ensureJjssFolders, registerJjssFileIpc, validateSender } = require('./fileService.cjs');
 const { registerDataKeyIpc } = require('./dataKey.cjs');
 const { initMainLog, logMainError, logMainEvent, safeToken } = require('./mainLog.cjs');
+const { createUpdateService } = require('./updater.cjs');
 
 const INDEX_PATH = path.join(__dirname, '..', 'dist', 'index.html');
 const CRASH_RELAUNCH_ARG = '--jjss-crash-relaunch';
@@ -229,6 +230,22 @@ if (!hasSingleInstanceLock) {
         ensureJjssFolders(app).catch(error => {
             logMainError('jjss-folder-preparation-failed', error);
         });
+        // 자동 업데이트: 배포본에서만 동작. 알림 우선, 내려받기·설치는 사용자가 고른다.
+        try {
+            createUpdateService({
+                app, ipcMain, shell,
+                getWindow: () => mainWindow,
+                validateSender, expectedIndexPath: INDEX_PATH,
+                loadAutoUpdater: () => require('electron-updater').autoUpdater,
+                platform: process.platform,
+                env: process.env,
+                fs: require('fs'),
+                path,
+                logMainEvent, logMainError,
+            }).register();
+        } catch (error) {
+            logMainError('update-service-failed', error);
+        }
 
         app.on('activate', () => {
             if (BrowserWindow.getAllWindows().length === 0) {

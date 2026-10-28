@@ -31,13 +31,14 @@ jobs:
       - name: Verify disk image, nested signatures and arm64 startup
         run: |
           node scripts/verify-mac-dmg.cjs release/JJSS-*-arm64.dmg
-          shasum -a 256 release/*.dmg release/*-mac.zip > release/SHA256SUMS.txt
+          shasum -a 256 release/*.dmg release/*-mac.zip release/latest-mac.yml > release/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
           name: jjss-mac-arm64
           path: |
             release/*.dmg
             release/*-mac.zip
+            release/latest-mac.yml
             release/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14

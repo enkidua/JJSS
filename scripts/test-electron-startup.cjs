@@ -52,7 +52,7 @@ async function check(platform, loadFails, cleanupFails = false) {
             if (name === 'path' || name === 'url') return require(name);
             if (name === './externalUrl.cjs') return { getAllowedExternalUrl: () => null };
             if (name === './fileService.cjs') return {
-                registerJjssFileIpc() {}, ensureJjssFolders: async () => {},
+                registerJjssFileIpc() {}, ensureJjssFolders: async () => {}, validateSender() {},
                 cleanupStalePdfTempFiles: async () => {
                     sequence.push('cleanup-start');
                     await Promise.resolve();
@@ -61,6 +61,7 @@ async function check(platform, loadFails, cleanupFails = false) {
                 },
             };
             if (name === './dataKey.cjs') return { registerDataKeyIpc() {} };
+            if (name === './updater.cjs') return { createUpdateService: () => ({ register() {} }) };
             if (name === './mainLog.cjs') return {
                 initMainLog() {}, logMainEvent() {}, safeToken: value => value,
                 logMainError: event => logged.push(event),

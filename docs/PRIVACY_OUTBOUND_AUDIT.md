@@ -11,7 +11,8 @@
 | 〃 | `callOpenAI` / `callAnthropic` | OpenAI / Anthropic | `fetch` (키는 헤더) |
 | 〃 | `buildGeminiFileParts` | Gemini | inlineData 또는 Files API `files.upload`(14MB 초과, 끝나면 즉시 `files.delete`) |
 | `src/services/ocr.ts` | `extractTextWithVision` / `extractTextWithGemini` / `smartParseItemizedReceiptWithAI` | Vision / Gemini | `fetch`(키는 `x-goog-api-key` 헤더) / SDK |
-| `src/services/connectionCheck.ts` | `checkProviderConnection` | 4사 | 모델 조회·빈 요청만(업무 데이터 없음, 과금 생성 없음) |
+| `src/services/connectionCheck.ts` | `checkProviderConnection` | 4사 | 모델 조회·빈 요청만(업무 데이터 없음, 과금 생성 없음). 키 저장 직후 자동으로도 실행 |
+| `electron/updater.cjs`(main 프로세스) | `checkForUpdates` / `downloadUpdate` | GitHub(enkidua/JJSS Releases) | 앱 버전·운영체제만. 업무 데이터·API 키 없음. 배포본에서만, 내려받기는 사용자가 누를 때만 |
 
 그 밖의 `fetch`(`rehabPlanDocx.ts` 템플릿, `jjssFileService.ts` data URL)는 앱 내부 자원만 읽는다. 분석·원격 오류수집·추적 코드는 없다.
 
