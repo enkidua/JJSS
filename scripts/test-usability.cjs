@@ -91,6 +91,36 @@ async function main() {
         await page.waitForFunction(() => document.querySelector('#model-openai')?.value === 'gpt-5.6-terra' && !document.querySelector('#model-openai')?.disabled);
         console.log('PASS latest model defaults and retained previous model selection');
 
+        // API 키를 엉뚱한 칸에 넣으면(OpenAI 칸에 Gemini 키) 입력 즉시 알려 주고, 한 번에 알맞은 칸으로 옮긴다.
+        // 기본 AI(Gemini)의 키가 없으면 맨 위 경고가 보인다. 외부 요청은 이 테스트에서 모두 막혀 있다.
+        const syntheticGoogleKey = `AIzaSy${'X'.repeat(33)}`;
+        await page.getByTestId('selected-provider-key-warning').waitFor();
+        await page.locator('#api-key-openai').fill(`  "${syntheticGoogleKey}"  `);
+        const formatWarning = page.getByTestId('key-format-openai');
+        await formatWarning.waitFor();
+        assert.match(await formatWarning.innerText(), /Google\(Gemini·Vision\) 키 형식입니다\. OpenAI 칸에 넣으면 동작하지 않습니다/);
+        assert.equal(await page.locator('#api-key-openai').getAttribute('aria-invalid'), 'true');
+        // 저장하지 않은 잘못된 키로 연결 확인을 누르면 요청 없이 원인을 알려 준다.
+        await page.getByRole('button', { name: 'OpenAI 연결 확인', exact: true }).click();
+        await page.getByText('OpenAI 칸의 키를 확인하지 않았습니다.', { exact: false }).waitFor();
+        await formatWarning.getByRole('button', { name: 'Google Gemini 칸으로 옮기기' }).click();
+        await page.waitForFunction(key => document.querySelector('#api-key-gemini')?.value === key && document.querySelector('#api-key-openai')?.value === '', syntheticGoogleKey);
+        await page.getByText('키를 Google Gemini 칸으로 옮겨 저장했습니다.', { exact: false }).first().waitFor();
+        assert.equal(await page.getByTestId('key-format-openai').count(), 0, '옮긴 뒤 OpenAI 칸 경고가 사라진다');
+        // 옮긴 키는 저장되고(새로고침 뒤에도 남음), 자동 연결 확인은 외부 요청이 막혀 네트워크 오류로 끝난다(키 실패로 기록하지 않음).
+        await page.getByTestId('key-status-gemini').waitFor();
+        await page.reload();
+        await page.locator('#api-key-gemini').waitFor();
+        assert.equal(await page.locator('#api-key-gemini').inputValue(), syntheticGoogleKey);
+        assert.equal(await page.locator('#api-key-openai').inputValue(), '');
+        assert.equal(await page.getByTestId('key-status-gemini').getAttribute('data-state'), 'unchecked', '네트워크 오류는 "실패"로 남기지 않는다');
+        assert.equal(await page.getByTestId('selected-provider-key-warning').count(), 0, '기본 AI 키가 생기면 경고가 사라진다');
+        // 테스트 뒤 정리: 다른 시나리오에 영향을 주지 않게 키를 지운다.
+        await page.locator('#api-key-gemini').fill('');
+        await page.locator('#api-key-gemini').press('Enter');
+        await page.getByTestId('selected-provider-key-warning').waitFor();
+        console.log('PASS API key typed into the wrong provider slot is flagged instantly and moved to the right slot');
+
         await page.evaluate(() => { location.hash = '/infomate'; });
         await page.getByRole('button', { name: '새 리소스 추가' }).click();
         await page.getByLabel('제목', { exact: true }).fill('검증용 합성 자료');

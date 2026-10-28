@@ -24,6 +24,7 @@ import { attachProviderMessage, classifyAIFailoverReason, shouldCountTowardFailu
 import { lockAttachmentRequestPlan, supportsAttachments } from './aiProviderCapabilities';
 import { readAnthropicText, readGeminiText, readOpenAIText } from './aiTextResponse';
 import { isKnownNamesReady, KNOWN_NAMES_NOT_READY_MESSAGE } from './knownNames';
+import { apiKeyRejectionMessage, isApiKeyRejection, reportApiKeyRejection } from './apiKeyRejection';
 import {
   assertAttachmentApproved,
   BASE64_ATTACHMENT_ACCESSOR,
@@ -1341,6 +1342,9 @@ export async function generateText(
       },
       onAttemptError: (candidate, error) => {
         console.error(`${candidate.provider} API Error:`, safeApiErrorMetadata(error));
+        // 키가 거부되면 그 칸의 상태를 "실패"로 남기고 안내창을 띄운다(어느 칸의 키인지, 형식이 맞는지 포함).
+        const candidateKey = settings.llmConfigs.find(config => config.provider === candidate.provider)?.apiKey || '';
+        reportApiKeyRejection(candidate.provider, candidateKey, error);
 
         if (candidate.provider === 'gemini' && import.meta.env.DEV && isGeminiHighDemandError(error)) {
           console.debug('Gemini model high demand', {
@@ -1387,11 +1391,16 @@ export async function generateText(
       throw error;
     }
     if (isAIRequestAbort(error)) throw error;
+    // 키가 거부된 경우에는 "어느 칸의 키가, 왜(형식이 다른 제공업체 것인지 등)" 거부됐는지를 그대로 알린다.
+    const failedProvider: AIProvider = error?.finalProvider || activeConfig.provider;
+    const failedKey = settings.llmConfigs.find(config => config.provider === failedProvider)?.apiKey || '';
     const userError: Error = AI_RESPONSE_ERROR_CODES.includes(error?.code)
       ? error
-      : hasAttachments
-        ? new Error(`${normalizeGeminiError(error, 'file').message}\n첨부파일이 포함된 작업은 선택한 Gemini에서만 처리하며 다른 AI 제공업체로 자동 전환하지 않습니다.`)
-        : providerUserFacingError(error?.finalProvider || activeConfig.provider, error);
+      : isApiKeyRejection(error)
+        ? Object.assign(new Error(apiKeyRejectionMessage(failedProvider, failedKey)), { code: 'AI_API_KEY_REJECTED', reason: 'api-key' })
+        : hasAttachments
+          ? new Error(`${normalizeGeminiError(error, 'file').message}\n첨부파일이 포함된 작업은 선택한 Gemini에서만 처리하며 다른 AI 제공업체로 자동 전환하지 않습니다.`)
+          : providerUserFacingError(failedProvider, error);
     recordFeatureFailure(featureKey, error, userError.message);
     throw userError;
   }
@@ -1774,7 +1783,12 @@ function finishFileJobWithError(job: ReturnType<typeof beginAIRequestJob>, featu
   }
   if (job.cancelled || isAIRequestAbort(error)) return isAIRequestAbort(error) ? error : createAbortError();
   console.error(`${label} error:`, safeApiErrorMetadata(error));
-  const userError = normalizeGeminiError(error, 'file');
+  // 파일 분석은 Gemini로만 간다. 키가 거부됐으면 상태를 남기고 칸 기준 안내로 바꾼다.
+  const geminiKey = useSettingsStore.getState().settings.llmConfigs.find(config => config.provider === 'gemini')?.apiKey || '';
+  const rejection = reportApiKeyRejection('gemini', geminiKey, error);
+  const userError = rejection
+    ? Object.assign(new Error(rejection), { code: 'AI_API_KEY_REJECTED', reason: 'api-key' })
+    : normalizeGeminiError(error, 'file');
   recordFeatureFailure(featureKey, error, userError.message);
   return userError;
 }

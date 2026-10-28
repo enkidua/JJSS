@@ -93,6 +93,8 @@ globalThis.__privacyJobs = () => jobs;
 globalThis.__privacyCaseDocuments = () => caseDocuments;
 globalThis.__privacyInitialized = () => storeInitialized;
 stubs.set(src('store/settingsStore.ts'), toUrl(`export const useSettingsStore = { getState: () => ({ settings: globalThis.__privacySettings() }) };`));
+// 키 상태 기록(이 PC의 localStorage)은 외부 전송과 무관하다. 기록 호출만 받아 둔다.
+stubs.set(src('services/apiKeyStatus.ts'), toUrl(`export const recordApiKeyStatus = async () => {}; export const useApiKeyStatusStore = { getState: () => ({ statuses: {} }) };`));
 stubs.set(src('store/dataStore.ts'), toUrl(`export const useDataStore = { getState: () => ({ seekers: globalThis.__privacySeekers(), jobs: globalThis.__privacyJobs(), caseDocuments: globalThis.__privacyCaseDocuments(), initialized: globalThis.__privacyInitialized() }) };`));
 globalThis.__privacySettings = () => settings;
 globalThis.__privacySeekers = () => seekers;

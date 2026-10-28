@@ -37,6 +37,7 @@ import {
 import { attachProviderMessage, shouldCountTowardFailureBlock } from './aiErrorClassification';
 import { readGeminiText } from './aiTextResponse';
 import { isKnownNamesReady, KNOWN_NAMES_NOT_READY_MESSAGE } from './knownNames';
+import { reportApiKeyRejection } from './apiKeyRejection';
 import {
     assertAttachmentApproved,
     extractLocalDocumentText,
@@ -266,7 +267,8 @@ export async function performOCR(file: File, options?: { signal?: AbortSignal })
         if (job.cancelled || isAIRequestAbort(error) || isAIRequestTimeout(error)) throw finishOcrJobWithError(job, error);
         console.warn('Vision API 실패:', safeOcrErrorMetadata(error));
         visionError = error;
-        visionFailureMessage = visionUserMessage(error);
+        // Vision 칸의 키가 거부됐으면 상태를 남기고, 어느 칸의 키가 왜 거부됐는지 알린다.
+        visionFailureMessage = reportApiKeyRejection('vision', visionApiKey, error) || visionUserMessage(error);
     }
 
     const visionFailure = Object.assign(new Error(visionFailureMessage), {

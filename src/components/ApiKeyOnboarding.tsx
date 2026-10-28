@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
-import { ExternalLink, Eye, EyeOff, Key, Sparkles } from 'lucide-react';
+import { AlertTriangle, ArrowRightLeft, CircleCheck, CircleX, ExternalLink, Eye, EyeOff, Key, Loader2, Sparkles } from 'lucide-react';
+import { API_KEY_FORMAT_HINTS, API_KEY_SLOT_LABELS, checkKeyFormatForSlot, normalizeApiKeyInput } from '../config/apiKeyFormat';
+import { checkProviderConnection } from '../services/connectionCheck';
+import { recordApiKeyStatus } from '../services/apiKeyStatus';
 import {
     API_KEY_ONBOARDING_STORAGE_KEY,
     DEFAULT_AI_MODEL_LABELS,
@@ -57,6 +60,15 @@ export default function ApiKeyOnboarding() {
     });
     const [validationMessage, setValidationMessage] = useState('');
     const [saving, setSaving] = useState(false);
+    // 저장 직후 자동 연결 확인 결과. 하나라도 실패하면 창을 닫지 않고 결과를 보여 준다.
+    const [checkResults, setCheckResults] = useState<Partial<Record<AIProvider, { ok: boolean; message: string } | 'checking'>>>({});
+    const hasFailedCheck = Object.values(checkResults).some(result => result !== 'checking' && result && !result.ok);
+
+    /** 다른 제공업체 형식의 키를 알맞은 카드로 옮긴다. */
+    const moveKey = (from: AIProvider, to: AIProvider) => {
+        setKeys(current => ({ ...current, [to]: current[from], [from]: '' }));
+        setCheckResults(current => ({ ...current, [from]: undefined, [to]: undefined }));
+    };
 
     useEffect(() => {
         if (!loaded) return;
@@ -83,10 +95,18 @@ export default function ApiKeyOnboarding() {
 
     const handleSave = async () => {
         const normalizedKeys = Object.fromEntries(
-            Object.entries(keys).map(([provider, value]) => [provider, value.trim()]),
+            Object.entries(keys).map(([provider, value]) => [provider, normalizeApiKeyInput(value).value]),
         ) as Record<AIProvider, string>;
         if (!Object.values(normalizedKeys).some(Boolean)) {
             setValidationMessage('사용할 AI 서비스의 API 키를 하나 이상 입력해 주세요.');
+            return;
+        }
+        // 다른 제공업체 형식의 키가 들어간 칸이 있으면 저장 전에 고치게 한다(저장해도 동작하지 않는다).
+        const mismatched = (Object.keys(normalizedKeys) as AIProvider[])
+            .map(provider => ({ provider, verdict: checkKeyFormatForSlot(provider, normalizedKeys[provider]) }))
+            .find(item => item.verdict.status === 'mismatch');
+        if (mismatched && mismatched.verdict.status === 'mismatch') {
+            setValidationMessage(`${API_KEY_SLOT_LABELS[mismatched.provider]} 칸: ${mismatched.verdict.message} 카드 아래의 "옮기기"를 눌러 주세요.`);
             return;
         }
 
@@ -100,14 +120,45 @@ export default function ApiKeyOnboarding() {
                     apiKey: normalizedKeys[config.provider] || config.apiKey,
                 })),
             });
-            rememberChoice('completed');
-            setKeys({ ...EMPTY_KEYS });
-            setVisible(false);
         } catch {
             setValidationMessage('API 키를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.');
-        } finally {
             setSaving(false);
+            return;
         }
+        // 입력한 키만 바로 연결 확인한다(생성 요청 없음 — 비용·업무 내용 전송 없음).
+        const entered = (Object.keys(normalizedKeys) as AIProvider[]).filter(provider => normalizedKeys[provider]);
+        setCheckResults(Object.fromEntries(entered.map(provider => [provider, 'checking'])));
+        const results = await Promise.all(entered.map(async provider => {
+            const key = normalizedKeys[provider];
+            const model = settings.llmConfigs.find(config => config.provider === provider)?.model;
+            try {
+                const message = await checkProviderConnection(provider, key, { model });
+                void recordApiKeyStatus(provider, key, 'ok', message, 'auto-check');
+                return [provider, { ok: true, message }] as const;
+            } catch (error) {
+                const message = error instanceof Error && error.message ? error.message : '연결을 확인하지 못했습니다.';
+                const reason = (error as { reason?: string })?.reason;
+                if (reason !== 'network' && reason !== 'timeout') void recordApiKeyStatus(provider, key, 'failed', message, 'auto-check');
+                return [provider, { ok: false, message }] as const;
+            }
+        }));
+        setCheckResults(Object.fromEntries(results));
+        setSaving(false);
+        if (results.every(([, result]) => result.ok)) {
+            rememberChoice('completed');
+            setKeys({ ...EMPTY_KEYS });
+            setCheckResults({});
+            setVisible(false);
+        } else {
+            setValidationMessage('저장은 되었지만 연결 확인에 실패한 키가 있습니다. 아래 결과를 확인해 키를 고친 뒤 다시 저장하거나, 그대로 시작할 수 있습니다.');
+        }
+    };
+
+    const finishAnyway = () => {
+        rememberChoice('completed');
+        setKeys({ ...EMPTY_KEYS });
+        setCheckResults({});
+        setVisible(false);
     };
 
     if (!visible) return null;
@@ -169,6 +220,35 @@ export default function ApiKeyOnboarding() {
                                     {showKeys[card.provider] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                                 </button>
                             </div>
+                            {(() => {
+                                const verdict = checkKeyFormatForSlot(card.provider, normalizeApiKeyInput(keys[card.provider]).value);
+                                if (verdict.status === 'mismatch') {
+                                    const target = verdict.suggestedSlot as AIProvider;
+                                    return (
+                                        <div role="alert" data-testid={`onboarding-key-format-${card.provider}`} className="mt-2 rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                                            <p className="flex items-start gap-1.5"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{verdict.message}</p>
+                                            {target !== card.provider && (
+                                                <button type="button" onClick={() => moveKey(card.provider, target)} className="mt-1.5 inline-flex items-center gap-1 rounded-md border border-amber-300/40 px-2 py-0.5 font-semibold hover:bg-amber-400/20">
+                                                    <ArrowRightLeft className="h-3 w-3" /> {API_KEY_SLOT_LABELS[target]} 카드로 옮기기
+                                                </button>
+                                            )}
+                                        </div>
+                                    );
+                                }
+                                if (verdict.status === 'unknown') return <p className="mt-2 text-xs text-amber-200/80">{verdict.message}</p>;
+                                return <p className="mt-2 text-[11px] text-white/35">{API_KEY_FORMAT_HINTS[card.provider]}</p>;
+                            })()}
+                            {checkResults[card.provider] && (
+                                <p data-testid={`onboarding-key-check-${card.provider}`} role="status" className="mt-2 flex items-start gap-1.5 text-xs">
+                                    {checkResults[card.provider] === 'checking' ? (
+                                        <span className="inline-flex items-center gap-1.5 text-white/60"><Loader2 className="h-3.5 w-3.5 animate-spin" /> 연결 확인 중…</span>
+                                    ) : (checkResults[card.provider] as { ok: boolean }).ok ? (
+                                        <span className="inline-flex items-start gap-1.5 text-emerald-300"><CircleCheck className="mt-0.5 h-3.5 w-3.5 shrink-0" /> 연결 정상</span>
+                                    ) : (
+                                        <span className="inline-flex items-start gap-1.5 text-red-300"><CircleX className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {(checkResults[card.provider] as { message: string }).message}</span>
+                                    )}
+                                </p>
+                            )}
                             <a
                                 href={card.keyUrl}
                                 target="_blank"
@@ -200,8 +280,13 @@ export default function ApiKeyOnboarding() {
                     >
                         나중에 설정하기
                     </button>
+                    {hasFailedCheck && (
+                        <button type="button" className="btn-secondary px-5! py-2.5!" disabled={saving} onClick={finishAnyway}>
+                            확인 결과와 관계없이 시작
+                        </button>
+                    )}
                     <button type="button" className="btn-primary px-5! py-2.5! disabled:opacity-50" disabled={saving} onClick={() => void handleSave()}>
-                        {saving ? '저장 중…' : '저장하고 시작하기'}
+                        {saving ? '저장·연결 확인 중…' : hasFailedCheck ? '고친 키로 다시 저장' : '저장하고 시작하기'}
                     </button>
                 </div>
             </div>
