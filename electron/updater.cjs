@@ -53,15 +53,16 @@ function userMessageFor(error) {
  * 설치 직전 저장소 사본. IndexedDB 폴더를 userData/update-backups/<버전>-<시각>/IndexedDB로 복사한다.
  * LevelDB의 LOCK 파일은 실행 중 잠겨 있어 건너뛴다. 실패해도 설치는 막지 않고 기록만 한다.
  */
-async function copyLocalDataForUpdate({ fs, path, userDataPath, version, now = new Date() }) {
+async function copyLocalDataForUpdate({ fs, path, userDataPath, version, now = new Date(), folderName = 'update-backups' }) {
     const source = path.join(userDataPath, 'IndexedDB');
     try {
         await fs.promises.access(source);
     } catch {
         return null;
     }
+    if (!/^[a-z-]+$/.test(folderName)) throw new Error('사본 폴더 이름이 올바르지 않습니다.');
     const stamp = now.toISOString().replace(/[:.]/g, '-');
-    const root = path.join(userDataPath, 'update-backups');
+    const root = path.join(userDataPath, folderName);
     const target = path.join(root, `${String(version).replace(/[^0-9A-Za-z.-]/g, '_')}-${stamp}`, 'IndexedDB');
     await fs.promises.mkdir(path.dirname(target), { recursive: true });
     await fs.promises.cp(source, target, {

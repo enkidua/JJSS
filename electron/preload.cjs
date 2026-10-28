@@ -31,6 +31,34 @@ contextBridge.exposeInMainWorld('jjssUpdates', Object.freeze({
 
 // 저장 데이터 암호화 키(운영체제 보안 저장소: Windows DPAPI, macOS Keychain으로 보호). 사용할 수 없으면 null을 돌려준다.
 // getStatus는 보안 저장소 사용 가능 여부·배포용(패키징) 여부·플랫폼만 알려 준다(경로·키 값 없음).
+// 공유 저장소(기관 공유 드라이브). 결과는 { ok, value } 또는 { ok: false, error }로 온다(렌더러가 풀어 쓴다).
+// 토큰·클라이언트 보안 비밀은 main 프로세스에만 있고 여기로 오지 않는다.
+const driveCall = channel => (...args) => ipcRenderer.invoke(channel, ...args);
+contextBridge.exposeInMainWorld('jjssDrive', Object.freeze({
+    getStatus: driveCall('jjss-drive:get-status'),
+    configure: driveCall('jjss-drive:configure'),
+    signIn: driveCall('jjss-drive:sign-in'),
+    signOut: driveCall('jjss-drive:sign-out'),
+    listSharedDrives: driveCall('jjss-drive:list-shared-drives'),
+    selectDrive: driveCall('jjss-drive:select-drive'),
+    securityFacts: driveCall('jjss-drive:security-facts'),
+    listRecords: driveCall('jjss-drive:list-records'),
+    getStartPageToken: driveCall('jjss-drive:get-start-token'),
+    listChanges: driveCall('jjss-drive:list-changes'),
+    getFile: driveCall('jjss-drive:get-file'),
+    download: driveCall('jjss-drive:download'),
+    upload: input => ipcRenderer.invoke('jjss-drive:upload', {
+        ...input,
+        content: input?.content instanceof Uint8Array ? input.content : new Uint8Array(input?.content || []),
+    }),
+    setProperties: driveCall('jjss-drive:set-properties'),
+    findMeta: driveCall('jjss-drive:find-meta'),
+    setOrgKey: driveCall('jjss-drive:set-org-key'),
+    getOrgKey: driveCall('jjss-drive:get-org-key'),
+    setEnabled: driveCall('jjss-drive:set-enabled'),
+    backupLocalData: driveCall('jjss-drive:backup-local-data'),
+}));
+
 contextBridge.exposeInMainWorld('jjssSecure', Object.freeze({
     getDataKey: () => ipcRenderer.invoke('jjss-secure:get-data-key'),
     getStatus: () => ipcRenderer.invoke('jjss-secure:get-status'),

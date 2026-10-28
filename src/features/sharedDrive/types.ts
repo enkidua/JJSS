@@ -75,6 +75,8 @@ export interface DriveSecurityFacts {
         driveMembersOnly?: boolean;
     };
     permissions: Array<{ type: 'user' | 'group' | 'domain' | 'anyone'; emailAddress?: string; domain?: string; role?: string }>;
+    /** 이 계정으로 구성원 목록을 볼 수 있었는가(관리자 권한이 없으면 볼 수 없다) */
+    permissionsVisible?: boolean;
     accountEmail: string;
     accountIsMember: boolean;
 }

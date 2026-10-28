@@ -5,7 +5,8 @@ const { getAllowedExternalUrl } = require('./externalUrl.cjs');
 const { cleanupStalePdfTempFiles, ensureJjssFolders, registerJjssFileIpc, validateSender } = require('./fileService.cjs');
 const { registerDataKeyIpc } = require('./dataKey.cjs');
 const { initMainLog, logMainError, logMainEvent, safeToken } = require('./mainLog.cjs');
-const { createUpdateService } = require('./updater.cjs');
+const { createUpdateService, copyLocalDataForUpdate } = require('./updater.cjs');
+const { createDriveService } = require('./googleDrive.cjs');
 
 const INDEX_PATH = path.join(__dirname, '..', 'dist', 'index.html');
 const CRASH_RELAUNCH_ARG = '--jjss-crash-relaunch';
@@ -222,6 +223,14 @@ if (!hasSingleInstanceLock) {
             : null);
         registerJjssFileIpc({ app, ipcMain, dialog, shell, BrowserWindow, expectedIndexPath: INDEX_PATH });
         registerDataKeyIpc({ app, ipcMain, safeStorage, expectedIndexPath: INDEX_PATH });
+        // 공유 저장소(기관 공유 드라이브): 사용자가 설정에서 켜기 전에는 구글에 아무 요청도 하지 않는다.
+        createDriveService({
+            app, ipcMain, shell, safeStorage,
+            fs: require('fs'), path, http: require('http'), crypto: require('crypto'),
+            validateSender, expectedIndexPath: INDEX_PATH,
+            logMainError,
+            copyLocalData: copyLocalDataForUpdate,
+        }).register();
         // 새 PDF 작업이 시작되기 전에 이전 실행의 임시 파일 정리를 끝낸다.
         await cleanupStalePdfTempFiles(app).catch(error => {
             logMainError('pdf-temp-cleanup-failed', error);

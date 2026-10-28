@@ -42,6 +42,12 @@ export function evaluateDriveSecurity(facts: DriveSecurityFacts, orgDomain: stri
         '이 계정이 공유 드라이브 구성원',
         facts.accountIsMember ? '구성원입니다.' : '이 계정은 공유 드라이브 구성원이 아닙니다. 관리자에게 구성원 추가를 요청해 주세요.');
 
+    if (facts.permissionsVisible === false) {
+        add('members-visible', 'warn',
+            '구성원 목록 확인',
+            '이 계정은 공유 드라이브 구성원 목록을 볼 권한이 없어 링크 공유·기관 밖 구성원을 확인하지 못했습니다. 공유 드라이브 관리자 계정으로 한 번 점검해 주세요.');
+    }
+
     const anyone = facts.permissions.filter(permission => permission.type === 'anyone');
     add('no-link-sharing', anyone.length ? 'block' : 'pass',
         '링크 공유(누구나) 꺼짐',

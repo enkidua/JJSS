@@ -49,7 +49,8 @@ async function check(platform, loadFails, cleanupFails = false) {
         process: { platform, argv: [], uptime: () => 60, on() {} },
         require(name) {
             if (name === 'electron') return electron;
-            if (name === 'path' || name === 'url') return require(name);
+            if (name === 'path' || name === 'url' || name === 'fs' || name === 'http' || name === 'crypto') return require(name);
+            if (name === './googleDrive.cjs') return { createDriveService: () => ({ register() { sequence.push('drive-ipc'); } }) };
             if (name === './externalUrl.cjs') return { getAllowedExternalUrl: () => null };
             if (name === './fileService.cjs') return {
                 registerJjssFileIpc() {}, ensureJjssFolders: async () => {}, validateSender() {},
@@ -71,7 +72,7 @@ async function check(platform, loadFails, cleanupFails = false) {
     });
     await ready;
     await Promise.resolve();
-    assert.deepEqual(sequence, ['cleanup-start', 'cleanup-end', 'window']);
+    assert.deepEqual(sequence, ['drive-ipc', 'cleanup-start', 'cleanup-end', 'window']);
     if (platform === 'darwin') assert.equal(JSON.stringify(menu), JSON.stringify([{ role: 'appMenu' }, { role: 'editMenu' }]));
     else assert.equal(menu, null);
     assert.equal(dialogs, loadFails ? 1 : 0);

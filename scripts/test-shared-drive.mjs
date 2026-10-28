@@ -360,6 +360,47 @@ await test('위조 방어: 기관 키 없이 파일 속성만 고친 삭제·버
     await X.engine.push();
     await Y.engine.pull();
     assert.equal(Y.local.stores.caseDocuments.has('d2'), false);
+
+    // 6) 예전 암호문 + 예전 버전 그대로(되돌리기): 받는 PC는 이미 본 버전이라 무시, 올리는 PC는 덮지 않고 격리
+    const s1File = fileOf('seekers:s1');
+    const s1Version = s1File.appProperties.version;
+    const s1Content = new Uint8Array(s1File.content);
+    await X.local.appPut('seekers', { ...X.local.stores.seekers.get('s1'), phone: '010-8888-8888' });
+    await X.engine.push();
+    await Y.engine.pull();
+    s1File.content = s1Content;
+    await forged.api.setProperties(s1File.id, { version: s1Version });
+    const rolledBack = await Y.engine.pull();
+    assert.equal(rolledBack.applied, 0);
+    assert.equal(Y.local.stores.seekers.get('s1').phone, '010-8888-8888', '예전 버전으로 되돌아가지 않음');
+    await Y.local.appPut('seekers', { ...Y.local.stores.seekers.get('s1'), organization: 'org2' });
+    const pushRollback = await Y.engine.push();
+    assert.equal(pushRollback.uploaded, 0, '되돌린 파일 위에 덮지 않음');
+    assert.ok((await Y.engine.quarantined()).includes('seekers:s1'));
+
+    // 7) 비정상 버전(아주 큰 수·숫자 아님)은 격리
+    await forged.api.setProperties(fileOf('caseDocuments:d1').id, { version: '99999999999' });
+    assert.equal((await Y.engine.pull()).quarantined, 1);
+    await forged.api.setProperties(fileOf('caseDocuments:d1').id, { version: '1e3' });
+    assert.equal((await Y.engine.pull()).quarantined, 1);
+
+    // 8) 키 확인 표식을 바꿔치기(교체 증명 없음): 동기화를 세우지 않고 격리, 관리자 확인 표시
+    const marker = forged.rawFiles().find(file => file.folder === 'meta' && file.name === KEY_CHECK_META_NAME);
+    marker.content = new Uint8Array([1, 2, 3]);
+    await forged.api.setProperties(fileOf('seekers:s2').id, { keyId: 'eeeeeeeeeeeeeeee', version: '60' });
+    const tampered = await Y.engine.pull();
+    assert.equal(tampered.needsNewKey, false);
+    assert.equal(tampered.keyCheckTampered, true);
+    assert.equal(await Y.engine.keyStatus(), 'tampered');
+    await X.local.appPut('caseDocuments', doc('d3', 's2', '표식 위조 뒤 기록'));
+    await X.engine.push();
+    await Y.engine.pull();
+    assert.ok(Y.local.stores.caseDocuments.has('d3'), '표식이 위조돼도 정상 변경은 계속 받는다');
+
+    // 9) 틀린 키 코드로 adoptKey를 시도해도 지금 키는 그대로
+    const before = Y.engine.keyId;
+    await assert.rejects(Y.engine.adoptKey(await orgKey.deriveOrgKey(orgKey.generateOrgSecret())), /맞지 않습니다/);
+    assert.equal(Y.engine.keyId, before);
 });
 
 await test('상태 저장소(IndexedDB): 올리는 사이 새로 찍힌 대기 표지는 지우지 않고, 충돌 사본은 암호화해 둔다', async () => {
