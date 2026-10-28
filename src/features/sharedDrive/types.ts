@@ -128,6 +128,8 @@ export interface SyncMeta {
     lastPullAt?: string;
     lastPushAt?: string;
     lastSecurityCheckAt?: string;
+    /** 열지 못해(위조·손상·모르는 키) 격리한 드라이브 레코드 id. 관리자가 확인한다. */
+    quarantined?: string[];
 }
 
 export interface SyncStateStore {

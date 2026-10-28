@@ -303,6 +303,65 @@ await test('기관 키 바꾸기: 전체 재암호화 → 다른 PC는 새 키�
     assert.equal(B.local.stores.seekers.get('s1').phone, '010-3333-3333');
 });
 
+await test('위조 방어: 기관 키 없이 파일 속성만 고친 삭제·버전·키 표시는 적용하지 않고 격리, 동기화는 멈추지 않음', async () => {
+    const forged = createFakeSharedDrive();
+    const X = await makePc(forged, secret, `kim@${DOMAIN}`);
+    const Y = await makePc(forged, secret, `lee@${DOMAIN}`);
+    for (const record of [seeker('s1', '가온해'), seeker('s2', '나래솔')]) X.local.stores.seekers.set(record.id, record);
+    X.local.stores.caseDocuments.set('d1', doc('d1', 's1', '첫 기록'));
+    await X.engine.ensureKeyCheck();
+    await X.engine.initialSync();
+    await Y.engine.initialSync();
+    const fileOf = rid => forged.rawFiles().find(file => file.appProperties.rid === rid);
+
+    // 1) 묘비 위조: 속성만 deleted=1, 버전을 높임 → Y의 자료는 그대로, 격리
+    await forged.api.setProperties(fileOf('seekers:s1').id, { deleted: '1', version: '99', hash: '' });
+    const first = await Y.engine.pull();
+    assert.ok(Y.local.stores.seekers.has('s1'), '속성만 바꾼 삭제로 이 PC 자료를 지우지 않음');
+    assert.equal(first.quarantined, 1);
+    assert.equal(first.needsNewKey, false);
+    assert.deepEqual(await Y.engine.quarantined(), ['seekers:s1']);
+
+    // 2) 되돌리기(재생) 위조: 예전 암호문을 다시 넣고 버전 숫자만 올림 → 격리
+    const oldContent = new Uint8Array(fileOf('caseDocuments:d1').content);
+    await X.local.appPut('caseDocuments', { ...X.local.stores.caseDocuments.get('d1'), content: '고친 기록' });
+    await X.engine.push();
+    await Y.engine.pull();
+    assert.equal(Y.local.stores.caseDocuments.get('d1').content, '고친 기록');
+    fileOf('caseDocuments:d1').content = oldContent;
+    await forged.api.setProperties(fileOf('caseDocuments:d1').id, { version: '7' });
+    const replay = await Y.engine.pull();
+    assert.equal(replay.quarantined, 1);
+    assert.equal(Y.local.stores.caseDocuments.get('d1').content, '고친 기록', '예전 내용으로 되돌아가지 않음');
+
+    // 3) 키 표시 위조: keyId만 바꿈 → 키 확인 표식은 이 키로 열리므로 "새 키 필요"로 멈추지 않고 격리, 토큰은 넘어감
+    await forged.api.setProperties(fileOf('seekers:s2').id, { keyId: 'ffffffffffffffff', version: '50' });
+    const fakeKey = await Y.engine.pull();
+    assert.equal(fakeKey.needsNewKey, false, '속성만 바꾼 keyId로 동기화를 세우지 않음');
+    assert.equal(fakeKey.quarantined, 1);
+    await X.local.appPut('caseDocuments', doc('d2', 's2', '이후 기록'));
+    await X.engine.push();
+    const after = await Y.engine.pull();
+    assert.equal(after.applied, 1, '위조 파일 뒤의 정상 변경은 계속 받는다');
+    assert.ok(Y.local.stores.caseDocuments.has('d2'));
+
+    // 4) 위조된 파일 위에는 덮어쓰지 않는다(올리기도 격리) → 관리자가 확인 후 이 PC 기록으로 복구
+    await X.local.appPut('seekers', { ...X.local.stores.seekers.get('s1'), phone: '010-7777-7777' });
+    const blocked = await X.engine.push();
+    assert.equal(blocked.uploaded, 0);
+    assert.ok((await X.engine.quarantined()).includes('seekers:s1'));
+    assert.equal(await X.engine.restoreQuarantined('seekers:s1'), 'restored');
+    assert.equal(await X.engine.restoreQuarantined('seekers:none'), 'dismissed');
+    await Y.engine.pull();
+    assert.equal(Y.local.stores.seekers.get('s1').phone, '010-7777-7777', '복구한 기록이 다른 PC로 전파');
+
+    // 5) 진짜 삭제(기관 키로 봉인한 묘비)는 그대로 전파
+    await X.local.appDelete('caseDocuments', 'd2');
+    await X.engine.push();
+    await Y.engine.pull();
+    assert.equal(Y.local.stores.caseDocuments.has('d2'), false);
+});
+
 await test('상태 저장소(IndexedDB): 올리는 사이 새로 찍힌 대기 표지는 지우지 않고, 충돌 사본은 암호화해 둔다', async () => {
     globalThis.indexedDB = createFakeIndexedDB().indexedDB;
     const sealedValues = [];
