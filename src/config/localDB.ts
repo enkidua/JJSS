@@ -172,6 +172,52 @@ export interface DataRecoveryStatus {
 const unreadableFieldKeys = new Set<string>();
 let dataKeyUnavailableSeen = false;
 
+/**
+ * 이 store에서 복호화하지 못한 필드가 있었던 레코드 id. 공유 저장소에 올릴 때 깨진 데이터를 퍼뜨리지 않으려고 쓴다.
+ * (이번 실행에서 읽기를 시도해 실패한 것만 안다.)
+ */
+export function listUnreadableRecordIds(storeName: StoreName): string[] {
+    const prefix = `${storeName}:`;
+    const ids = new Set<string>();
+    for (const key of unreadableFieldKeys) {
+        if (!key.startsWith(prefix)) continue;
+        const id = key.slice(prefix.length).split(':')[0];
+        if (id && id !== '?') ids.add(id);
+    }
+    return [...ids];
+}
+
+// ─── 로컬 변경 알림(공유 저장소 동기화용) ───
+//
+// 앱 화면이 저장·삭제한 레코드를 동기화 모듈이 알 수 있게 한다. 동기화가 받아 온 변경(origin 'sync')도
+// 알리되 origin으로 구분해, 받아 온 것을 다시 올리지 않게 한다. 복원(importAllData)은 알리지 않는다 —
+// 복원 뒤에는 저장소가 봉인되고, 다시 불러온 첫 화면에서 동기화가 "복원본/드라이브 중 어느 쪽 기준"을 묻는다.
+
+export type LocalMutationOrigin = 'app' | 'sync';
+export interface LocalMutation {
+    store: StoreName;
+    ids: string[];
+    kind: 'put' | 'delete';
+    origin: LocalMutationOrigin;
+}
+type LocalMutationListener = (mutation: LocalMutation) => void;
+const mutationListeners = new Set<LocalMutationListener>();
+
+export function onLocalMutation(listener: LocalMutationListener): () => void {
+    mutationListeners.add(listener);
+    return () => mutationListeners.delete(listener);
+}
+
+function emitLocalMutation(mutation: LocalMutation): void {
+    for (const listener of mutationListeners) {
+        try {
+            listener(mutation);
+        } catch {
+            // 알림을 받는 쪽의 오류가 저장 자체를 실패로 만들지 않게 한다.
+        }
+    }
+}
+
 export function getDataRecoveryStatus(): DataRecoveryStatus {
     return { unreadableCount: unreadableFieldKeys.size, dataKeyUnavailable: dataKeyUnavailableSeen };
 }
@@ -435,11 +481,37 @@ export async function addDoc<T extends { id?: string }>(
     storeName: StoreName,
     data: T,
 ): Promise<T & { id: string }> {
+    const saved = await putDocument(storeName, data);
+    emitLocalMutation({ store: storeName, ids: [saved.id], kind: 'put', origin: 'app' });
+    return saved;
+}
+
+/**
+ * 공유 저장소에서 받아 온 레코드를 그대로 저장한다(평문 레코드 → 이 PC의 필드 암호화로 저장).
+ * 받아 온 변경을 다시 올리지 않도록 origin 'sync'로 알린다.
+ */
+export async function putFromSync<T extends { id: string }>(storeName: StoreName, data: T): Promise<void> {
+    await putDocument(storeName, data, true);
+    emitLocalMutation({ store: storeName, ids: [data.id], kind: 'put', origin: 'sync' });
+}
+
+/** 공유 저장소에서 삭제 표시(묘비)된 레코드를 이 PC에서도 지운다. */
+export async function deleteFromSync(storeName: StoreName, id: string): Promise<void> {
+    await deleteDocument(storeName, id);
+    emitLocalMutation({ store: storeName, ids: [id], kind: 'delete', origin: 'sync' });
+}
+
+async function putDocument<T extends { id?: string }>(
+    storeName: StoreName,
+    data: T,
+    replaceWhole = false,
+): Promise<T & { id: string }> {
     const generation = mutationGeneration();
     const db = await openDB();
     const doc = { ...data, id: data.id || generateId() } as T & { id: string };
     let source: Record<string, any> = doc;
-    if (data.id && hasSensitivePolicy(storeName)) {
+    // 동기화로 받은 레코드는 내용 전체를 새로 쓴다(기존 암호문 보존 규칙은 같은 PC 안의 부분 저장용).
+    if (data.id && hasSensitivePolicy(storeName) && !replaceWhole) {
         const stored = await getRawById<Record<string, any>>(storeName, data.id);
         source = (await prepareSensitivePatch(storeName, stored, doc, false)).patch;
     }
@@ -493,7 +565,7 @@ export async function updateDoc<T extends { id?: string }>(
     }
     const encryptedData = await encryptSensitiveFields(storeName, patch);
     assertMutationAllowed(generation);
-    return new Promise((resolve, reject) => {
+    return new Promise<void>((resolve, reject) => {
         const tx = db.transaction(storeName, 'readwrite');
         const store = tx.objectStore(storeName);
         const request = store.get(id);
@@ -523,11 +595,18 @@ export async function updateDoc<T extends { id?: string }>(
             requestError = request.error;
             tx.abort();
         };
+    }).then(() => {
+        emitLocalMutation({ store: storeName, ids: [id], kind: 'put', origin: 'app' });
     });
 }
 
 /** 문서 삭제 */
 export async function deleteDoc(storeName: StoreName, id: string): Promise<void> {
+    await deleteDocument(storeName, id);
+    emitLocalMutation({ store: storeName, ids: [id], kind: 'delete', origin: 'app' });
+}
+
+async function deleteDocument(storeName: StoreName, id: string): Promise<void> {
     const generation = mutationGeneration();
     const db = await openDB();
     assertMutationAllowed(generation);
@@ -558,6 +637,8 @@ export async function deleteSeekerWithDocuments(seekerId: string, documentIds: s
         request.onerror = () => tx.abort();
     }
     await transactionDone(tx, '이용자와 사례문서를 삭제하는 중 오류가 발생했습니다. 아무것도 삭제하지 않았습니다.');
+    emitLocalMutation({ store: 'seekers', ids: [seekerId], kind: 'delete', origin: 'app' });
+    if (documentIds.length) emitLocalMutation({ store: 'caseDocuments', ids: [...documentIds], kind: 'delete', origin: 'app' });
 }
 
 /** 여러 문서를 한 번에 삭제 (모두 삭제되거나 하나도 삭제되지 않음) */
@@ -573,6 +654,7 @@ export async function deleteDocs(storeName: StoreName, ids: string[]): Promise<v
         request.onerror = () => tx.abort();
     }
     await transactionDone(tx, '문서 삭제 중 오류가 발생했습니다.');
+    emitLocalMutation({ store: storeName, ids: [...ids], kind: 'delete', origin: 'app' });
 }
 
 // ─── 저장 데이터 일괄 재암호화 (at-rest migration) ───

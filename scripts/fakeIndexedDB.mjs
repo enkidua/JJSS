@@ -78,8 +78,9 @@ export function createFakeIndexedDB() {
                 getAll: () => this.request(() => [...store.values()].map(value => structuredClone(value))),
                 put: value => this.request(() => {
                     writes += 1;
-                    store.set(value.id, structuredClone(value));
-                    return value.id;
+                    const keyPath = this.data.keyPaths?.get(name) || 'id';
+                    store.set(value[keyPath], structuredClone(value));
+                    return value[keyPath];
                 }),
                 delete: id => this.request(() => { writes += 1; store.delete(id); }),
                 clear: () => this.request(() => { writes += 1; store.clear(); }),
@@ -98,8 +99,11 @@ export function createFakeIndexedDB() {
             name,
             get version() { return data.version; },
             objectStoreNames: { contains: storeName => data.stores.has(storeName) },
-            createObjectStore(storeName) {
+            createObjectStore(storeName, options = {}) {
                 if (!data.stores.has(storeName)) data.stores.set(storeName, new Map());
+                // keyPath를 기억한다(기본 'id'). 동기화 상태 저장소는 'rid'를 쓴다.
+                data.keyPaths = data.keyPaths || new Map();
+                data.keyPaths.set(storeName, options.keyPath || 'id');
             },
             transaction(storeName) {
                 return new FakeTransaction(data);
