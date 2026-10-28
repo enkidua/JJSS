@@ -96,7 +96,7 @@ async function runScenario({ name, installerFile, expectPhase, expectMessage }) 
 
 (async () => {
     assert.equal(process.platform, 'win32', 'Windows에서 실행');
-    const installer = path.join(release, `JJSS Setup ${pkg.version}.exe`);
+    const installer = path.join(release, `JJSS-Setup-${pkg.version}.exe`);
     assert.ok(fs.existsSync(installer), `서명된 설치파일이 필요합니다: ${installer}`);
     assert.ok(fs.existsSync(path.join(release, 'win-unpacked', 'resources', 'app-update.yml')), 'release/win-unpacked가 필요합니다(서명 빌드 직후 실행)');
     const before = realUserDataStamp();

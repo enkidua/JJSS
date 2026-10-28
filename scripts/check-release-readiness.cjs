@@ -124,6 +124,9 @@ try {
     // 업데이트 설치파일의 서명자를 고정한다. 없으면 서명 없이 만든 빌드의 업데이터가 서명을 확인하지 않는다.
     const pinnedPublishers = [].concat(win.signtoolOptions?.publisherName || []);
     check('업데이트 서명자 고정(win.signtoolOptions.publisherName=JJSS)', pinnedPublishers.includes('JJSS') && win.verifyUpdateCodeSignature !== false, `publisherName=${JSON.stringify(pinnedPublishers)}, verifyUpdateCodeSignature=${String(win.verifyUpdateCodeSignature)}`);
+    // GitHub는 올린 파일 이름의 공백을 점으로 바꾼다. latest.yml의 파일 이름(공백→하이픈)과 어긋나면 업데이트를 못 받는다.
+    const nsisArtifact = String(packageJson.build?.nsis?.artifactName || '');
+    check('Windows 설치파일 이름에 공백 없음(업데이트 주소 일치)', Boolean(nsisArtifact) && !/\s/.test(nsisArtifact), nsisArtifact || 'nsis.artifactName 없음(기본값은 공백 포함)');
     check('빌드 스크립트가 자동 게시하지 않음(--publish never)', builderScripts.length > 0 && autoPublishing.length === 0, autoPublishing.length ? autoPublishing.map(([name]) => name).join(', ') : `${builderScripts.length}개 스크립트`);
 
     const electronRequires = findElectronRuntimeRequires();
