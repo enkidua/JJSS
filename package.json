@@ -128,7 +128,8 @@
             "shortcutName": "JJSS",
             "uninstallDisplayName": "JJSS",
             "deleteAppDataOnUninstall": false,
-            "createStartMenuShortcut": true
+            "createStartMenuShortcut": true,
+            "artifactName": "JJSS-Setup-${version}.${ext}"
         }
     },
     "devDependencies": {

@@ -6,8 +6,10 @@ JJSS 3.2부터 설치본이 GitHub `enkidua/JJSS`의 **공개 Releases**에서 �
 
 | 운영체제 | 파일 | 비고 |
 |---|---|---|
-| Windows | `JJSS Setup <버전>.exe`, `JJSS Setup <버전>.exe.blockmap`, `latest.yml` | `npm run electron:build:win:signed` 결과(`release/`) |
+| Windows | `JJSS-Setup-<버전>.exe`, `JJSS-Setup-<버전>.exe.blockmap`, `latest.yml` | `npm run electron:build:win:signed` 결과(`release/`) |
 | macOS | `JJSS-<버전>-arm64.dmg`, `JJSS-<버전>-arm64-mac.zip`, `latest-mac.yml` | GitHub Actions "Build macOS (Apple Silicon)" 결과 |
+
+파일 이름을 바꾸지 말고 그대로 올립니다. `latest.yml` 안의 파일 이름과 다르면(예: 공백이 든 이름은 GitHub가 점으로 바꿈) 설치본이 새 버전을 내려받지 못합니다. 3.2부터 설치파일 이름에 공백이 없습니다.
 
 `latest.yml`·`latest-mac.yml`이 빠지면 설치본은 "게시된 업데이트 정보를 찾지 못했습니다"로 끝나고 아무것도 하지 않습니다.
 
