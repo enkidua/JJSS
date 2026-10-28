@@ -226,3 +226,26 @@
 **검증:** `verify:release` 전체 실행에서 브라우저 시나리오 하나(직업평가 우세손 "오른손" 버튼)가 애니메이션 중 클릭 타이밍으로 한 번 실패했고(요소가 안정되기 전 클릭 → 재시도 중 DOM 교체), 같은 코드로 `test:usability`만 다시 돌려 24개 시나리오 전부 통과했다. 그 밖의 단계(타입 검사·test:all·data-at-rest·build·check:build·test:electron-pdfjs)는 모두 exit 0. 같은 날 Tailwind 4 적용 직후 돌린 usability도 전부 통과했으므로 타이밍 문제로 판단한다(이 시나리오는 reducedMotion 없이 실행된다 — 추후 안정화 대상).
 서명 설치파일(17차 반영, Electron 44): `release/JJSS Setup 3.1.0.exe`(182,591,176 bytes — Electron 44 런타임이 커져 16차보다 약 34MB 증가), SHA256 `07BCAD4FEE1BCD813CF19508AE03A02EEA991B8AF26DF644BDA38BD56BA023B7`. 설치파일·`JJSS-Pro.exe`·`elevate.exe` Authenticode Valid(CN=JJSS, 타임스탬프 포함), 서명 재시도 없음. `win-unpacked`·`builder-debug.yml`은 지웠다. macOS DMG는 사용자 승인에 따라 작업 브랜치를 GitHub에 올려 `Build macOS (Apple Silicon)` 워크플로로 만든다(아래에 결과 추가).
 **macOS DMG(17차 반영):** 작업 브랜치 `codex/jjss-v3-stabilization` 커밋 `88c7777`을 GitHub에 올리고 `Build macOS (Apple Silicon)` 워크플로를 수동 실행했다(run 37214379396, macos-14, 3분 51초, 성공). 러너에서 `npm ci` → 타입 검사 → `test:all` → `electron:build:mac`(ad-hoc 서명) → `verify-mac-dmg.cjs`(hdiutil 검증, 꺼낸 앱의 중첩 서명 strict 검증, arm64 실행 확인) 순서로 통과했다. 결과물 `release/mac-build-20261005-88c7777/`: `JJSS-3.1.0-arm64.dmg`(196,475,743 bytes) SHA256 `2cb27de2eb5b9950e4e482ff177d0b4a76cd9a1b00c2c5c45e326329be287fb5`, `JJSS-3.1.0-arm64-mac.zip`(190,771,474 bytes) SHA256 `16393cd02dceb4614dfd0462b528f3ede8d6461cfb3128f723b194968500fccc` — 러너가 기록한 SHA256SUMS.txt와 내려받은 파일을 다시 계산한 값이 일치한다. Apple Developer ID·공증은 없으므로 첫 실행 안내는 `docs/MAC_BUILD.md`를 따른다.
+
+## 18차 점검 · 3.2(API 키 오류 표시·자동 업데이트)와 공유 저장소 (2026-10-29)
+
+계획서 `docs/2026-10-29-auto-update-shared-storage-api-key-plan.md`의 세 항목을 구현했다. C·A는 3.2 배포 브랜치 `codex/jjss-v3-stabilization`, B(공유 저장소)는 계획대로 별도 브랜치 `codex/shared-drive-sync`(3.2 위에 쌓음)에 있다.
+
+**C. API 키 오류 표시(8b19eb5):** 붙여 넣은 키를 정리(따옴표·Bearer·`NAME_KEY=` 제거)하고 형식으로 제공업체를 판별해, 다른 칸에 넣은 키(예: OpenAI 칸의 Gemini 키)는 바로 경고하고 "○○ 칸으로 옮기기"를 보여 준다. 저장 직후 연결을 자동 확인해 칸마다 확인됨·실패·미확인을 표시한다(키 원문 대신 SHA-256 지문으로 기억, 네트워크 오류는 실패로 기록하지 않음). AI 요청 중 키가 거부되면 해당 칸 안내와 설정 바로가기를 띄운다(30초에 한 번).
+
+**A. 자동 업데이트(6e8e5c5·8d08856·737d662):** electron-updater로 GitHub `enkidua/JJSS` 공개 Releases를 켜고 10초 뒤·6시간마다 확인한다. 알림만 하고 내려받기·설치는 사용자가 누를 때만. 설치 직전 저장소 사본(update-backups, 최근 2개). Windows는 내려받은 설치파일이 같은 서명자(JJSS)여야 설치되며, 서명자가 고정되지 않은 빌드는 업데이터를 끈다(보안 검토 반영). macOS는 공증 전까지 내려받기 페이지 안내만. 빌드는 게시하지 않는다(`--publish never`).
+- **이번에 찾아 고친 배포 결함:** 설치파일 이름 `JJSS Setup 3.2.0.exe`는 GitHub에 올리면 공백이 점으로 바뀌어(`JJSS.Setup.3.2.0.exe`) `latest.yml`이 가리키는 `JJSS-Setup-3.2.0.exe`와 어긋나 업데이트를 내려받지 못한다. `nsis.artifactName`을 `JJSS-Setup-${version}.${ext}`로 정하고 릴리즈 준비 검사에 "설치파일 이름에 공백 없음"을 넣었다. 실행파일 이름(JJSS-Pro)·설치 경로·앱 id는 그대로다.
+
+**B. 공유 저장소(codex/shared-drive-sync, a01dd63~9920631):** 기관 Google Workspace 공유 드라이브 한 곳에 사례관리 기록(이용자·caseDocuments)을 레코드당 파일 하나로 암호화해 두고 여러 PC가 함께 쓴다. 기본 꺼짐이며 끈 상태에서는 구글 요청 0건.
+- 기관 키(128비트, 28자 코드) → HKDF로 AES-256-GCM·HMAC 키. 레코드 id·키 id를 인증 데이터로 묶는다. 파일 속성에는 id·버전·시각·수정자·지문만.
+- 오프라인 우선(올릴 목록), 변경 목록 토큰으로 바뀐 것만 받기, 낙관적 잠금 충돌은 사용자가 고름, 삭제는 봉인한 묘비로만 전파(드라이브에서 지워도 다른 PC 자료는 지우지 않음), 편집 중 표시(30분), 키 교체.
+- main 프로세스(`electron/googleDrive.cjs`): 시스템 브라우저·루프백·PKCE 로그인, 기관 도메인(hd·메일) 확인, 토큰·보안 비밀·기관 키는 safeStorage로 암호화(없으면 저장 거부), 고른 공유 드라이브 밖 파일 거부, 429·5xx 재시도, 요청 출처 검사. 토큰은 화면으로 오지 않는다.
+- 설정 마법사: 안내·동의 → 관리자 설정 → 로그인 → 공유 드라이브 → 보안 점검(링크 공유·기관 밖 구성원·개인 드라이브·다른 도메인은 차단) → 기관 키(생성 후 끝 4자 확인 / 입력 후 드라이브와 대조) → **기존 자료 올리기**(사본 → 올리기·받기·합치기 → 드라이브와 같은지 검증, 읽지 못한 기록은 올리지 않음, 끊기면 이어서) → 켜기. 켠 뒤 상태·충돌·격리·같은 사람으로 보이는 이용자 합치기·복원 뒤 기준 고르기·키 보기/바꾸기, 화면 오른쪽 아래 상태 표시, 직업평가·지원고용 회차의 "편집 중" 표시.
+- **자동 보안 검토 지적 반영(2회):** 처음 구현은 삭제·버전·키 교체를 평문 파일 속성으로 판단해, 기관 키 없는 드라이브 구성원이 속성만 고쳐 다른 PC 자료를 지우거나 동기화를 세울 수 있었다. 삭제 여부·버전을 암호화 봉투 안에 넣고 속성과 다르면 격리, 이 PC가 본 버전보다 낮으면 격리(되돌리기), 버전 형식·상한 검사, 키 교체는 옛 키로 봉인한 교체 증명이 있을 때만 "새 키 필요"로 멈추고 표식 위조는 격리 후 계속하게 고쳤다. `adoptKey`가 틀린 키로 바뀌던 문제, 키 교체 중 수정이 누락될 수 있던 토큰 초기화도 고쳤다.
+- 남은 한계(문서화): 기관 키를 가진 직원은 모든 기록을 읽고 고칠 수 있다. 그 기록을 받은 적 없는 새 PC는 같은 키로 만든 예전 내용을 구별하지 못한다. **실제 구글 계정·공유 드라이브 확인은 기관 내부 OAuth 클라이언트가 있어야 해서 하지 못했다**(가짜 구글·가짜 드라이브로만 검증). 관리자 순서는 `docs/SHARED_DRIVE_SETUP.md`.
+- 성능(가짜 드라이브, 1만 건): 첫 올리기 약 1.3초, 첫 받기 약 1.0초(목록 1000개씩 10번, 이용자 먼저), 평소 동기화는 바뀐 3건만 받음. 실제 네트워크 시간은 별도.
+
+**검증**
+- `codex/shared-drive-sync`: `verify:release` 전체 exit 0 — 새 테스트 `test:google-drive`(10), `test:shared-drive`(20, 위조·되돌리기·표식 위조·키 교체 사이 수정 포함), 사용성 시나리오 "공유 저장소 마법사"(브라우저 빌드에서 숨김, 꺼짐 0건, 보안 점검·키 확인·사본 후 암호화 올리기, 드라이브에 이름·연락처 평문 없음, 켠 뒤 저장이 자동으로 올라감). 이 시나리오가 "켜기 뒤 화면이 꺼짐으로 돌아가는" 결함을 잡아 고쳤다.
+- 업데이트 실기 확인(`scripts/test-update-e2e.cjs`): 서명 빌드의 `win-unpacked`를 임시 폴더로 복사해 로컬 업데이트 주소를 보게 하고 실제 설치본을 `--user-data-dir`로 띄웠다. 같은 서명(CN=JJSS) 3.2.1 → downloaded, 다른 서명자 설치파일 → 설치 거부. 실제 사용자 데이터 폴더(%APPDATA%\jjss)는 바뀌지 않음. UAC가 필요한 실제 설치 단계는 자동화하지 않았다.
+- 서명 설치파일(3.2 브랜치 737d662): `release/JJSS-Setup-3.2.0.exe`(182,942,432 bytes), SHA256 `B63AE4CB66CFC90E1491913FBC2188725F3023F1F972D9142B169AF8358D87C7`. 설치파일·`JJSS-Pro.exe` Authenticode Valid(CN=JJSS, DigiCert 타임스탬프). `latest.yml`의 파일 이름과 일치. 공유 저장소가 든 빌드는 배포용으로 만들지 않았다(검증용으로만 빌드 후 3.2 브랜치로 다시 빌드).
