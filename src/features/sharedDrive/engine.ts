@@ -296,8 +296,10 @@ export class SyncEngine {
         const documentTypes: Record<string, number> = {};
         const unreadable: string[] = [];
         for (const store of SYNCED_STORES) {
+            // 먼저 읽어야 이 PC 저장소가 읽지 못한 필드를 알 수 있다.
+            const records = await this.local.all(store);
             const broken = new Set(this.local.unreadableIds(store));
-            for (const record of await this.local.all(store)) {
+            for (const record of records) {
                 if (broken.has(record.id)) {
                     unreadable.push(recordKey(store, record.id));
                     continue;
@@ -331,8 +333,9 @@ export class SyncEngine {
             const localKeys = new Set<string>();
 
             for (const store of SYNCED_STORES) {
+                const records = await this.local.all(store);
                 const broken = new Set(this.local.unreadableIds(store));
-                for (const record of await this.local.all(store)) {
+                for (const record of records) {
                     const rid = recordKey(store, record.id);
                     localKeys.add(rid);
                     if (broken.has(record.id)) {
@@ -408,8 +411,8 @@ export class SyncEngine {
             const result: VerifyResult = { ok: true, checked: 0, missing: [], mismatched: [] };
             const conflicts = new Set((await this.state.conflicts()).map(conflict => conflict.rid));
             for (const store of SYNCED_STORES) {
-                const broken = new Set(this.local.unreadableIds(store));
                 const records = await this.local.all(store);
+                const broken = new Set(this.local.unreadableIds(store));
                 let done = 0;
                 for (const record of records) {
                     this.progress('verifying', ++done, records.length);
@@ -576,7 +579,8 @@ export class SyncEngine {
             const parsed = parseRecordKey(rid);
             const meta = await this.state.getMeta();
             const remaining = (meta.quarantined ?? []).filter(item => item !== rid);
-            const local = parsed && !this.local.unreadableIds(parsed.store).includes(parsed.id) ? (await this.local.get(parsed.store, parsed.id)) ?? null : null;
+            const read = parsed ? (await this.local.get(parsed.store, parsed.id)) ?? null : null;
+            const local = parsed && read && !this.local.unreadableIds(parsed.store).includes(parsed.id) ? read : null;
             if (!parsed || !local) {
                 await this.state.setMeta({ quarantined: remaining });
                 return 'dismissed';
@@ -818,8 +822,9 @@ export class SyncEngine {
             return 'skipped';
         }
         const { store, id } = parsed;
-        if (this.local.unreadableIds(store).includes(id)) return 'skipped';
         const local = (await this.local.get(store, id)) ?? null;
+        // 읽지 못한 필드가 있는 기록은 올리지 않는다(빈 값으로 드라이브를 덮지 않게).
+        if (this.local.unreadableIds(store).includes(id)) return 'skipped';
         const known = await this.state.getRecord(rid);
         if (!local && !known?.fileId) {
             await this.state.dequeue(rid, queuedAt);

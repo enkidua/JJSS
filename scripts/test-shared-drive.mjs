@@ -10,6 +10,22 @@ import { createFakeIndexedDB } from './fakeIndexedDB.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const cache = new Map();
+const moduleUrl = code => `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`;
+// 컨트롤러 테스트용 대역: 렌더러 전용 모듈(zustand·localDB·데이터 키 암호화) 대신 globalThis의 값으로 바꾼다.
+const STUBS = {
+    'config/localDB.ts': moduleUrl(`export const SHARED_DRIVE_RESTORE_PAUSE_KEY = 'jjss:shared-drive-restore-pause';
+export const onLocalMutation = (...args) => globalThis.__syncStubs.onLocalMutation(...args);`),
+    'features/sharedDrive/localAdapter.ts': moduleUrl(`export const localDbAdapter = {}; export const conflictCodec = {};`),
+    zustand: moduleUrl(`export function create(init) {
+    let state; const listeners = new Set();
+    const setState = patch => { state = { ...state, ...(typeof patch === 'function' ? patch(state) : patch) }; listeners.forEach(fn => fn(state)); };
+    const getState = () => state;
+    state = init(setState, getState);
+    const hook = selector => (selector ? selector(state) : state);
+    Object.assign(hook, { getState, setState, subscribe: fn => { listeners.add(fn); return () => listeners.delete(fn); } });
+    return hook;
+}`),
+};
 async function load(relative) {
     const file = path.resolve(root, 'src', relative);
     if (cache.has(file)) return cache.get(file);
@@ -17,8 +33,13 @@ async function load(relative) {
         compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
         fileName: file,
     }).outputText;
+    code = code.replace(/from\s+['"]zustand['"]/g, `from ${JSON.stringify(STUBS.zustand)}`);
     for (const match of [...code.matchAll(/from\s+['"](\.{1,2}\/[^'"]+)['"]/g)]) {
         const target = path.relative(path.join(root, 'src'), path.resolve(path.dirname(file), match[1])).replace(/\\/g, '/') + '.ts';
+        if (STUBS[target]) {
+            code = code.replace(match[0], `from ${JSON.stringify(STUBS[target])}`);
+            continue;
+        }
         if (target.startsWith('config/')) {
             code = code.replace(match[0], `from 'data:text/javascript,export {}'`);
             continue;
@@ -459,6 +480,143 @@ await test('성능: 1만 건(이용자 500·문서 9,500) 첫 올리기·첫 받
     assert.equal(big.counters.download, 3);
     assert.ok(incrementalMs < 3000, `증분 ${incrementalMs}ms`);
     console.log(`  (가짜 드라이브 기준: 첫 올리기 ${uploadMs}ms, 첫 받기 ${downloadMs}ms, 증분 ${incrementalMs}ms — 실제 네트워크 시간은 별도)`);
+});
+
+// ─── 동기화 제어(controller): 꺼짐 0건, 변경 구독·지연 올리기, 보안 차단, 복원 뒤 멈춤 ───
+
+const { SharedDriveController, useSharedDriveStore } = await import(await load('features/sharedDrive/controller.ts'));
+
+function makeBridge(fake, { enabled = true, orgKeyBase64, facts } = {}) {
+    const calls = [];
+    const ok = value => ({ ok: true, value });
+    const status = { configured: true, domain: DOMAIN, clientIdHint: '', accountEmail: `kim@${DOMAIN}`, signedIn: true, driveId: 'drive1', driveName: '사례관리', enabled, hasOrgKey: Boolean(orgKeyBase64), secureStorage: true };
+    const wrap = (name, fn) => async (...args) => {
+        calls.push(name);
+        try {
+            return ok(await fn(...args));
+        } catch (error) {
+            return { ok: false, error: { message: error.message, code: error.code || 'X' } };
+        }
+    };
+    const bridge = {
+        getStatus: wrap('getStatus', async () => status),
+        getOrgKey: wrap('getOrgKey', async () => orgKeyBase64 ?? null),
+        securityFacts: wrap('securityFacts', async () => facts ?? {
+            isSharedDrive: true, driveName: '사례관리', accountEmail: `kim@${DOMAIN}`, accountIsMember: true,
+            restrictions: { domainUsersOnly: true, driveMembersOnly: true, copyRequiresWriterPermission: true },
+            permissions: [{ type: 'group', emailAddress: `team@${DOMAIN}` }],
+        }),
+        backupLocalData: wrap('backupLocalData', async () => ({ copied: true })),
+        listRecords: wrap('listRecords', token => fake.api.listRecords(token)),
+        getStartPageToken: wrap('getStartPageToken', () => fake.api.getStartPageToken()),
+        listChanges: wrap('listChanges', token => fake.api.listChanges(token)),
+        getFile: wrap('getFile', id => fake.api.getFile(id)),
+        download: wrap('download', id => fake.api.download(id)),
+        upload: wrap('upload', input => fake.api.upload(input)),
+        setProperties: wrap('setProperties', (id, props) => fake.api.setProperties(id, props)),
+        findMeta: wrap('findMeta', name => fake.api.findMeta(name)),
+    };
+    return { bridge, calls, status };
+}
+
+function makeController(bridge, local, { storage = new Map() } = {}) {
+    const listeners = new Set();
+    globalThis.__syncStubs = { onLocalMutation: listener => { listeners.add(listener); return () => listeners.delete(listener); } };
+    const timers = [];
+    const applied = [];
+    const controller = new SharedDriveController({
+        bridge,
+        local,
+        createState: () => new MemorySyncState(),
+        subscribe: listener => globalThis.__syncStubs.onLocalMutation(listener),
+        storage: { getItem: key => storage.get(key) ?? null, removeItem: key => storage.delete(key) },
+        onApplied: count => applied.push(count),
+        setTimer: (run, ms) => { const timer = { run, ms }; timers.push(timer); return timer; },
+        clearTimer: timer => { const index = timers.indexOf(timer); if (index >= 0) timers.splice(index, 1); },
+        setRepeat: () => 'repeat',
+        clearRepeat: () => undefined,
+        isVisible: () => true,
+    });
+    const emit = mutation => listeners.forEach(listener => listener(mutation));
+    const flushTimers = async () => { while (timers.length) { const timer = timers.shift(); timer.run(); await new Promise(resolve => setTimeout(resolve, 20)); } };
+    return { controller, emit, timers, flushTimers, applied, listeners, storage };
+}
+
+const keyBase64 = Buffer.from(secret).toString('base64');
+
+await test('동기화 제어: 꺼져 있으면 상태 확인 1번 말고는 아무 요청·구독 없음', async () => {
+    const fake = createFakeSharedDrive();
+    const { bridge, calls } = makeBridge(fake, { enabled: false });
+    const ctx = makeController(bridge, createFakeLocal({ current: null }));
+    await ctx.controller.start();
+    assert.equal(useSharedDriveStore.getState().phase, 'off');
+    assert.deepEqual(calls, ['getStatus']);
+    assert.equal(ctx.listeners.size, 0, '로컬 변경을 구독하지 않음');
+    assert.equal(Object.values(fake.counters).reduce((a, b) => a + b, 0), 0);
+});
+
+await test('동기화 제어: 켜면 보안 점검 → 받기·올리기, 화면 저장은 몇 초 뒤 한 번에 올리고 받아 온 쓰기는 다시 올리지 않음', async () => {
+    const fake = createFakeSharedDrive();
+    const local = createFakeLocal({ current: null });
+    const { bridge, calls } = makeBridge(fake, { orgKeyBase64: keyBase64 });
+    const ctx = makeController(bridge, local);
+    await ctx.controller.start();
+    assert.equal(useSharedDriveStore.getState().phase, 'idle', useSharedDriveStore.getState().message);
+    assert.ok(calls.indexOf('securityFacts') < calls.indexOf('listChanges'), '보안 점검이 먼저');
+    local.stores.seekers.set('s1', seeker('s1', '가온해'));
+    ctx.emit({ store: 'seekers', ids: ['s1'], kind: 'put', origin: 'app' });
+    local.stores.seekers.set('s1', seeker('s1', '가온해', 'K-9'));
+    ctx.emit({ store: 'seekers', ids: ['s1'], kind: 'put', origin: 'app' });
+    ctx.emit({ store: 'seekers', ids: ['s2'], kind: 'put', origin: 'sync' });
+    ctx.emit({ store: 'jobs', ids: ['j1'], kind: 'put', origin: 'app' });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(ctx.timers.length, 1, '연달아 저장해도 올리기 예약은 하나');
+    assert.equal(ctx.timers[0].ms, 3000);
+    assert.equal(useSharedDriveStore.getState().pending, 1);
+    await ctx.flushTimers();
+    const uploaded = fake.rawFiles().filter(file => file.appProperties.jjssKind === 'record');
+    assert.deepEqual(uploaded.map(file => file.appProperties.rid), ['seekers:s1'], 'sync로 받은 쓰기·동기화 대상이 아닌 저장소는 올리지 않음');
+    assert.equal(useSharedDriveStore.getState().pending, 0);
+    ctx.controller.stop();
+    assert.equal(ctx.listeners.size, 0);
+});
+
+await test('동기화 제어: 보안 점검 차단이면 동기화하지 않고, 기관 키가 없으면 키 입력을 기다린다', async () => {
+    const fake = createFakeSharedDrive();
+    const blockedBridge = makeBridge(fake, { orgKeyBase64: keyBase64, facts: { isSharedDrive: true, driveName: 'x', accountEmail: `kim@${DOMAIN}`, accountIsMember: true, restrictions: {}, permissions: [{ type: 'anyone' }] } });
+    const blocked = makeController(blockedBridge.bridge, createFakeLocal({ current: null }));
+    await blocked.controller.start();
+    assert.equal(useSharedDriveStore.getState().phase, 'blocked');
+    assert.equal(useSharedDriveStore.getState().security.blocked, true);
+    assert.equal(blockedBridge.calls.includes('listChanges') || blockedBridge.calls.includes('upload'), false);
+    await blocked.controller.syncNow();
+    assert.equal(blockedBridge.calls.includes('listChanges'), false, '차단 중에는 수동 동기화도 하지 않음');
+    const noKey = makeController(makeBridge(fake, {}).bridge, createFakeLocal({ current: null }));
+    await noKey.controller.start();
+    assert.equal(useSharedDriveStore.getState().phase, 'needs-key');
+});
+
+await test('동기화 제어: 복원 뒤에는 멈추고, "드라이브 기준"을 고르면 드라이브 것으로 맞춘 뒤 다시 동기화', async () => {
+    const fake = createFakeSharedDrive();
+    const other = await makePc(fake, secret, `lee@${DOMAIN}`);
+    other.local.stores.seekers.set('s1', seeker('s1', '가온해', 'DRIVE'));
+    await other.engine.ensureKeyCheck();
+    await other.engine.initialSync();
+    const local = createFakeLocal({ current: null });
+    local.stores.seekers.set('s1', seeker('s1', '가온해', 'RESTORED'));
+    local.stores.seekers.set('s7', seeker('s7', '복원에만'));
+    const { bridge, calls } = makeBridge(fake, { orgKeyBase64: keyBase64 });
+    const storage = new Map([['jjss:shared-drive-restore-pause', 'now']]);
+    const ctx = makeController(bridge, local, { storage });
+    await ctx.controller.start();
+    assert.equal(useSharedDriveStore.getState().phase, 'paused-restore');
+    assert.equal(calls.includes('listChanges') || calls.includes('upload'), false, '고르기 전에는 주고받지 않음');
+    await ctx.controller.resolveRestore('drive');
+    assert.ok(calls.includes('backupLocalData'), '고르기 전에 이 PC 자료 사본');
+    assert.equal(local.stores.seekers.get('s1').seekerId, 'DRIVE');
+    assert.ok(fake.rawFiles().some(file => file.appProperties.rid === 'seekers:s7'), '드라이브에 없던 복원본 기록은 지우지 않고 올림');
+    assert.equal(storage.has('jjss:shared-drive-restore-pause'), false);
+    assert.equal(useSharedDriveStore.getState().phase, 'idle');
 });
 
 console.log(`shared drive tests passed (${passed}) — fake drive only, no network, synthetic data.`);

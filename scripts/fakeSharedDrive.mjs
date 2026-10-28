@@ -122,12 +122,14 @@ export function createFakeSharedDrive() {
 export function createFakeLocal(engineRef) {
     const stores = { seekers: new Map(), caseDocuments: new Map() };
     const unreadable = { seekers: new Set(), caseDocuments: new Set() };
+    // 실제 저장소처럼: 읽어 본 뒤에야 읽지 못한 필드가 있는 기록을 안다.
+    const seen = { seekers: new Set(), caseDocuments: new Set() };
     return {
         stores,
         unreadable,
-        async get(store, id) { const value = stores[store].get(id); return value ? structuredClone(value) : undefined; },
-        async all(store) { return [...stores[store].values()].map(value => structuredClone(value)); },
-        unreadableIds(store) { return [...unreadable[store]]; },
+        async get(store, id) { seen[store].add(id); const value = stores[store].get(id); return value ? structuredClone(value) : undefined; },
+        async all(store) { for (const id of stores[store].keys()) seen[store].add(id); return [...stores[store].values()].map(value => structuredClone(value)); },
+        unreadableIds(store) { return [...unreadable[store]].filter(id => seen[store].has(id)); },
         async putFromSync(store, record) { stores[store].set(record.id, structuredClone(record)); },
         async deleteFromSync(store, id) { stores[store].delete(id); },
         /** 화면에서 저장 */

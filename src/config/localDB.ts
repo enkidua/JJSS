@@ -45,6 +45,8 @@ let sealedUntilReload = false;
 
 /** 복원 성공 뒤 다시 불러온 첫 실행에서 이관 확인·안내를 하기 위한 표지 */
 export const POST_RESTORE_CHECK_KEY = 'jjss:post-restore-check';
+/** 복원 뒤 공유 저장소 동기화를 멈춰 두는 표지(사용자가 기준을 고르면 지운다) */
+export const SHARED_DRIVE_RESTORE_PAUSE_KEY = 'jjss:shared-drive-restore-pause';
 
 function mutationGeneration(): number {
     assertMutationAllowed(restoreGeneration);
@@ -1347,6 +1349,8 @@ export async function importAllData(source: string | ParsedBackupData): Promise<
         sealedUntilReload = true;
         try {
             localStorage.setItem(POST_RESTORE_CHECK_KEY, new Date().toISOString());
+            // 공유 저장소를 쓰고 있으면 다시 불러온 뒤 동기화를 멈추고 "복원본/드라이브 기준"을 묻는다.
+            localStorage.setItem(SHARED_DRIVE_RESTORE_PAUSE_KEY, new Date().toISOString());
         } catch {
             // 표지를 남기지 못해도 복원은 끝났다. 다음 실행의 이관은 앱 시작 시 기본 이관이 맡는다.
         }
