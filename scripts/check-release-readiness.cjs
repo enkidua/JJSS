@@ -121,6 +121,9 @@ try {
     check('자동 업데이트 출처가 GitHub enkidua/JJSS로 고정', publish.provider === 'github' && publish.owner === 'enkidua' && publish.repo === 'JJSS', `publish=${JSON.stringify(build.publish)}`);
     const builderScripts = Object.entries(scripts).filter(([, command]) => typeof command === 'string' && command.includes('electron-builder'));
     const autoPublishing = builderScripts.filter(([, command]) => !command.includes('--publish never'));
+    // 업데이트 설치파일의 서명자를 고정한다. 없으면 서명 없이 만든 빌드의 업데이터가 서명을 확인하지 않는다.
+    const pinnedPublishers = [].concat(win.signtoolOptions?.publisherName || []);
+    check('업데이트 서명자 고정(win.signtoolOptions.publisherName=JJSS)', pinnedPublishers.includes('JJSS') && win.verifyUpdateCodeSignature !== false, `publisherName=${JSON.stringify(pinnedPublishers)}, verifyUpdateCodeSignature=${String(win.verifyUpdateCodeSignature)}`);
     check('빌드 스크립트가 자동 게시하지 않음(--publish never)', builderScripts.length > 0 && autoPublishing.length === 0, autoPublishing.length ? autoPublishing.map(([name]) => name).join(', ') : `${builderScripts.length}개 스크립트`);
 
     const electronRequires = findElectronRuntimeRequires();

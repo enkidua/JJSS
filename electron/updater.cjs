@@ -10,6 +10,20 @@
 // - 개발 실행(app.isPackaged=false)과 JJSS_DISABLE_UPDATES=1에서는 아무것도 하지 않는다.
 
 const RELEASES_PAGE_URL = 'https://github.com/enkidua/JJSS/releases/latest';
+/** 업데이트 설치파일이 반드시 가져야 하는 서명자(코드서명 인증서 CN). package.json build.win.signtoolOptions.publisherName과 같아야 한다. */
+const REQUIRED_PUBLISHER = 'JJSS';
+
+/**
+ * 배포본의 resources/app-update.yml에 서명자가 고정돼 있는지 본다(Windows).
+ * 고정돼 있지 않으면 electron-updater가 내려받은 설치파일의 서명을 확인하지 않으므로 업데이트를 끈다.
+ */
+function hasPinnedPublisher(updateYmlText) {
+    const text = String(updateYmlText || '');
+    const block = /publisherName:[ \t]*((?:\r?\n[ \t]*-[ \t]*.+)+|.+)/.exec(text);
+    if (!block) return false;
+    const names = block[1].split('\n').map(line => line.replace(/^\s*-\s*/, '').trim().replace(/^['"]|['"]$/g, '')).filter(Boolean);
+    return names.includes(REQUIRED_PUBLISHER);
+}
 const FIRST_CHECK_DELAY_MS = 10_000;
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const KEEP_DATA_COPIES = 2;
@@ -72,10 +86,24 @@ function createUpdateService(deps) {
     const {
         app, ipcMain, shell, getWindow, validateSender, expectedIndexPath,
         loadAutoUpdater, platform, env, fs, path, logMainEvent, logMainError,
+        readUpdateConfig = () => fs.readFileSync(path.join(process.resourcesPath, 'app-update.yml'), 'utf8'),
         setTimeoutFn = setTimeout, setIntervalFn = setInterval,
     } = deps;
-    const disabled = !app.isPackaged || env.JJSS_DISABLE_UPDATES === '1';
     const manualOnly = platform === 'darwin';
+    let disabledReason = '';
+    if (!app.isPackaged) disabledReason = '개발 실행에서는 업데이트를 확인하지 않습니다.';
+    else if (env.JJSS_DISABLE_UPDATES === '1') disabledReason = '이 PC에서는 업데이트 확인을 껐습니다.';
+    else if (platform === 'win32') {
+        // 서명자가 고정되지 않은 빌드(서명 없이 만든 설치본 등)는 내려받은 설치파일의 서명을 확인할 수 없다. 업데이트를 끈다.
+        let configText = '';
+        try {
+            configText = readUpdateConfig();
+        } catch {
+            configText = '';
+        }
+        if (!hasPinnedPublisher(configText)) disabledReason = '서명 정보가 없는 설치본이라 자동 업데이트를 끕니다. 서명된 설치파일로 다시 설치해 주세요.';
+    }
+    const disabled = Boolean(disabledReason);
     const state = {
         phase: disabled ? 'disabled' : 'idle',
         currentVersion: app.getVersion(),
@@ -83,7 +111,7 @@ function createUpdateService(deps) {
         percent: null,
         manualOnly,
         lastCheckedAt: '',
-        message: disabled ? '개발 실행에서는 업데이트를 확인하지 않습니다.' : '',
+        message: disabledReason,
     };
     let updater = null;
     let checking = null;
@@ -194,4 +222,4 @@ function createUpdateService(deps) {
     return { register, check, download, install, getState: () => publicState(state) };
 }
 
-module.exports = { createUpdateService, copyLocalDataForUpdate, userMessageFor, RELEASES_PAGE_URL, FIRST_CHECK_DELAY_MS, CHECK_INTERVAL_MS };
+module.exports = { createUpdateService, copyLocalDataForUpdate, hasPinnedPublisher, userMessageFor, RELEASES_PAGE_URL, REQUIRED_PUBLISHER, FIRST_CHECK_DELAY_MS, CHECK_INTERVAL_MS };

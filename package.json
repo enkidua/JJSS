@@ -73,7 +73,13 @@
                         "x64"
                     ]
                 }
-            ]
+            ],
+            "signtoolOptions": {
+                "publisherName": [
+                    "JJSS"
+                ]
+            },
+            "verifyUpdateCodeSignature": true
         },
         "mac": {
             "category": "public.app-category.productivity",

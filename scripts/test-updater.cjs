@@ -5,9 +5,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
-const { createUpdateService, copyLocalDataForUpdate, RELEASES_PAGE_URL, FIRST_CHECK_DELAY_MS, CHECK_INTERVAL_MS } = require('../electron/updater.cjs');
+const { createUpdateService, copyLocalDataForUpdate, hasPinnedPublisher, RELEASES_PAGE_URL, FIRST_CHECK_DELAY_MS, CHECK_INTERVAL_MS } = require('../electron/updater.cjs');
 
-function makeHarness({ packaged = true, platform = 'win32', env = {}, userData } = {}) {
+const SIGNED_UPDATE_YML = ['owner: enkidua', 'repo: JJSS', 'provider: github', 'publisherName:', '  - JJSS', 'updaterCacheDirName: jjss-updater', ''].join('\n');
+
+function makeHarness({ packaged = true, platform = 'win32', env = {}, userData, updateYml = SIGNED_UPDATE_YML } = {}) {
     const handlers = new Map();
     const sent = [];
     const timers = [];
@@ -48,6 +50,7 @@ function makeHarness({ packaged = true, platform = 'win32', env = {}, userData }
         path,
         logMainEvent: (...args) => logs.push(['event', ...args]),
         logMainError: (...args) => logs.push(['error', ...args]),
+        readUpdateConfig: () => { if (updateYml === null) throw new Error('ENOENT'); return updateYml; },
         setTimeoutFn: (fn, ms) => timers.push({ fn, ms, kind: 'timeout' }),
         setIntervalFn: (fn, ms) => timers.push({ fn, ms, kind: 'interval' }),
     });
@@ -75,6 +78,25 @@ const ALLOWED_STATUS_KEYS = ['availableVersion', 'currentVersion', 'lastCheckedA
             assert.equal(h.loads(), 0);
             assert.ok(h.handlers.has('jjss-update:get-status'), '상태 조회는 항상 응답');
         }
+    });
+
+    await test('서명자가 고정되지 않은 Windows 설치본(서명 없이 만든 빌드)은 업데이트를 끈다', async () => {
+        assert.equal(hasPinnedPublisher(SIGNED_UPDATE_YML), true);
+        assert.equal(hasPinnedPublisher('publisherName: JJSS\n'), true, '한 줄 형식');
+        assert.equal(hasPinnedPublisher('publisherName:\n  - "Someone Else"\n'), false, '다른 서명자');
+        for (const updateYml of ['owner: enkidua\nrepo: JJSS\nprovider: github\n', null]) {
+            const h = makeHarness({ updateYml });
+            h.service.register();
+            assert.equal(h.timers.length, 0, '확인하지 않음');
+            const status = await h.invoke('jjss-update:check');
+            assert.equal(status.phase, 'disabled');
+            assert.match(status.message, /서명 정보가 없는 설치본/);
+            assert.equal(h.loads(), 0);
+        }
+        // macOS는 자동 설치를 하지 않으므로(알림만) 이 조건과 무관하다.
+        const mac = makeHarness({ platform: 'darwin', updateYml: null });
+        mac.service.register();
+        assert.equal(mac.timers.length, 2);
     });
 
     await test('배포본은 10초 뒤와 6시간마다 확인하고, 내려받기는 저절로 하지 않는다', async () => {
