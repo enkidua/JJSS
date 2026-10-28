@@ -11,6 +11,7 @@ import {
 } from '../../features/vocationalEvaluation';
 import { saveEpisode } from '../../features/vocationalEvaluation/storage';
 import { useAppToast } from '../../components/Toast';
+import SharedDriveEditingBanner from '../../components/SharedDriveEditingBanner';
 import { useSaveQueue } from './useSaveQueue';
 import { resolveUpdate, type StateUpdate } from './stateUpdates';
 import { BasicInfoStep } from './steps/BasicInfoStep';
@@ -106,6 +107,7 @@ export function EpisodeDetail({
 
     return (
         <div className="space-y-4">
+            <SharedDriveEditingBanner store="caseDocuments" id={episode.id} />
             <header className="glass-card p-4! hover:transform-none!">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="flex items-center gap-3">

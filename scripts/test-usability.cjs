@@ -796,6 +796,119 @@ async function main() {
             await page.screenshot({ path: path.join(directory, 'navigation-mobile.png') });
             console.log('Visual previews: ' + directory);
         }
+        // 공유 저장소: 데스크톱 기능(window.jjssDrive)이 없으면 섹션이 없고, 있으면 마법사로 켤 수 있다(가짜 드라이브, 네트워크 없음).
+        await page.evaluate(() => { location.hash = '/settings'; });
+        await page.locator('#ai-model').waitFor();
+        assert.equal(await page.locator('#shared-drive').count(), 0, '브라우저 실행에는 공유 저장소 섹션이 없음');
+        const driveContext = await browser.newContext({ viewport: { width: 1100, height: 850 } });
+        try {
+            await driveContext.addInitScript(() => {
+                localStorage.setItem('jjss:api-key-onboarding-v1', 'later');
+                const files = new Map();
+                const log = [];
+                let nextId = 1;
+                const status = { configured: false, domain: '', clientIdHint: '', accountEmail: '', signedIn: false, driveId: '', driveName: '', enabled: false, hasOrgKey: false, secureStorage: true };
+                let orgKey = null;
+                const ok = value => Promise.resolve({ ok: true, value });
+                const snap = file => ({ id: file.id, name: file.name, appProperties: { ...file.appProperties } });
+                const merge = (target, patch) => { for (const [k, v] of Object.entries(patch || {})) { if (v === null) delete target[k]; else target[k] = String(v); } };
+                window.uxDriveFiles = files;
+                window.uxDriveCalls = [];
+                const track = (name, fn) => (...args) => { window.uxDriveCalls.push(name); return fn(...args); };
+                window.jjssDrive = {
+                    getStatus: track('getStatus', () => ok({ ...status })),
+                    configure: track('configure', input => { Object.assign(status, { configured: true, domain: input.domain.toLowerCase(), clientIdHint: 'test…' }); return ok({ ...status }); }),
+                    signIn: track('signIn', () => { Object.assign(status, { signedIn: true, accountEmail: `kim@${status.domain}` }); return ok({ ...status }); }),
+                    signOut: track('signOut', () => { Object.assign(status, { signedIn: false, enabled: false, driveId: '', hasOrgKey: false }); orgKey = null; return ok({ ...status }); }),
+                    listSharedDrives: track('listSharedDrives', () => ok([{ id: 'drive-test-0001', name: '합성 사례관리 드라이브' }])),
+                    selectDrive: track('selectDrive', id => { Object.assign(status, { driveId: id, driveName: '합성 사례관리 드라이브' }); return ok({ ...status }); }),
+                    securityFacts: track('securityFacts', () => ok({ isSharedDrive: true, driveName: '합성 사례관리 드라이브', accountEmail: status.accountEmail, accountIsMember: true, restrictions: { domainUsersOnly: true, driveMembersOnly: true, copyRequiresWriterPermission: true }, permissions: [{ type: 'group', emailAddress: `team@${status.domain}` }], permissionsVisible: true })),
+                    listRecords: track('listRecords', () => ok({ files: [...files.values()].filter(f => f.appProperties.jjssKind === 'record').map(snap) })),
+                    getStartPageToken: track('getStartPageToken', () => ok(String(log.length + 1))),
+                    listChanges: track('listChanges', token => ok({ changes: log.slice(Number(token) - 1).map(id => ({ fileId: id, removed: false, file: { ...snap(files.get(id)), trashed: false } })), newStartPageToken: String(log.length + 1) })),
+                    getFile: track('getFile', id => ok(files.has(id) ? snap(files.get(id)) : null)),
+                    download: track('download', id => ok(new Uint8Array(files.get(id).content))),
+                    upload: track('upload', input => {
+                        if (input.folder !== 'meta') window.uxDriveCalls.push('upload-record');
+                        let file = input.fileId ? files.get(input.fileId) : null;
+                        if (!file) { file = { id: `file${nextId++}`, name: input.name, folder: input.folder, appProperties: {}, content: new Uint8Array() }; files.set(file.id, file); }
+                        merge(file.appProperties, input.appProperties);
+                        file.content = new Uint8Array(input.content);
+                        log.push(file.id);
+                        return ok(snap(file));
+                    }),
+                    setProperties: track('setProperties', (id, props) => { merge(files.get(id).appProperties, props); log.push(id); return ok(undefined); }),
+                    findMeta: track('findMeta', name => { const file = [...files.values()].find(f => f.folder === 'meta' && f.name === name); return ok(file ? snap(file) : null); }),
+                    setOrgKey: track('setOrgKey', value => { orgKey = value; status.hasOrgKey = true; return ok({ ...status }); }),
+                    getOrgKey: track('getOrgKey', () => ok(orgKey)),
+                    setEnabled: track('setEnabled', enabled => { status.enabled = Boolean(enabled); return ok({ ...status }); }),
+                    backupLocalData: track('backupLocalData', () => ok({ copied: true })),
+                };
+            });
+            await driveContext.route('**/*', route => new URL(route.request().url()).origin === new URL(base).origin ? route.continue() : route.abort());
+            const drivePage = await driveContext.newPage();
+            drivePage.on('pageerror', error => errors.push(error.message));
+            await drivePage.goto(base);
+            await drivePage.locator('h1').waitFor();
+            await drivePage.evaluate(async () => {
+                const db = await import('/src/config/localDB.ts');
+                await db.addDoc('seekers', { name: '합성공유이용자', seekerId: 'UX-SHARED', phone: '010-0000-1111', organization: '검증용' });
+                location.hash = '/settings';
+            });
+            await drivePage.locator('#shared-drive').waitFor();
+            const callsBeforeSetup = await drivePage.evaluate(() => window.uxDriveCalls.filter(name => name !== 'getStatus').length);
+            assert.equal(callsBeforeSetup, 0, '꺼진 상태: 상태 확인 외 요청 0건');
+            assert.equal(await drivePage.getByTestId('shared-drive-chip').count(), 0, '꺼져 있으면 상태 표시 없음');
+            const driveSection = drivePage.locator('#shared-drive');
+            await driveSection.getByTestId('shared-drive-start-setup').click();
+            await driveSection.getByRole('button', { name: '설정 시작' }).waitFor();
+            assert.equal(await driveSection.getByRole('button', { name: '설정 시작' }).isDisabled(), true, '동의 전에는 시작 불가');
+            await driveSection.getByLabel(/개인정보 처리방침에 따라/).check();
+            await driveSection.getByRole('button', { name: '설정 시작' }).click();
+            await driveSection.getByLabel('기관 도메인').fill('example-org.org');
+            await driveSection.getByLabel('OAuth 클라이언트 ID').fill('1234-abc.apps.googleusercontent.com');
+            await driveSection.getByLabel('OAuth 클라이언트 보안 비밀').fill('synthetic-secret');
+            await driveSection.getByRole('button', { name: '저장' }).click();
+            await driveSection.getByRole('button', { name: '구글 로그인' }).click();
+            await driveSection.getByRole('button', { name: '공유 드라이브 목록 불러오기' }).click();
+            await driveSection.getByRole('button', { name: '합성 사례관리 드라이브' }).click();
+            await driveSection.getByRole('button', { name: '보안 점검' }).click();
+            await driveSection.getByTestId('shared-drive-security').waitFor();
+            assert.equal(await driveSection.getByTestId('shared-drive-security').getAttribute('data-blocked'), 'false');
+            await driveSection.getByRole('button', { name: '다음' }).click();
+            await driveSection.getByRole('button', { name: '새 기관 키 만들기' }).click();
+            const code = (await driveSection.getByTestId('org-key-code').textContent()).trim();
+            assert.match(code, /^([0-9A-Z]{4}-){6}[0-9A-Z]{4}$/);
+            assert.equal(await driveSection.getByRole('button', { name: '이 키로 시작' }).isDisabled(), true, '코드 확인 전에는 진행 불가');
+            await driveSection.getByLabel(/마지막 4자/).fill(code.slice(-4).toLowerCase());
+            await driveSection.getByRole('button', { name: '이 키로 시작' }).click();
+            await driveSection.getByRole('button', { name: /사본을 만든 뒤 올리기 시작/ }).click();
+            await driveSection.getByTestId('initial-sync-result').getByText(/확인 완료/).waitFor();
+            const driveDump = await drivePage.evaluate(() => [...window.uxDriveFiles.values()].map(file => ({ props: JSON.stringify(file.appProperties), name: file.name, text: new TextDecoder('utf-8', { fatal: false }).decode(file.content) })));
+            assert.ok(driveDump.some(file => file.props.includes('"jjssKind":"record"')), '기록이 올라감');
+            for (const file of driveDump) {
+                for (const secretText of ['합성공유이용자', '010-0000-1111', 'UX-SHARED']) {
+                    assert.equal(file.props.includes(secretText) || file.name.includes(secretText) || file.text.includes(secretText), false, `드라이브에 평문 없음: ${secretText}`);
+                }
+            }
+            assert.ok(await drivePage.evaluate(() => window.uxDriveCalls.indexOf('backupLocalData') >= 0 && window.uxDriveCalls.indexOf('backupLocalData') < window.uxDriveCalls.indexOf('upload-record')), '기록을 올리기 전에 이 PC 사본');
+            await driveSection.getByRole('button', { name: '공유 저장소 켜기' }).click();
+            await driveSection.getByTestId('shared-drive-phase').waitFor();
+            await drivePage.waitForFunction(() => document.querySelector('[data-testid="shared-drive-phase"]')?.getAttribute('data-phase') === 'idle');
+            await drivePage.getByTestId('shared-drive-chip').waitFor();
+            assert.match(await drivePage.getByTestId('shared-drive-chip').textContent(), /공유 저장소 최신/);
+            // 켠 뒤 화면에서 저장하면 몇 초 뒤 자동으로 올라간다.
+            const before = await drivePage.evaluate(() => window.uxDriveCalls.filter(name => name === 'upload').length);
+            await drivePage.evaluate(async () => {
+                const db = await import('/src/config/localDB.ts');
+                await db.addDoc('seekers', { name: '합성공유이용자2', seekerId: 'UX-SHARED-2', organization: '검증용' });
+            });
+            await drivePage.waitForFunction(count => window.uxDriveCalls.filter(name => name === 'upload').length > count, before, { timeout: 15000 });
+            assert.deepEqual(errors, [], 'no uncaught runtime errors in shared drive flow');
+            console.log('PASS shared drive: hidden in browser build, zero requests while off, guided setup with security check, org key confirmation, backup-then-encrypted upload, live sync after enabling');
+        } finally {
+            await driveContext.close();
+        }
     } finally { await browser.close(); }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

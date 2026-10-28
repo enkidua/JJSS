@@ -25,6 +25,7 @@ const CREATOR_BLOG_URL = 'https://tilnote.io/@jang-go';
 const CREATOR_BOOK_URL = 'https://tilnote.io/users/books/69eaf0dfac767c3248a2e610';
 import ApiKeyRequiredNotice from './ApiKeyRequiredNotice';
 import UpdateNotice from './UpdateNotice';
+import SharedDriveRuntime from './SharedDriveRuntime';
 import PremiumUseConfirmDialog from './PremiumUseConfirmDialog';
 import AIUsageNotice from './AIUsageNotice';
 import { cancelActiveAIRequestJobs } from '../services/aiRequestSafety';
@@ -178,6 +179,7 @@ export default function Layout() {
             <ApiKeyOnboarding />
             <ApiKeyRequiredNotice />
             <UpdateNotice />
+            <SharedDriveRuntime />
             <PremiumUseConfirmDialog />
             {/* 오른쪽 아래 알림은 한 곳에 위아래로 쌓아 서로 겹치지 않게 한다. */}
             <div className="pointer-events-none fixed bottom-4 right-4 z-9998 flex w-[min(92vw,32rem)] flex-col items-end gap-3">

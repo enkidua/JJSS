@@ -311,13 +311,18 @@ await test('기관 키 바꾸기: 전체 재암호화 → 다른 PC는 새 키�
         assert.equal(file.appProperties.keyId, newKey.keyId);
         if (file.appProperties.deleted !== '1') await assert.rejects(orgKey.decryptRecord(B.key, file.appProperties.rid, file.content), /열지 못했습니다/, '옛 키로는 열리지 않음');
     }
+    // 키를 바꾼 직후 A가 고친 기록도 B가 새 키를 넣은 뒤 받아야 한다(토큰을 건너뛰지 않음).
+    await A.local.appPut('seekers', { ...A.local.stores.seekers.get('s2'), phone: '010-2222-0000' });
+    await A.engine.push();
     const stale = await B.engine.pull();
     assert.equal(stale.needsNewKey, true);
+    assert.equal(await B.engine.keyStatus(), 'rotated', '옛 키로 봉인한 교체 증명이 있다');
     await B.engine.adoptKey(await orgKey.deriveOrgKey(await orgKey.parseOrgKeyCode(await orgKey.formatOrgKeyCode(newSecret))));
     await assert.rejects(B.engine.adoptKey(await orgKey.deriveOrgKey(orgKey.generateOrgSecret())), /맞지 않습니다/);
     await B.engine.adoptKey(newKey);
     const resumed = await B.engine.pull();
     assert.equal(resumed.needsNewKey, false);
+    assert.equal(B.local.stores.seekers.get('s2').phone, '010-2222-0000', '키 교체 사이의 수정도 받음');
     await A.local.appPut('seekers', { ...A.local.stores.seekers.get('s1'), phone: '010-3333-3333' });
     await A.engine.push();
     await B.engine.pull();

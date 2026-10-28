@@ -11,10 +11,10 @@ import { create } from 'zustand';
 import { onLocalMutation, SHARED_DRIVE_RESTORE_PAUSE_KEY, type LocalMutation } from '../../config/localDB';
 import { base64ToBytes, createDriveClient, getDriveBridge, SharedDriveError, unwrap } from './driveClient';
 import { SyncEngine, type EditingInfo, type InitialSyncResult, type SyncProgress } from './engine';
-import { deriveOrgKey } from './orgKey';
+import { deriveOrgKey, type OrgKey } from './orgKey';
 import { evaluateDriveSecurity, securityCheckDue, type SecurityReport } from './security';
 import { conflictCodec, localDbAdapter } from './localAdapter';
-import { IndexedDbSyncState } from './syncState';
+import { IndexedDbSyncState, MemorySyncState } from './syncState';
 import { isSyncedStore, type LocalAdapter, type SyncedStore, type SyncStateStore } from './types';
 
 export type SharedDrivePhase =
@@ -269,6 +269,12 @@ export class SharedDriveController {
             }, POLL_INTERVAL_MS);
         }
         return result;
+    }
+
+    /** 기관 키 코드가 드라이브의 키 확인 표식과 맞는지(엔진이 아직 없을 때도) */
+    async verifyKey(key: OrgKey): Promise<boolean | null> {
+        const probe = new SyncEngine({ drive: createDriveClient(this.deps.bridge), local: this.deps.local, state: new MemorySyncState(), key, accountEmail: '' });
+        return probe.verifyOrgKey();
     }
 
     editingInfo(store: SyncedStore, id: string): EditingInfo | null {

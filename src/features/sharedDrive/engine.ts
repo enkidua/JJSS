@@ -706,7 +706,8 @@ export class SyncEngine {
         const ok = await this.verifyOrgKey(newKey);
         if (ok !== true) throw new Error('입력한 기관 키 코드가 공유 저장소의 키와 맞지 않습니다.');
         this.key = newKey;
-        await this.state.setMeta({ pageToken: undefined });
+        // 변경 토큰은 그대로 둔다: "새 키 필요"일 때 토큰을 넘기지 않았으므로, 다음 받기가 그 사이 바뀐 것
+        // (키 교체로 다시 쓴 파일과 다른 PC의 수정)을 새 키로 모두 다시 받는다.
     }
 
     // ─── 내부 ───

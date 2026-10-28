@@ -1,3 +1,4 @@
+import SharedDriveEditingBanner from '../../../components/SharedDriveEditingBanner';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, Save } from 'lucide-react';
 import {
@@ -392,6 +393,7 @@ ${lines}${skipped}
     const otherCases = cases.filter(item => item.id !== draft.id);
 
     return <div className="space-y-4" key={editing.session}>
+        <SharedDriveEditingBanner store="caseDocuments" id={editing.draft.id} />
         <div className="glass-card p-4! flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
                 <button type="button" className="btn-ghost px-3! py-2! text-sm flex items-center gap-1" onClick={() => void handleBack()}>

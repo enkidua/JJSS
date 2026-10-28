@@ -10,14 +10,22 @@ import FailoverSection from '../components/settings/FailoverSection';
 import ApiKeySection from '../components/settings/ApiKeySection';
 import BackupSection from '../components/settings/BackupSection';
 import UpdateSection from '../components/settings/UpdateSection';
+import SharedDriveSection from '../components/settings/SharedDriveSection';
 
 const SECTION_LINKS: Array<[id: string, label: string]> = [
     ['ai-model', 'AI 모델'],
     ['ai-failover', '비용·자동 전환'],
     ['api-keys', 'API 키'],
     ['files-backup', '파일·백업'],
+    ['shared-drive', '공유 저장소'],
     ['app-update', '업데이트'],
 ];
+
+/** 데스크톱 앱에서만 있는 섹션 */
+const DESKTOP_ONLY: Record<string, () => boolean> = {
+    'app-update': () => Boolean(window.jjssUpdates),
+    'shared-drive': () => Boolean(window.jjssDrive),
+};
 
 /** 플랫폼별 운영체제 보안 저장소 이름 */
 function secureStoreLabel(platform: string | null): string {
@@ -103,7 +111,7 @@ export default function Settings() {
 
                 <nav aria-label="설정 항목 바로가기" className="sticky top-20 z-20 mb-8 overflow-x-auto rounded-2xl border border-white/10 bg-slate-950/85 p-2 shadow-xl backdrop-blur-xl">
                     <div className="flex min-w-max gap-2">
-                        {SECTION_LINKS.filter(([id]) => id !== 'app-update' || Boolean(window.jjssUpdates)).map(([id, label]) => (
+                        {SECTION_LINKS.filter(([id]) => !DESKTOP_ONLY[id] || DESKTOP_ONLY[id]()).map(([id, label]) => (
                             <button key={id} type="button" onClick={() => focusSection(id)} className="rounded-xl px-4 py-2 text-sm font-semibold text-white/70 transition hover:bg-white/10 hover:text-white">{label}</button>
                         ))}
                     </div>
@@ -185,6 +193,7 @@ export default function Settings() {
                 <FailoverSection onSaved={flashSaved} />
                 <ApiKeySection onSaved={flashSaved} />
                 <BackupSection />
+                <SharedDriveSection />
                 <UpdateSection />
             </div>
         </div>
