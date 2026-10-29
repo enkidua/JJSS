@@ -6,8 +6,9 @@ import { deriveOrgKey, formatOrgKeyCode, generateOrgSecret, parseOrgKeyCode } fr
 import { evaluateDriveSecurity, type SecurityReport } from '../../../features/sharedDrive/security';
 import { IndexedDbSyncState } from '../../../features/sharedDrive/syncState';
 import { conflictCodec, localDbAdapter } from '../../../features/sharedDrive/localAdapter';
-import { getSharedDriveController } from '../../../features/sharedDrive/controller';
+import { getSharedDriveController, SHARED_DRIVE_APPLIED_EVENT } from '../../../features/sharedDrive/controller';
 import { SHARED_DRIVE_RESTORE_PAUSE_KEY } from '../../../config/localDB';
+import { useBeforeUnloadGuard } from '../../../hooks/useBeforeUnloadGuard';
 import SecurityReportView from './SecurityReportView';
 
 type Step = 'guide' | 'admin' | 'sign-in' | 'drive' | 'security' | 'key' | 'upload' | 'done';
@@ -53,7 +54,7 @@ export default function SharedDriveSetup({ status, onStatus, onFinished }: Props
     const [admin, setAdmin] = useState({ domain: status?.domain || '', clientId: '', clientSecret: '' });
     const [drives, setDrives] = useState<Array<{ id: string; name: string }> | null>(null);
     const [security, setSecurity] = useState<SecurityReport | null>(null);
-    const [keyCheckExists, setKeyCheckExists] = useState<boolean | null>(null);
+    const [keyCheckExists, setKeyCheckExists] = useState<boolean>(false);
     const [newCode, setNewCode] = useState('');
     const [newSecret, setNewSecret] = useState<Uint8Array | null>(null);
     const [confirmTail, setConfirmTail] = useState('');
@@ -63,6 +64,10 @@ export default function SharedDriveSetup({ status, onStatus, onFinished }: Props
     const [progress, setProgress] = useState<SyncProgress | null>(null);
     const [result, setResult] = useState<InitialSyncResult | null>(null);
     const [verify, setVerify] = useState<VerifyResult | null>(null);
+    const [uploading, setUploading] = useState(false);
+
+    // 올리는 동안 창을 닫거나 새로 고치면 올리기가 끊긴다(다시 누르면 이어서 하지만 알려 준다).
+    useBeforeUnloadGuard(uploading);
 
     useEffect(() => {
         if (step !== 'guide' && step !== 'key' && step !== 'upload' && step !== 'done') setStep(nextStepFor(status, consented));
@@ -96,17 +101,51 @@ export default function SharedDriveSetup({ status, onStatus, onFinished }: Props
         });
     };
 
+    /** 키 단계로 넘어가기 직전: 드라이브에 키 확인 표식이 있는지 본다(있으면 코드를 입력해야 한다). */
+    const enterKeyStep = async () => {
+        setKeyCheckExists(Boolean(await unwrap(bridge.findMeta(KEY_CHECK_META_NAME))));
+        setStep('key');
+    };
+
+    /** 키를 정한 뒤: 올리기 단계로. 새 키 비밀은 더 들고 있지 않는다. */
+    const finishKeyStep = async (orgSecret: Uint8Array, engine: SyncEngine) => {
+        setSecret(orgSecret);
+        setNewSecret(null);
+        setNewCode('');
+        setConfirmTail('');
+        setCodeInput('');
+        setSummary(await engine.summarizeLocal());
+        setStep('upload');
+    };
+
+    const runInitialSync = async (engine: SyncEngine) => {
+        setUploading(true);
+        try {
+            const synced = await engine.initialSync();
+            setResult(synced);
+            if (synced.downloaded > 0) window.dispatchEvent(new CustomEvent(SHARED_DRIVE_APPLIED_EVENT, { detail: { count: synced.downloaded } }));
+            setVerify(await engine.verifyAgainstRemote());
+        } finally {
+            setUploading(false);
+        }
+    };
+
     const tailOk = useMemo(() => newCode && confirmTail.trim().toUpperCase() === newCode.slice(-4), [newCode, confirmTail]);
 
     return (
         <div className="space-y-5">
-            <ol className="flex flex-wrap gap-1.5 text-[11px]" aria-label="설정 단계">
-                {STEPS.map(([id, label], index) => (
-                    <li key={id} className={`rounded-full px-2.5 py-1 ${index === stepIndex ? 'bg-sky-500/25 text-sky-100' : index < stepIndex ? 'bg-emerald-500/15 text-emerald-200' : 'bg-white/5 text-white/40'}`}>
-                        {index + 1}. {label}
-                    </li>
-                ))}
-            </ol>
+            <div className="flex flex-wrap items-start justify-between gap-2">
+                <ol className="flex flex-wrap gap-1.5 text-[11px]" aria-label="설정 단계">
+                    {STEPS.map(([id, label], index) => (
+                        <li key={id} aria-current={index === stepIndex ? 'step' : undefined} className={`rounded-full px-2.5 py-1 ${index === stepIndex ? 'bg-sky-500/25 text-sky-100' : index < stepIndex ? 'bg-emerald-500/15 text-emerald-200' : 'bg-white/5 text-white/40'}`}>
+                            {index + 1}. {label}
+                        </li>
+                    ))}
+                </ol>
+                {step !== 'done' && (
+                    <button type="button" disabled={busy || uploading} onClick={onFinished} className="text-xs text-white/50 underline disabled:opacity-40">설정 그만두기</button>
+                )}
+            </div>
 
             {error && <p role="alert" className="rounded-xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-100">{error}</p>}
 
@@ -114,12 +153,12 @@ export default function SharedDriveSetup({ status, onStatus, onFinished }: Props
                 <div className="space-y-3 text-sm leading-relaxed text-white/75">
                     <p className="font-semibold text-white">켜기 전에 꼭 읽어 주세요</p>
                     <ul className="list-disc space-y-1.5 pl-5 text-xs text-white/65">
-                        <li><b className="text-white/85">무엇을 올리나:</b> 이용자 정보와 사례관리 기록(상담·직업평가·지원고용 문서 등). 직업훈련·예산·설정·API 키는 올리지 않습니다.</li>
+                        <li><b className="text-white/85">무엇을 올리나:</b> 이용자 정보와 사례관리 기록(상담·직업평가·지원고용 문서 등). 직업훈련·예산·설정·API 키·사진 첨부는 올리지 않습니다.</li>
                         <li><b className="text-white/85">어디에:</b> 기관 Google Workspace의 <b>공유 드라이브</b> 한 곳. 개인 "내 드라이브"는 쓸 수 없습니다.</li>
                         <li><b className="text-white/85">어떻게 보호하나:</b> 이 PC에서 <b>기관 키</b>로 암호화한 뒤 올립니다. 구글과 드라이브 관리자도 내용을 읽을 수 없고, 기관 키를 가진 JJSS만 엽니다. 파일 이름·속성에는 이름·연락처를 넣지 않습니다.</li>
                         <li><b className="text-white/85">누가 쓰나:</b> 기관 도메인 계정으로 로그인하고 공유 드라이브 구성원인 직원만. 기관 키 코드는 메일·메신저로 보내지 말고 직접 전달하세요.</li>
                         <li><b className="text-white/85">관리자가 먼저 할 일:</b> 공유 드라이브 만들기 → 사례관리 담당 그룹만 구성원으로 추가 → 공유 드라이브 설정에서 "조직 외부 사용자 접근 허용", "구성원이 아닌 사용자에게 파일 공유 허용", "뷰어의 다운로드·인쇄·복사"를 끄기 → 기관 내부용 OAuth 클라이언트(데스크톱 앱) 만들기. 자세한 순서는 관리자 안내서(JJSS 저장소의 docs/SHARED_DRIVE_SETUP.md)에 있습니다.</li>
-                        <li><b className="text-white/85">끄면:</b> 이 PC 자료는 그대로이고 드라이브와 주고받기만 멈춥니다. 시작 전에 이 PC 자료 사본을 자동으로 만듭니다.</li>
+                        <li><b className="text-white/85">끄면:</b> 이 PC 자료는 그대로이고 드라이브와 주고받기만 멈춥니다. 시작 전에 이 PC 자료 사본을 자동으로 만듭니다(설정 → 파일·백업에서 .jjss 백업도 한 번 만들어 두기를 권장합니다).</li>
                     </ul>
                     <label className="flex items-start gap-2 text-xs text-white/80">
                         <input type="checkbox" checked={consented} onChange={event => setConsented(event.target.checked)} className="mt-0.5" />
@@ -135,8 +174,13 @@ export default function SharedDriveSetup({ status, onStatus, onFinished }: Props
                     onSubmit={event => {
                         event.preventDefault();
                         void run(async () => {
-                            onStatus(await unwrap(bridge.configure(admin)));
-                            setAdmin(current => ({ ...current, clientSecret: '' }));
+                            try {
+                                const next = await unwrap(bridge.configure(admin));
+                                onStatus(next);
+                                setStep(nextStepFor(next, true));
+                            } finally {
+                                setAdmin(current => ({ ...current, clientSecret: '' }));
+                            }
                         });
                     }}
                 >
@@ -181,24 +225,25 @@ export default function SharedDriveSetup({ status, onStatus, onFinished }: Props
                             ))}
                         </ul>
                     )}
+                    <button type="button" disabled={busy} onClick={() => void run(async () => { onStatus(await unwrap(bridge.signOut())); setDrives(null); })} className="text-xs text-white/50 underline">다른 계정으로 로그인</button>
                 </div>
             )}
 
             {step === 'security' && (
                 <div className="space-y-3 text-sm text-white/75">
                     <p>"{status?.driveName}" 공유 드라이브의 보안 설정을 확인합니다. 막힌 항목이 있으면 켤 수 없습니다.</p>
-                    <button type="button" disabled={busy} onClick={() => void run(async () => {
-                        const facts = await unwrap(bridge.securityFacts());
-                        setSecurity(evaluateDriveSecurity(facts, status?.domain || ''));
-                    })} className="btn-secondary px-3! py-2! text-xs inline-flex items-center gap-1.5">
-                        <ShieldCheck className="h-3.5 w-3.5" /> {security ? '다시 점검' : '보안 점검'}
-                    </button>
+                    <div className="flex flex-wrap gap-2">
+                        <button type="button" disabled={busy} onClick={() => void run(async () => {
+                            const facts = await unwrap(bridge.securityFacts());
+                            setSecurity(evaluateDriveSecurity(facts, status?.domain || ''));
+                        })} className="btn-secondary px-3! py-2! text-xs inline-flex items-center gap-1.5">
+                            <ShieldCheck className="h-3.5 w-3.5" /> {security ? '다시 점검' : '보안 점검'}
+                        </button>
+                        <button type="button" disabled={busy} onClick={() => { setSecurity(null); setDrives(null); setStep('drive'); }} className="text-xs text-white/50 underline">다른 드라이브 고르기</button>
+                    </div>
                     {security && <SecurityReportView report={security} />}
                     {security && !security.blocked && (
-                        <button type="button" disabled={busy} onClick={() => void run(async () => {
-                            setKeyCheckExists(Boolean(await unwrap(bridge.findMeta(KEY_CHECK_META_NAME))));
-                            setStep('key');
-                        })} className="btn-primary px-4! py-2! text-sm">다음</button>
+                        <button type="button" disabled={busy} onClick={() => void run(enterKeyStep)} className="btn-primary px-4! py-2! text-sm">다음</button>
                     )}
                     {security?.blocked && <p className="flex items-center gap-1.5 text-xs text-rose-200"><ShieldAlert className="h-4 w-4" /> 관리자에게 막힌 항목을 고쳐 달라고 요청한 뒤 다시 점검해 주세요.</p>}
                 </div>
@@ -212,7 +257,7 @@ export default function SharedDriveSetup({ status, onStatus, onFinished }: Props
                         <p>이 공유 드라이브를 처음 쓰는 PC입니다. 새 기관 키를 만들고 코드를 안전한 곳(종이·기관 보안 금고)에 적어 두세요. 다른 직원 PC에는 이 코드를 직접 알려 줍니다. <b>코드를 잃으면 드라이브 자료를 열 수 없습니다.</b></p>
                     )}
                     {!keyCheckExists && !newCode && (
-                        <button type="button" onClick={() => void run(async () => {
+                        <button type="button" disabled={busy} onClick={() => void run(async () => {
                             const generated = generateOrgSecret();
                             setNewSecret(generated);
                             setNewCode(await formatOrgKeyCode(generated));
@@ -226,16 +271,24 @@ export default function SharedDriveSetup({ status, onStatus, onFinished }: Props
                                 <input className="input-field mt-1 w-40 font-mono uppercase" maxLength={4} value={confirmTail} onChange={event => setConfirmTail(event.target.value)} />
                             </label>
                             <button type="button" disabled={!tailOk || busy} onClick={() => void run(async () => {
-                                setSecret(newSecret);
+                                // 그사이 다른 PC가 먼저 키를 만들었으면 덮어쓰지 않는다.
+                                if (await unwrap(bridge.findMeta(KEY_CHECK_META_NAME))) {
+                                    setKeyCheckExists(true);
+                                    setNewCode('');
+                                    setNewSecret(null);
+                                    throw new Error('그사이 다른 PC가 이 공유 드라이브의 기관 키를 먼저 만들었습니다. 관리자에게 코드를 받아 입력해 주세요.');
+                                }
+                                // 표식은 없는데 기록이 있으면(표식이 지워짐) 새 키로는 그 기록을 열 수 없다. 확인을 받는다.
+                                const existing = await unwrap(bridge.listRecords());
+                                if (existing.files.length > 0 && !window.confirm(`이 드라이브에 이미 기록 ${existing.files.length}건${existing.nextPageToken ? ' 이상' : ''}이 있지만 기관 키 확인 표식이 없습니다. 새 키를 만들면 그 기록은 열 수 없어 격리됩니다. 관리자에게 기존 코드를 확인하는 편이 안전합니다. 그래도 새 키로 시작할까요?`)) return;
                                 await unwrap(bridge.setOrgKey(bytesToBase64(newSecret!)));
                                 const engine = await makeEngine(newSecret!);
                                 await engine.ensureKeyCheck();
-                                setSummary(await engine.summarizeLocal());
-                                setStep('upload');
+                                await finishKeyStep(newSecret!, engine);
                             })} className="btn-primary px-4! py-2! text-sm disabled:opacity-50">이 키로 시작</button>
                         </div>
                     )}
-                    {(keyCheckExists || (!newCode && keyCheckExists === null)) && (
+                    {keyCheckExists && (
                         <form className="space-y-2" onSubmit={event => {
                             event.preventDefault();
                             void run(async () => {
@@ -244,13 +297,10 @@ export default function SharedDriveSetup({ status, onStatus, onFinished }: Props
                                 const ok = await engine.verifyOrgKey();
                                 if (ok !== true) throw new Error('입력한 기관 키 코드가 이 공유 드라이브의 키와 맞지 않습니다.');
                                 await unwrap(bridge.setOrgKey(bytesToBase64(parsed)));
-                                setSecret(parsed);
-                                setCodeInput('');
-                                setSummary(await engine.summarizeLocal());
-                                setStep('upload');
+                                await finishKeyStep(parsed, engine);
                             });
                         }}>
-                            <input className="input-field w-full font-mono uppercase tracking-wider" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX" value={codeInput} onChange={event => setCodeInput(event.target.value)} autoComplete="off" />
+                            <input aria-label="기관 키 코드" className="input-field w-full font-mono uppercase tracking-wider" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX" value={codeInput} onChange={event => setCodeInput(event.target.value)} autoComplete="off" />
                             <button type="submit" disabled={busy || !codeInput.trim()} className="btn-primary px-4! py-2! text-sm disabled:opacity-50">확인</button>
                         </form>
                     )}
@@ -265,14 +315,12 @@ export default function SharedDriveSetup({ status, onStatus, onFinished }: Props
                         <li className="rounded-xl bg-white/5 p-2">사례 기록 <b className="text-white">{summary.counts.caseDocuments.toLocaleString()}</b>건</li>
                     </ul>
                     {summary.unreadable.length > 0 && <p className="text-xs text-amber-200">이 PC에서 읽지 못한 기록 {summary.unreadable.length}건은 올리지 않습니다(깨진 내용을 퍼뜨리지 않게). 데이터 복구 안내를 먼저 확인하세요.</p>}
-                    <p className="text-xs text-white/50">같은 기록이 드라이브에도 있으면 내용이 같을 때 연결하고, 다르면 "충돌"로 남겨 직접 고르게 합니다. 자동으로 덮어쓰지 않습니다. 중간에 끊겨도 다시 누르면 이어서 합니다.</p>
+                    <p className="text-xs text-white/50">같은 기록이 드라이브에도 있으면 내용이 같을 때 연결하고, 다르면 "충돌"로 남겨 직접 고르게 합니다. 자동으로 덮어쓰지 않습니다. 올리는 동안 다른 화면으로 가지 말고, 중간에 끊겨도 다시 누르면 이어서 합니다.</p>
                     {!result && (
                         <button type="button" disabled={busy} onClick={() => void run(async () => {
-                            await unwrap(bridge.backupLocalData());
-                            const engine = await makeEngine(secret!);
-                            const synced = await engine.initialSync();
-                            setResult(synced);
-                            setVerify(await engine.verifyAgainstRemote());
+                            const backup = await unwrap(bridge.backupLocalData());
+                            if (!backup.copied) throw new Error('이 PC 저장소의 사본을 만들지 못해 올리기를 시작하지 않았습니다. 잠시 후 다시 시도해 주세요.');
+                            await runInitialSync(await makeEngine(secret!));
                         })} className="btn-primary px-4! py-2! text-sm inline-flex items-center gap-1.5 disabled:opacity-50">
                             <Upload className="h-4 w-4" /> {busy ? '진행 중…' : '이 PC 사본을 만든 뒤 올리기 시작'}
                         </button>
@@ -291,23 +339,20 @@ export default function SharedDriveSetup({ status, onStatus, onFinished }: Props
                             {result.quarantined.length > 0 && <p className="text-amber-200">열지 못한 드라이브 파일 {result.quarantined.length}건은 받지 않았습니다(관리자 확인).</p>}
                             {verify && (verify.ok
                                 ? <p className="flex items-center gap-1 text-emerald-200"><CheckCircle2 className="h-3.5 w-3.5" /> 확인 완료: 이 PC 기록 {verify.checked.toLocaleString()}건이 드라이브와 같습니다.</p>
-                                : <p className="text-amber-200">확인: 빠진 기록 {verify.missing.length}건, 내용이 다른 기록 {verify.mismatched.length}건. 다시 올리기를 누르면 이어서 올립니다.</p>)}
+                                : <p className="text-amber-200">확인: 빠진 기록 {verify.missing.length}건, 내용이 다른 기록 {verify.mismatched.length}건. 다시 올리기를 누르면 이어서 올리고, 켜면 남은 것도 자동으로 올라갑니다.</p>)}
                         </div>
                     )}
                     {result && verify && !verify.ok && (
-                        <button type="button" disabled={busy} onClick={() => void run(async () => {
-                            const engine = await makeEngine(secret!);
-                            setResult(await engine.initialSync());
-                            setVerify(await engine.verifyAgainstRemote());
-                        })} className="btn-secondary px-3! py-2! text-xs">다시 올리기</button>
+                        <button type="button" disabled={busy} onClick={() => void run(async () => runInitialSync(await makeEngine(secret!)))} className="btn-secondary px-3! py-2! text-xs">다시 올리기</button>
                     )}
                     {result && (
                         <button type="button" disabled={busy} onClick={() => void run(async () => {
                             onStatus(await unwrap(bridge.setEnabled(true)));
                             try { window.localStorage.removeItem(SHARED_DRIVE_RESTORE_PAUSE_KEY); } catch { /* 표지가 없어도 된다 */ }
-                            await getSharedDriveController()?.start();
                             setStep('done');
                             onFinished();
+                            // 켜면 제어부가 올리지 못한 기록(검증에서 빠진 것·그사이 고친 것)을 찾아 마저 올린다.
+                            await getSharedDriveController()?.start();
                         })} className="btn-primary px-4! py-2! text-sm">공유 저장소 켜기</button>
                     )}
                 </div>

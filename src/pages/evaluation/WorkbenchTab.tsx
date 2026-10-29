@@ -3,6 +3,7 @@
  * 기존 결과분석기·종합 소견서·저장 문서 탭은 그대로 둔다.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { SHARED_DRIVE_APPLIED_EVENT } from '../../features/sharedDrive/controller';
 import { CalendarDays, ChevronRight, FlaskConical, Loader2, Plus, Trash2 } from 'lucide-react';
 import {
     EPISODE_STATUS_LABELS,
@@ -114,6 +115,13 @@ export function WorkbenchTab({
             if (request === loadRequestRef.current) setLoading(false);
         }
     }, [seekerKey, showToast]);
+
+    // 공유 저장소가 다른 PC의 변경을 받아 오면 회차 목록을 다시 읽는다.
+    useEffect(() => {
+        const onApplied = () => { void reload(); };
+        window.addEventListener(SHARED_DRIVE_APPLIED_EVENT, onApplied);
+        return () => window.removeEventListener(SHARED_DRIVE_APPLIED_EVENT, onApplied);
+    }, [reload]);
 
     useEffect(() => {
         void reload();

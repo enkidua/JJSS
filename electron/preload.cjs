@@ -55,6 +55,8 @@ contextBridge.exposeInMainWorld('jjssDrive', Object.freeze({
     findMeta: driveCall('jjss-drive:find-meta'),
     setOrgKey: driveCall('jjss-drive:set-org-key'),
     getOrgKey: driveCall('jjss-drive:get-org-key'),
+    setPendingOrgKey: driveCall('jjss-drive:set-pending-org-key'),
+    getPendingOrgKey: driveCall('jjss-drive:get-pending-org-key'),
     setEnabled: driveCall('jjss-drive:set-enabled'),
     backupLocalData: driveCall('jjss-drive:backup-local-data'),
 }));

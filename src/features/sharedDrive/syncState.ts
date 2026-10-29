@@ -30,6 +30,7 @@ export class MemorySyncState implements SyncStateStore {
     }
     async outbox() { return [...this.queue.values()].map(item => ({ ...item })); }
     async isQueued(rid: string) { return this.queue.has(rid); }
+    async queuedEntry(rid: string) { const entry = this.queue.get(rid); return entry ? { ...entry } : undefined; }
     async putConflict(conflict: ConflictEntry) { this.conflictMap.set(conflict.rid, structuredClone(conflict)); }
     async removeConflict(rid: string) { this.conflictMap.delete(rid); }
     async conflicts() { return [...this.conflictMap.values()].map(item => structuredClone(item)); }
@@ -77,6 +78,8 @@ export class IndexedDbSyncState implements SyncStateStore {
                 request.onsuccess = () => resolve(request.result);
                 request.onerror = () => reject(request.error);
             });
+            // 열기에 실패했으면 다음 호출에서 다시 연다(실패를 영구히 기억하지 않게).
+            this.dbPromise.catch(() => { this.dbPromise = null; });
         }
         return this.dbPromise;
     }
@@ -115,6 +118,7 @@ export class IndexedDbSyncState implements SyncStateStore {
     }
     async outbox() { return (await this.run('outbox', 'readonly', store => store.getAll())) as OutboxEntry[]; }
     async isQueued(rid: string) { return Boolean(await this.run('outbox', 'readonly', store => store.get(rid))); }
+    async queuedEntry(rid: string) { return (await this.run('outbox', 'readonly', store => store.get(rid))) as OutboxEntry | undefined; }
     async putConflict(conflict: ConflictEntry) {
         const sealed = { ...conflict, local: await this.codec.encode(conflict.local), remote: await this.codec.encode(conflict.remote) };
         await this.run('conflicts', 'readwrite', store => store.put(sealed));
@@ -123,7 +127,14 @@ export class IndexedDbSyncState implements SyncStateStore {
     async conflicts() {
         const sealed = (await this.run('conflicts', 'readonly', store => store.getAll())) as Array<Omit<ConflictEntry, 'local' | 'remote'> & { local: string; remote: string }>;
         const out: ConflictEntry[] = [];
-        for (const item of sealed) out.push({ ...item, local: await this.codec.decode(item.local), remote: await this.codec.decode(item.remote) });
+        for (const item of sealed) {
+            try {
+                out.push({ ...item, local: await this.codec.decode(item.local), remote: await this.codec.decode(item.remote) });
+            } catch {
+                // 이 PC의 데이터 키로 열지 못한 사본: 목록에는 남기되(올리기 차단 유지) 내용 없이 표시한다.
+                out.push({ ...item, local: null, remote: null, undecodable: true });
+            }
+        }
         return out;
     }
     async getMeta() {

@@ -91,6 +91,8 @@ export class SharedDriveController {
     private pollHandle: unknown = null;
     private running = false;
     private domain = '';
+    /** start/stop마다 올라간다. 끝난 뒤 도착한 결과가 새 상태를 덮지 않게 한다. */
+    private generation = 0;
 
     constructor(private readonly deps: ControllerDeps) {}
 
@@ -108,7 +110,9 @@ export class SharedDriveController {
     /** 앱 시작 때·설정에서 켠 뒤 부른다. 꺼져 있으면 아무 요청도 하지 않는다. */
     async start(): Promise<void> {
         this.stop();
+        const generation = ++this.generation;
         const status = await this.refreshStatus();
+        if (generation !== this.generation) return;
         if (!status.enabled) {
             this.set({ phase: 'off', message: '' });
             return;
@@ -116,43 +120,66 @@ export class SharedDriveController {
         this.set({ phase: 'starting', message: '공유 저장소에 연결하는 중…' });
         try {
             const keyBase64 = await unwrap(this.deps.bridge.getOrgKey());
+            if (generation !== this.generation) return;
             if (!keyBase64) {
                 this.set({ phase: 'needs-key', message: '기관 키 코드를 넣어 주세요.' });
                 return;
             }
             const key = await deriveOrgKey(base64ToBytes(keyBase64));
-            this.state = this.deps.createState();
-            this.engine = new SyncEngine({
+            const state = this.deps.createState();
+            // 다른 공유 드라이브·다른 기관 키의 상태가 남아 있으면 비우고 처음부터 맞춘다(옛 파일 id·토큰이 섞이지 않게).
+            const meta = await state.getMeta();
+            if ((meta.driveId && meta.driveId !== status.driveId) || (meta.keyId && meta.keyId !== key.keyId)) await state.clearAll();
+            await state.setMeta({ driveId: status.driveId, keyId: key.keyId });
+            const engine = new SyncEngine({
                 drive: createDriveClient(this.deps.bridge),
                 local: this.deps.local,
-                state: this.state,
+                state,
                 key,
                 accountEmail: status.accountEmail,
                 onProgress: progress => this.set({ progress }),
             });
+            if (generation !== this.generation) return;
+            this.state = state;
+            this.engine = engine;
             this.unsubscribe = this.deps.subscribe(mutation => this.onMutation(mutation));
             if (this.deps.storage.getItem(SHARED_DRIVE_RESTORE_PAUSE_KEY)) {
                 this.set({ phase: 'paused-restore', message: '백업을 복원했습니다. 어느 쪽을 기준으로 맞출지 골라 주세요.' });
                 await this.refreshCounts();
                 return;
             }
+            // 주기 받기는 네트워크 확인보다 먼저 건다(오프라인으로 시작해도 연결되면 저절로 이어서 받게).
+            this.pollHandle = this.deps.setRepeat(() => {
+                if (this.deps.isVisible()) void this.syncNow();
+            }, POLL_INTERVAL_MS);
+            // 동기화를 꺼 둔 사이에 고친 기록을 올릴 목록에 넣는다(드라이브 요청 없음).
+            await engine.reconcileLocal();
+            await this.refreshCounts();
             if (!(await this.checkSecurity(false))) return;
-            const keyStatus = await this.engine.keyStatus();
+            const keyStatus = await engine.keyStatus();
+            if (generation !== this.generation) return;
             if (keyStatus === 'rotated') {
                 this.set({ phase: 'needs-key', message: '기관 키가 바뀌었습니다. 관리자에게 새 기관 키 코드를 받아 넣어 주세요.' });
                 return;
             }
             this.set({ phase: 'idle', message: '', keyCheckTampered: keyStatus === 'tampered' });
-            this.pollHandle = this.deps.setRepeat(() => {
-                if (this.deps.isVisible()) void this.syncNow();
-            }, POLL_INTERVAL_MS);
+            if ((await state.getMeta()).needsFullResync) {
+                // 새 기관 키를 넣은 뒤: 교체 중에 격리됐던 파일까지 전부 다시 맞춘다.
+                this.set({ phase: 'syncing' });
+                await this.initialSync();
+                await state.setMeta({ needsFullResync: false });
+                if (generation !== this.generation) return;
+                this.set({ phase: 'idle', message: '' });
+            }
             await this.syncNow();
         } catch (error) {
-            this.set({ phase: 'error', message: messageOf(error), offline: isOffline(error) });
+            if (generation !== this.generation) return;
+            this.set({ phase: 'error', message: messageOf(error), offline: isOffline(error), progress: null });
         }
     }
 
     stop(): void {
+        this.generation += 1;
         this.unsubscribe?.();
         this.unsubscribe = null;
         if (this.pushTimer) this.deps.clearTimer(this.pushTimer);
@@ -169,8 +196,9 @@ export class SharedDriveController {
 
     /** 보안 점검(하루 한 번 또는 force). 차단이 있으면 false. */
     async checkSecurity(force: boolean): Promise<boolean> {
-        if (!this.state) return false;
-        const meta = await this.state.getMeta();
+        const state = this.state;
+        if (!state) return false;
+        const meta = await state.getMeta();
         if (!force && !securityCheckDue(meta.lastSecurityCheckAt) && useSharedDriveStore.getState().phase !== 'blocked') return true;
         const facts = await unwrap(this.deps.bridge.securityFacts());
         const report = evaluateDriveSecurity(facts, this.domain);
@@ -179,16 +207,24 @@ export class SharedDriveController {
             this.set({ phase: 'blocked', message: '공유 드라이브 보안 점검에서 막힌 항목이 있어 동기화를 멈췄습니다. 설정에서 확인해 주세요.' });
             return false;
         }
-        await this.state.setMeta({ lastSecurityCheckAt: new Date().toISOString() });
+        await state.setMeta({ lastSecurityCheckAt: new Date().toISOString() });
         return true;
     }
 
     private onMutation(mutation: LocalMutation) {
         if (mutation.origin !== 'app' || !isSyncedStore(mutation.store) || !this.engine) return;
         const engine = this.engine;
-        void engine.noteLocalChange(mutation.store as SyncedStore, mutation.ids).then(() => {
+        const store = mutation.store as SyncedStore;
+        const note = (attempt: number): Promise<void> => engine.noteLocalChange(store, mutation.ids).catch(error => {
+            // 대기 표지를 남기지 못하면 변경이 올라가지 않는다. 몇 번 더 시도하고, 그래도 안 되면 다음 켤 때 reconcileLocal이 잡는다.
+            if (attempt >= 3 || this.engine !== engine) throw error;
+            return new Promise<void>(resolve => { this.deps.setTimer(resolve, 500 * attempt); }).then(() => note(attempt + 1));
+        });
+        void note(1).then(() => {
             void this.refreshCounts();
             this.schedulePush();
+        }).catch(() => {
+            this.set({ message: '바뀐 내용을 올릴 목록에 넣지 못했습니다. 다음에 켤 때 다시 확인합니다.' });
         });
     }
 
@@ -201,20 +237,25 @@ export class SharedDriveController {
     }
 
     async refreshCounts(): Promise<void> {
-        if (!this.state) return;
-        const [outbox, conflicts, meta] = await Promise.all([this.state.outbox(), this.state.conflicts().catch(() => []), this.state.getMeta()]);
+        const state = this.state;
+        if (!state) return;
+        const [outbox, conflicts, meta] = await Promise.all([state.outbox(), state.conflicts().catch(() => []), state.getMeta()]);
+        if (this.state !== state) return;
         this.set({ pending: outbox.length, conflicts: conflicts.length, quarantined: meta.quarantined?.length ?? 0, lastSyncAt: meta.lastPullAt || '' });
     }
 
-    /** 받고 올린다. 이미 도는 중이면 건너뛴다. */
+    /** 받고 올린다. 이미 도는 중이면 건너뛴다. 도중에 멈추면(끄기·로그아웃) 결과를 화면에 쓰지 않는다. */
     async syncNow(): Promise<void> {
         const phase = useSharedDriveStore.getState().phase;
-        if (!this.engine || this.running || phase === 'paused-restore' || phase === 'needs-key' || phase === 'blocked') return;
+        const engine = this.engine;
+        if (!engine || this.running || phase === 'paused-restore' || phase === 'needs-key' || phase === 'blocked') return;
         this.running = true;
         this.set({ phase: 'syncing' });
+        const alive = () => this.engine === engine;
         try {
             if (!(await this.checkSecurity(false))) return;
-            const { pull } = await this.engine.syncOnce();
+            const { pull } = await engine.syncOnce();
+            if (!alive()) return;
             if (pull.applied > 0) this.deps.onApplied(pull.applied);
             await this.refreshCounts();
             if (pull.needsNewKey) {
@@ -223,6 +264,7 @@ export class SharedDriveController {
             }
             this.set({ phase: 'idle', message: '', offline: false, progress: null, keyCheckTampered: Boolean(pull.keyCheckTampered) || useSharedDriveStore.getState().keyCheckTampered });
         } catch (error) {
+            if (!alive()) return;
             this.set({ phase: isOffline(error) ? 'idle' : 'error', message: messageOf(error), offline: isOffline(error), progress: null });
             await this.refreshCounts().catch(() => undefined);
         } finally {
@@ -230,12 +272,13 @@ export class SharedDriveController {
         }
     }
 
-    /** 첫 맞추기(설정 마법사): 이 PC의 기존 자료 올리기 + 드라이브 자료 받기 */
+    /** 첫 맞추기(설정 마법사·복원 뒤·새 키 뒤): 이 PC의 기존 자료 올리기 + 드라이브 자료 받기 */
     async initialSync(): Promise<InitialSyncResult> {
-        if (!this.engine) throw new Error('공유 저장소가 준비되지 않았습니다.');
+        const engine = this.engine;
+        if (!engine) throw new Error('공유 저장소가 준비되지 않았습니다.');
         this.running = true;
         try {
-            const result = await this.engine.initialSync();
+            const result = await engine.initialSync();
             if (result.downloaded > 0) this.deps.onApplied(result.downloaded);
             await this.refreshCounts();
             return result;
@@ -251,14 +294,19 @@ export class SharedDriveController {
      * - drive: 드라이브 것으로 이 PC를 덮는다. (드라이브에 없는 복원본 기록은 올라간다 — 지우지 않는다)
      */
     async resolveRestore(choice: 'local' | 'drive'): Promise<InitialSyncResult> {
-        if (!this.engine || !this.state) throw new Error('공유 저장소가 준비되지 않았습니다.');
-        await unwrap(this.deps.bridge.backupLocalData());
-        await this.state.clearAll();
+        const engine = this.engine;
+        const state = this.state;
+        if (!engine || !state) throw new Error('공유 저장소가 준비되지 않았습니다.');
+        const backup = await unwrap(this.deps.bridge.backupLocalData());
+        if (!backup.copied) throw new Error('이 PC 저장소의 사본을 만들지 못해 진행하지 않았습니다. 잠시 후 다시 시도해 주세요.');
+        const status = useSharedDriveStore.getState().status;
+        await state.clearAll();
+        await state.setMeta({ driveId: status?.driveId, keyId: engine.keyId });
         const result = await this.initialSync();
-        for (const conflict of await this.engine.conflicts()) {
-            await this.engine.resolveConflict(conflict.rid, choice === 'local' ? 'keep-local' : 'take-remote');
+        for (const conflict of await engine.conflicts()) {
+            await engine.resolveConflict(conflict.rid, choice === 'local' ? 'keep-local' : 'take-remote');
         }
-        if (choice === 'local') await this.engine.push();
+        if (choice === 'local') await engine.push();
         if (choice === 'drive') this.deps.onApplied(1);
         this.deps.storage.removeItem(SHARED_DRIVE_RESTORE_PAUSE_KEY);
         this.set({ phase: 'idle', message: '' });
@@ -281,8 +329,17 @@ export class SharedDriveController {
         return this.engine?.editingInfo(store, id) ?? null;
     }
 
+    /** 이 레코드가 충돌 목록에 있는가(화면에 열어 둔 기록을 다른 PC가 고쳤을 때) */
+    async hasConflict(store: SyncedStore, id: string): Promise<boolean> {
+        const rid = store + ':' + id;
+        const conflicts = this.state ? await this.state.conflicts().catch(() => []) : [];
+        return conflicts.some(conflict => conflict.rid === rid);
+    }
+
+    /** 화면에 열어 둔 기록 표시. 켜져 있고 멈춘 상태가 아니면 드라이브에도 "편집 중"을 남긴다(동기화 중이어도). */
     async setEditing(store: SyncedStore, id: string, editing: boolean): Promise<void> {
-        if (!this.engine || useSharedDriveStore.getState().phase !== 'idle') return;
+        const phase = useSharedDriveStore.getState().phase;
+        if (!this.engine || phase === 'off' || phase === 'unavailable' || phase === 'blocked' || phase === 'needs-key' || phase === 'paused-restore') return;
         await this.engine.setEditing(store, id, editing).catch(() => undefined);
     }
 }

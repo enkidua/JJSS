@@ -200,11 +200,31 @@ async function signedInService(options = {}) {
             assert.equal(result.error.code, 'DRIVE_WRONG_DOMAIN', account);
             assert.equal((await ctx.call('jjss-drive:get-status')).value.signedIn, false);
         }
-        const forged = makeService({ openExternal: browserReturning({ state: 'forged-state' }) });
+        // state가 다른 요청(다른 프로그램이 루프백 주소를 건드림)은 로그인을 끝내지 않고 무시한다. 같은 응답을 두 번 받아도 토큰 교환은 한 번.
+        const forgedStatuses = [];
+        const forged = makeService({
+            openExternal: async url => {
+                const auth = new URL(url);
+                const redirect = new URL(auth.searchParams.get('redirect_uri'));
+                const send = async (state, code = 'good-code') => {
+                    const target = new URL(redirect);
+                    target.searchParams.set('code', code);
+                    target.searchParams.set('state', state);
+                    const response = await realFetch(target);
+                    forgedStatuses.push(response.status);
+                };
+                setTimeout(async () => {
+                    await send('forged-state');
+                    assert.equal(forged.google.calls.length, 0, 'state가 다르면 토큰 교환도 하지 않음');
+                    await Promise.all([send(auth.searchParams.get('state')), send(auth.searchParams.get('state'))]);
+                }, 10);
+            },
+        });
         await forged.call('jjss-drive:configure', { clientId: CLIENT_ID, clientSecret: 's', domain: DOMAIN });
         const result = await forged.call('jjss-drive:sign-in');
-        assert.equal(result.error.code, 'DRIVE_SIGN_IN_STATE');
-        assert.equal(forged.google.calls.length, 0, 'state가 다르면 토큰 교환도 하지 않음');
+        assert.equal(result.ok, true, JSON.stringify(result));
+        assert.equal(forgedStatuses[0], 404, '위조 state는 404');
+        assert.equal(forged.google.calls.filter(item => item.url.href.startsWith('https://oauth2.googleapis.com/token')).length, 1, '같은 응답이 두 번 와도 토큰 교환은 한 번');
     });
 
     await test('드라이브 범위: 선택한 공유 드라이브 안만 목록·변경·다운로드, 밖의 파일은 거부', async () => {

@@ -42,32 +42,28 @@ export function evaluateDriveSecurity(facts: DriveSecurityFacts, orgDomain: stri
         '이 계정이 공유 드라이브 구성원',
         facts.accountIsMember ? '구성원입니다.' : '이 계정은 공유 드라이브 구성원이 아닙니다. 관리자에게 구성원 추가를 요청해 주세요.');
 
-    if (facts.permissionsVisible === false) {
-        add('members-visible', 'warn',
-            '구성원 목록 확인',
-            '이 계정은 공유 드라이브 구성원 목록을 볼 권한이 없어 링크 공유·기관 밖 구성원을 확인하지 못했습니다. 공유 드라이브 관리자 계정으로 한 번 점검해 주세요.');
-    }
-
+    const hidden = facts.permissionsVisible === false;
+    const unverified = '이 계정으로는 구성원 목록을 볼 수 없어 확인하지 못했습니다.';
     const anyone = facts.permissions.filter(permission => permission.type === 'anyone');
-    add('no-link-sharing', anyone.length ? 'block' : 'pass',
+    add('no-link-sharing', anyone.length ? 'block' : hidden ? 'warn' : 'pass',
         '링크 공유(누구나) 꺼짐',
-        anyone.length ? '"링크가 있는 모든 사용자" 공유가 켜져 있습니다. 공유 드라이브 설정에서 꺼 주세요.' : '꺼져 있습니다.');
+        anyone.length ? '"링크가 있는 모든 사용자" 공유가 켜져 있습니다. 공유 드라이브 설정에서 꺼 주세요.' : hidden ? unverified : '꺼져 있습니다.');
 
     const outsideMembers = facts.permissions.filter(permission =>
         (permission.type === 'user' || permission.type === 'group') && domainOf(permission.emailAddress) && domainOf(permission.emailAddress) !== domain);
-    add('no-external-members', outsideMembers.length ? 'block' : 'pass',
+    add('no-external-members', outsideMembers.length ? 'block' : hidden ? 'warn' : 'pass',
         '기관 밖 구성원 없음',
-        outsideMembers.length ? `기관 도메인 밖 계정 ${outsideMembers.length}개가 구성원입니다. 관리자에게 제거를 요청해 주세요.` : '모두 기관 도메인 계정입니다.');
+        outsideMembers.length ? `기관 도메인 밖 계정 ${outsideMembers.length}개가 구성원입니다. 관리자에게 제거를 요청해 주세요.` : hidden ? unverified : '모두 기관 도메인 계정입니다.');
 
     const otherDomains = facts.permissions.filter(permission => permission.type === 'domain' && String(permission.domain || '').toLowerCase() !== domain);
     const ownDomain = facts.permissions.filter(permission => permission.type === 'domain' && String(permission.domain || '').toLowerCase() === domain);
-    add('no-domain-wide', otherDomains.length ? 'block' : ownDomain.length ? 'warn' : 'pass',
+    add('no-domain-wide', otherDomains.length ? 'block' : ownDomain.length || hidden ? 'warn' : 'pass',
         '도메인 전체 공유 없음',
         otherDomains.length
             ? '다른 도메인 전체에 공유되어 있습니다.'
             : ownDomain.length
                 ? '기관 도메인 전체에 공유되어 있습니다. 사례관리 담당 그룹만 구성원으로 두는 것을 권장합니다.'
-                : '특정 구성원·그룹에만 공유되어 있습니다.');
+                : hidden ? unverified : '특정 구성원·그룹에만 공유되어 있습니다.');
 
     const r = facts.restrictions || {};
     add('domain-users-only', r.domainUsersOnly ? 'pass' : 'warn',

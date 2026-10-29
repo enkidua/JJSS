@@ -179,12 +179,12 @@ export default function Layout() {
             <ApiKeyOnboarding />
             <ApiKeyRequiredNotice />
             <UpdateNotice />
-            <SharedDriveRuntime />
             <PremiumUseConfirmDialog />
-            {/* 오른쪽 아래 알림은 한 곳에 위아래로 쌓아 서로 겹치지 않게 한다. */}
+            {/* 오른쪽 아래 알림은 한 곳에 위아래로 쌓아 서로 겹치지 않게 한다(공유 저장소 상태 표시 포함). */}
             <div className="pointer-events-none fixed bottom-4 right-4 z-9998 flex w-[min(92vw,32rem)] flex-col items-end gap-3">
                 <AIUsageNotice />
                 <JjssFileSaveNotice />
+                <SharedDriveRuntime />
             </div>
             <main id="main-content" tabIndex={-1} className="pt-16 flex-1 relative focus:outline-hidden">
                 {initialLoading && <p role="status" className="mx-auto max-w-7xl px-6 py-3 text-sm text-white/70">저장된 데이터와 설정을 불러오는 중입니다…</p>}

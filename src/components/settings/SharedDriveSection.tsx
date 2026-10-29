@@ -13,11 +13,14 @@ export default function SharedDriveSection() {
     const bridge = getDriveBridge();
     const [status, setStatus] = useState<JjssDriveStatus | null>(null);
     const [setupOpen, setSetupOpen] = useState(false);
+    const [statusError, setStatusError] = useState('');
 
     useEffect(() => {
         if (!bridge) return;
         let active = true;
-        unwrap(bridge.getStatus()).then(value => { if (active) setStatus(value); }).catch(() => undefined);
+        unwrap(bridge.getStatus())
+            .then(value => { if (active) { setStatus(value); setStatusError(''); } })
+            .catch(error => { if (active) setStatusError(String((error as Error)?.message || '공유 저장소 상태를 읽지 못했습니다.')); });
         return () => { active = false; };
     }, [bridge]);
 
@@ -42,6 +45,7 @@ export default function SharedDriveSection() {
                     <p className="text-xs text-white/40">사례관리 기록을 기관 공유 드라이브에 암호화해 두고 여러 직원 PC가 함께 씁니다. 선택 기능 · 기본 꺼짐</p>
                 </div>
             </div>
+            {statusError && <p role="alert" className="mb-3 rounded-xl border border-rose-400/30 bg-rose-500/10 p-3 text-xs text-rose-100">{statusError} 앱을 다시 실행한 뒤에도 같으면 관리자에게 알려 주세요.</p>}
             {enabled && status ? (
                 <SharedDriveStatus status={status} onStatus={setStatus} />
             ) : setupOpen ? (

@@ -123,6 +123,8 @@ export interface ConflictEntry {
     remoteUpdatedBy: string;
     remoteUpdatedAt: string;
     fileId: string;
+    /** 충돌 사본을 이 PC의 데이터 키로 열지 못했다(해결하려면 데이터 키 복구가 먼저) */
+    undecodable?: boolean;
 }
 
 export interface SyncMeta {
@@ -130,6 +132,11 @@ export interface SyncMeta {
     lastPullAt?: string;
     lastPushAt?: string;
     lastSecurityCheckAt?: string;
+    /** 이 상태가 어느 공유 드라이브·기관 키의 것인지. 다르면 상태를 비우고 처음부터 맞춘다. */
+    driveId?: string;
+    keyId?: string;
+    /** 기관 키를 새로 넣은 뒤 전체를 다시 맞춰야 한다 */
+    needsFullResync?: boolean;
     /** 열지 못해(위조·손상·모르는 키) 격리한 드라이브 레코드 id. 관리자가 확인한다. */
     quarantined?: string[];
 }
@@ -144,6 +151,8 @@ export interface SyncStateStore {
     dequeue(rid: string, queuedAt?: string): Promise<void>;
     outbox(): Promise<OutboxEntry[]>;
     isQueued(rid: string): Promise<boolean>;
+    /** 올릴 목록의 항목(대기 표지 포함). 없으면 undefined. */
+    queuedEntry(rid: string): Promise<OutboxEntry | undefined>;
     putConflict(conflict: ConflictEntry): Promise<void>;
     removeConflict(rid: string): Promise<void>;
     conflicts(): Promise<ConflictEntry[]>;

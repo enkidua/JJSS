@@ -1,4 +1,5 @@
 import SharedDriveEditingBanner from '../../../components/SharedDriveEditingBanner';
+import { SHARED_DRIVE_APPLIED_EVENT } from '../../../features/sharedDrive/controller';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, Save } from 'lucide-react';
 import {
@@ -117,6 +118,13 @@ export function SupportedEmploymentTab({ seekers, jobs, request, onDirtyChange }
     useEffect(() => {
         void reloadList();
         return () => { listRequestRef.current += 1; openRequestRef.current += 1; };
+    }, [reloadList]);
+
+    // 공유 저장소가 다른 PC의 변경을 받아 오면 목록을 다시 읽는다(편집 중인 회차는 그대로 둔다 — 충돌은 설정에서 보인다).
+    useEffect(() => {
+        const onApplied = () => { void reloadList(); };
+        window.addEventListener(SHARED_DRIVE_APPLIED_EVENT, onApplied);
+        return () => window.removeEventListener(SHARED_DRIVE_APPLIED_EVENT, onApplied);
     }, [reloadList]);
 
     const startEditing = useCallback((draft: SupportedEmploymentCase, baseline: string, savedStatus: Editing['savedStatus']) => {

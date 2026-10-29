@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { KeyRound, RefreshCw, ShieldCheck } from 'lucide-react';
+import { KeyRound, LogIn, RefreshCw, ShieldCheck } from 'lucide-react';
 import { useSharedDriveStore, getSharedDriveController, type SharedDrivePhase } from '../../../features/sharedDrive/controller';
-import { bytesToBase64, getDriveBridge, unwrap } from '../../../features/sharedDrive/driveClient';
+import { base64ToBytes, bytesToBase64, getDriveBridge, unwrap } from '../../../features/sharedDrive/driveClient';
 import { deriveOrgKey, formatOrgKeyCode, generateOrgSecret, parseOrgKeyCode } from '../../../features/sharedDrive/orgKey';
 import type { ConflictEntry } from '../../../features/sharedDrive/types';
 import type { SeekerDuplicateGroup } from '../../../features/sharedDrive/engine';
-import { mergeSeekers } from '../../../features/sharedDrive/mergeSeekers';
-import { base64ToBytes } from '../../../features/sharedDrive/driveClient';
+import { describeMergeCandidates, mergeSeekers, type MergeCandidate } from '../../../features/sharedDrive/mergeSeekers';
 import { useDataStore } from '../../../store/dataStore';
 import SecurityReportView from './SecurityReportView';
 
@@ -46,22 +45,35 @@ export default function SharedDriveStatus({ status, onStatus }: { status: JjssDr
     const [notice, setNotice] = useState('');
     const [conflicts, setConflicts] = useState<ConflictEntry[]>([]);
     const [quarantined, setQuarantined] = useState<string[]>([]);
-    const [duplicates, setDuplicates] = useState<SeekerDuplicateGroup[]>([]);
+    const [duplicates, setDuplicates] = useState<Array<SeekerDuplicateGroup & { candidates: MergeCandidate[] }>>([]);
     const [codeInput, setCodeInput] = useState('');
     const [shownCode, setShownCode] = useState('');
-    const [rotation, setRotation] = useState<{ secret: Uint8Array; code: string } | null>(null);
+    const [rotation, setRotation] = useState<{ secret: Uint8Array; code: string; resumed: boolean } | null>(null);
 
     const reloadLists = useCallback(async () => {
         const engine = controller?.syncEngine;
         if (!engine) return;
         setConflicts(await engine.conflicts().catch(() => []));
         setQuarantined(await engine.quarantined().catch(() => []));
-        setDuplicates(await engine.findSeekerDuplicates().catch(() => []));
+        const groups = await engine.findSeekerDuplicates().catch(() => []);
+        setDuplicates(await Promise.all(groups.map(async group => ({ ...group, candidates: await describeMergeCandidates(group.seekerIds).catch(() => []) }))));
     }, [controller]);
 
     useEffect(() => {
         void reloadLists();
     }, [reloadLists, view.conflicts, view.quarantined, view.lastSyncAt, view.phase]);
+
+    // 끝나지 않은 기관 키 바꾸기가 있으면(바꾸는 도중 앱이 꺼짐) 같은 새 키로 이어서 할 수 있게 보여 준다.
+    useEffect(() => {
+        let alive = true;
+        if (typeof bridge.getPendingOrgKey !== 'function') return;
+        unwrap(bridge.getPendingOrgKey()).then(async pending => {
+            if (!alive || !pending) return;
+            const secret = base64ToBytes(pending);
+            setRotation({ secret, code: await formatOrgKeyCode(secret), resumed: true });
+        }).catch(() => undefined);
+        return () => { alive = false; };
+    }, [bridge]);
 
     const run = async (action: () => Promise<void>) => {
         setBusy(true);
@@ -79,6 +91,8 @@ export default function SharedDriveStatus({ status, onStatus }: { status: JjssDr
     };
 
     const engine = controller?.syncEngine ?? null;
+    const syncing = view.phase === 'syncing' || view.phase === 'starting';
+    const needsSignIn = /다시 로그인|로그인해 주세요/.test(view.message);
 
     return (
         <div className="space-y-4 text-sm text-white/75">
@@ -94,18 +108,25 @@ export default function SharedDriveStatus({ status, onStatus }: { status: JjssDr
             {notice && <p role="status" className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 p-3 text-xs text-emerald-100">{notice}</p>}
 
             <div className="flex flex-wrap gap-2">
-                <button type="button" disabled={busy || view.phase === 'syncing'} onClick={() => void run(async () => { await controller?.syncNow(); })} className="btn-secondary px-3! py-2! text-xs inline-flex items-center gap-1.5"><RefreshCw className="h-3.5 w-3.5" /> 지금 동기화</button>
-                <button type="button" disabled={busy} onClick={() => void run(async () => {
+                <button type="button" disabled={busy || syncing} onClick={() => void run(async () => { await controller?.syncNow(); })} className="btn-secondary px-3! py-2! text-xs inline-flex items-center gap-1.5"><RefreshCw className="h-3.5 w-3.5" /> 지금 동기화</button>
+                <button type="button" disabled={busy || syncing} onClick={() => void run(async () => {
                     const passed = await controller?.checkSecurity(true);
                     if (passed && view.phase === 'blocked') await controller?.start();
                 })} className="btn-secondary px-3! py-2! text-xs inline-flex items-center gap-1.5"><ShieldCheck className="h-3.5 w-3.5" /> 보안 다시 점검</button>
-                <button type="button" disabled={busy} onClick={() => void run(async () => {
+                {(needsSignIn || view.phase === 'error') && (
+                    <button type="button" disabled={busy || syncing} onClick={() => void run(async () => {
+                        onStatus(await unwrap(bridge.signIn()));
+                        await controller?.start();
+                        setNotice('다시 로그인했습니다.');
+                    })} className="btn-secondary px-3! py-2! text-xs inline-flex items-center gap-1.5"><LogIn className="h-3.5 w-3.5" /> 다시 로그인</button>
+                )}
+                <button type="button" disabled={busy || syncing} onClick={() => void run(async () => {
                     controller?.stop();
                     onStatus(await unwrap(bridge.setEnabled(false)));
                     useSharedDriveStore.setState({ phase: 'off', message: '' });
                 })} className="btn-secondary px-3! py-2! text-xs">끄기</button>
-                <button type="button" disabled={busy} onClick={() => {
-                    if (!window.confirm('로그아웃하면 이 PC의 구글 로그인과 기관 키를 지우고 공유 저장소를 끕니다. 이 PC 자료는 그대로입니다. 계속할까요?')) return;
+                <button type="button" disabled={busy || syncing} onClick={() => {
+                    if (!window.confirm('로그아웃하면 이 PC의 구글 로그인과 기관 키를 지우고 공유 저장소를 끕니다. 이 PC 자료는 그대로입니다. 다시 쓰려면 기관 키 코드가 다시 필요합니다. 계속할까요?')) return;
                     void run(async () => {
                         controller?.stop();
                         onStatus(await unwrap(bridge.signOut()));
@@ -113,6 +134,7 @@ export default function SharedDriveStatus({ status, onStatus }: { status: JjssDr
                     });
                 }} className="btn-secondary px-3! py-2! text-xs">로그아웃</button>
             </div>
+            {syncing && <p className="text-xs text-white/45">주고받는 중에는 끄기·로그아웃을 할 수 없습니다. 잠시 기다려 주세요.</p>}
 
             {view.security && <details className="text-xs"><summary className="cursor-pointer text-white/60">보안 점검 결과</summary><div className="mt-2"><SecurityReportView report={view.security} /></div></details>}
 
@@ -140,11 +162,12 @@ export default function SharedDriveStatus({ status, onStatus }: { status: JjssDr
                         await unwrap(bridge.setOrgKey(bytesToBase64(secret)));
                         setCodeInput('');
                         await controller?.start();
-                        setNotice('새 기관 키로 이어서 동기화합니다.');
+                        setNotice('새 기관 키로 전체를 다시 맞춘 뒤 이어서 동기화합니다.');
                     });
                 }}>
-                    <p className="text-sky-100">관리자에게 받은 새 기관 키 코드를 넣어 주세요.</p>
-                    <input className="input-field w-full font-mono uppercase tracking-wider" value={codeInput} onChange={event => setCodeInput(event.target.value)} autoComplete="off" />
+                    <label className="block text-sky-100">관리자에게 받은 새 기관 키 코드를 넣어 주세요.
+                        <input aria-label="새 기관 키 코드" className="input-field mt-1 w-full font-mono uppercase tracking-wider" value={codeInput} onChange={event => setCodeInput(event.target.value)} autoComplete="off" />
+                    </label>
                     <button type="submit" disabled={busy || !codeInput.trim()} className="btn-primary px-3! py-2! text-xs">확인</button>
                 </form>
             )}
@@ -152,16 +175,30 @@ export default function SharedDriveStatus({ status, onStatus }: { status: JjssDr
             {conflicts.length > 0 && (
                 <section aria-label="충돌" className="space-y-2">
                     <p className="text-xs font-semibold text-white">다른 PC와 내용이 다른 기록 {conflicts.length}건</p>
+                    <p className="text-xs text-white/50">고르기 전까지 이 기록은 드라이브에 올라가지 않습니다. 내용은 펼쳐서 확인하세요.</p>
                     {conflicts.map(conflict => (
                         <div key={conflict.rid} data-testid="shared-drive-conflict" className="space-y-2 rounded-xl border border-white/10 bg-white/5 p-3 text-xs">
-                            <div className="grid gap-2 sm:grid-cols-2">
-                                <div><p className="text-white/45">이 PC</p><p className="text-white/85 break-all">{describeRecord(conflict.rid, conflict.local)}</p></div>
-                                <div><p className="text-white/45">드라이브({conflict.remoteUpdatedBy || '알 수 없음'}, {formatTime(conflict.remoteUpdatedAt)})</p><p className="text-white/85 break-all">{describeRecord(conflict.rid, conflict.remote)}</p></div>
-                            </div>
-                            <div className="flex flex-wrap gap-2">
-                                <button type="button" disabled={busy || !engine} onClick={() => void run(async () => { await engine!.resolveConflict(conflict.rid, 'keep-local'); await controller?.syncNow(); })} className="btn-secondary px-3! py-1.5! text-xs">이 PC 것으로</button>
-                                <button type="button" disabled={busy || !engine} onClick={() => void run(async () => { await engine!.resolveConflict(conflict.rid, 'take-remote'); await useDataStore.getState().fetchData(true); })} className="btn-secondary px-3! py-1.5! text-xs">드라이브 것으로</button>
-                            </div>
+                            <p className="font-mono text-white/60">{conflict.rid}</p>
+                            {conflict.undecodable ? (
+                                <p className="text-rose-200">이 충돌 사본을 이 PC의 데이터 키로 열지 못합니다. 데이터 복구 안내를 먼저 확인한 뒤 다시 보세요.</p>
+                            ) : (
+                                <details>
+                                    <summary className="cursor-pointer text-white/70">내용 보기</summary>
+                                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                                        <div><p className="text-white/45">이 PC</p><p className="text-white/85 break-all">{describeRecord(conflict.rid, conflict.local)}</p></div>
+                                        <div><p className="text-white/45">드라이브({conflict.remoteUpdatedBy || '알 수 없음'}, {formatTime(conflict.remoteUpdatedAt)})</p><p className="text-white/85 break-all">{describeRecord(conflict.rid, conflict.remote)}</p></div>
+                                    </div>
+                                </details>
+                            )}
+                            {!conflict.undecodable && (
+                                <div className="flex flex-wrap gap-2">
+                                    <button type="button" aria-label={`${conflict.rid}: 이 PC 것으로`} disabled={busy || !engine} onClick={() => void run(async () => { await engine!.resolveConflict(conflict.rid, 'keep-local'); await controller?.syncNow(); })} className="btn-secondary px-3! py-1.5! text-xs">이 PC 것으로</button>
+                                    <button type="button" aria-label={`${conflict.rid}: 드라이브 것으로`} disabled={busy || !engine} onClick={() => {
+                                        if (!window.confirm('이 PC의 내용을 드라이브 것으로 바꿉니다. 이 PC에서 고친 내용은 사라집니다. 계속할까요?')) return;
+                                        void run(async () => { await engine!.resolveConflict(conflict.rid, 'take-remote'); await useDataStore.getState().refreshAfterSync(); });
+                                    }} className="btn-secondary px-3! py-1.5! text-xs">드라이브 것으로</button>
+                                </div>
+                            )}
                         </div>
                     ))}
                 </section>
@@ -186,19 +223,22 @@ export default function SharedDriveStatus({ status, onStatus }: { status: JjssDr
             {duplicates.length > 0 && (
                 <section aria-label="같은 사람으로 보이는 이용자" className="space-y-2 text-xs">
                     <p className="font-semibold text-white">같은 사람으로 보이는 이용자 {duplicates.length}묶음</p>
-                    <p className="text-white/55">이름과 관리번호가 같습니다. 같은 사람이면 남길 이용자를 골라 합치세요(다른 이용자의 사례 기록이 옮겨집니다). 다른 사람이면 그대로 두면 됩니다.</p>
+                    <p className="text-white/55">이름과 관리번호가 같습니다. 같은 사람이면 남길 이용자를 골라 합치세요. 다른 이용자의 사례 기록은 남길 이용자에게 옮겨지고, 그 이용자의 연락처·메모 등 기본 정보는 남지 않습니다. 다른 사람이면 그대로 두면 됩니다.</p>
                     {duplicates.map(group => (
-                        <div key={group.key} className="flex flex-wrap items-center gap-2 rounded-lg bg-white/5 px-2.5 py-1.5">
-                            <span className="text-white/85">{group.label}</span>
-                            {group.seekerIds.map(id => (
-                                <button key={id} type="button" disabled={busy} onClick={() => {
-                                    if (!window.confirm(`"${group.label}" ${group.seekerIds.length}명을 하나로 합칩니다. 남길 이용자: ${id.slice(0, 8)}… 계속할까요?`)) return;
-                                    void run(async () => {
-                                        const merged = await mergeSeekers(id, group.seekerIds);
-                                        await useDataStore.getState().fetchData(true);
-                                        setNotice(`합쳤습니다: 기록 ${merged.movedDocuments}건 이동, 이용자 ${merged.removedSeekers.length}명 정리${merged.keptBecauseReferenced.length ? `, 다른 기록이 가리키고 있어 남겨 둔 이용자 ${merged.keptBecauseReferenced.length}명` : ''}.`);
-                                    });
-                                }} className="btn-secondary px-2.5! py-1! text-xs">{id.slice(0, 8)}… 남기고 합치기</button>
+                        <div key={group.key} className="space-y-1.5 rounded-lg bg-white/5 px-2.5 py-2">
+                            <p className="text-white/85">{group.label}</p>
+                            {group.candidates.map(candidate => (
+                                <div key={candidate.id} className="flex flex-wrap items-center justify-between gap-2 rounded bg-white/5 px-2 py-1">
+                                    <span className="text-white/70">{candidate.phone || '연락처 없음'} · 등록 {candidate.createdAt || '—'} · 기록 {candidate.documentCount}건 <span className="font-mono text-white/40">{candidate.id.slice(0, 8)}…</span></span>
+                                    <button type="button" disabled={busy} onClick={() => {
+                                        if (!window.confirm(`"${group.label}" ${group.seekerIds.length}명을 하나로 합칩니다. 남길 이용자: ${candidate.phone || '연락처 없음'} · 등록 ${candidate.createdAt || '—'}. 다른 이용자의 기록은 옮겨지고 그 이용자는 지워집니다. 계속할까요?`)) return;
+                                        void run(async () => {
+                                            const merged = await mergeSeekers(candidate.id, group.seekerIds);
+                                            await useDataStore.getState().refreshAfterSync();
+                                            setNotice(`합쳤습니다: 기록 ${merged.movedDocuments}건 이동, 이용자 ${merged.removedSeekers.length}명 정리${merged.keptBecauseReferenced.length ? `, 다른 기록이 가리키고 있어 남겨 둔 이용자 ${merged.keptBecauseReferenced.length}명` : ''}.`);
+                                        });
+                                    }} className="btn-secondary px-2.5! py-1! text-xs">이 이용자 남기고 합치기</button>
+                                </div>
                             ))}
                         </div>
                     ))}
@@ -208,34 +248,44 @@ export default function SharedDriveStatus({ status, onStatus }: { status: JjssDr
             <details className="text-xs">
                 <summary className="cursor-pointer text-white/60">관리자: 기관 키</summary>
                 <div className="mt-2 space-y-2">
-                    <button type="button" disabled={busy} onClick={() => {
-                        if (!window.confirm('기관 키 코드를 화면에 표시합니다. 주변에 다른 사람이 없는지 확인하세요.')) return;
-                        void run(async () => {
-                            const base64 = await unwrap(bridge.getOrgKey());
-                            setShownCode(base64 ? await formatOrgKeyCode(base64ToBytes(base64)) : '');
-                        });
-                    }} className="btn-secondary px-3! py-1.5! text-xs inline-flex items-center gap-1.5"><KeyRound className="h-3.5 w-3.5" /> 기관 키 코드 보기</button>
-                    {shownCode && <p className="select-all font-mono text-base tracking-wider text-white">{shownCode}</p>}
-                    <p className="text-white/50">직원이 퇴사했거나 코드가 새어 나갔으면 기관 키를 바꾸세요. 드라이브의 모든 기록을 새 키로 다시 암호화하고, 다른 PC는 새 코드를 넣어야 이어서 씁니다.</p>
+                    {!shownCode ? (
+                        <button type="button" disabled={busy} onClick={() => {
+                            if (!window.confirm('기관 키 코드를 화면에 표시합니다. 주변에 다른 사람이 없는지 확인하세요.')) return;
+                            void run(async () => {
+                                const base64 = await unwrap(bridge.getOrgKey());
+                                setShownCode(base64 ? await formatOrgKeyCode(base64ToBytes(base64)) : '');
+                            });
+                        }} className="btn-secondary px-3! py-1.5! text-xs inline-flex items-center gap-1.5"><KeyRound className="h-3.5 w-3.5" /> 기관 키 코드 보기</button>
+                    ) : (
+                        <div className="flex flex-wrap items-center gap-2">
+                            <p className="select-all font-mono text-base tracking-wider text-white">{shownCode}</p>
+                            <button type="button" onClick={() => setShownCode('')} className="text-white/60 underline">숨기기</button>
+                        </div>
+                    )}
+                    <p className="text-white/50">직원이 퇴사했거나 코드가 새어 나갔으면 기관 키를 바꾸세요. 드라이브의 모든 기록을 새 키로 다시 암호화하고, 다른 PC는 새 코드를 넣어야 이어서 씁니다. 바꾸는 도중 앱이 꺼지면 같은 새 키로 이어서 할 수 있습니다.</p>
                     {!rotation && (
-                        <button type="button" disabled={busy || !engine || view.pending > 0 || view.conflicts > 0} onClick={() => void run(async () => {
+                        <button type="button" disabled={busy || syncing || !engine || view.pending > 0 || view.conflicts > 0} onClick={() => void run(async () => {
                             const secret = generateOrgSecret();
-                            setRotation({ secret, code: await formatOrgKeyCode(secret) });
+                            setRotation({ secret, code: await formatOrgKeyCode(secret), resumed: false });
                         })} className="btn-secondary px-3! py-1.5! text-xs">기관 키 바꾸기…</button>
                     )}
                     {rotation && (
                         <div className="space-y-2 rounded-xl border border-amber-300/30 bg-amber-500/10 p-3">
-                            <p className="text-amber-100">새 기관 키 코드(적어 두세요):</p>
+                            <p className="text-amber-100">{rotation.resumed ? '끝나지 않은 기관 키 바꾸기가 있습니다. 이 새 키 코드로 이어서 바꿉니다(적어 두세요):' : '새 기관 키 코드(적어 두세요):'}</p>
                             <p className="select-all font-mono text-base tracking-wider text-white">{rotation.code}</p>
-                            <button type="button" disabled={busy} onClick={() => void run(async () => {
+                            <button type="button" disabled={busy || syncing || !engine} onClick={() => void run(async () => {
+                                // 새 키를 먼저 이 PC에 암호화해 둔다. 도중에 꺼져도 같은 키로 이어서 한다.
+                                await unwrap(bridge.setPendingOrgKey(bytesToBase64(rotation.secret)));
                                 const key = await deriveOrgKey(rotation.secret);
                                 const outcome = await engine!.rotateKey(key);
                                 await unwrap(bridge.setOrgKey(bytesToBase64(rotation.secret)));
+                                await unwrap(bridge.setPendingOrgKey(null));
                                 setRotation(null);
                                 setNotice(`기관 키를 바꿨습니다. 기록 ${outcome.rewritten}건을 다시 암호화했습니다${outcome.skipped.length ? ` (열지 못해 건너뛴 파일 ${outcome.skipped.length}건)` : ''}. 다른 PC에 새 코드를 알려 주세요.`);
                                 await controller?.start();
-                            })} className="btn-primary px-3! py-1.5! text-xs">새 키로 바꾸기</button>
-                            <button type="button" disabled={busy} onClick={() => setRotation(null)} className="ml-2 text-white/60 underline">취소</button>
+                            })} className="btn-primary px-3! py-1.5! text-xs">{rotation.resumed ? '이어서 바꾸기' : '새 키로 바꾸기'}</button>
+                            {!rotation.resumed && <button type="button" disabled={busy} onClick={() => setRotation(null)} className="ml-2 text-white/60 underline">취소</button>}
+                            {rotation.resumed && <p className="text-white/50">이미 새 키로 다시 쓴 파일이 있을 수 있어 취소할 수 없습니다. 이어서 바꾸면 남은 파일만 처리합니다.</p>}
                         </div>
                     )}
                 </div>

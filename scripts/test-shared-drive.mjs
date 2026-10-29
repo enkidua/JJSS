@@ -123,6 +123,9 @@ await test('보안 점검: 링크 공유·기관 밖 구성원·개인 드라이
     const loose = security.evaluateDriveSecurity({ ...good, restrictions: {}, permissions: [{ type: 'domain', domain: DOMAIN }] }, DOMAIN);
     assert.equal(loose.blocked, false);
     assert.equal(loose.warnings, 4, '도메인 전체 공유·구성원 외 공유·외부 접근·복사 제한');
+    const hidden = security.evaluateDriveSecurity({ ...good, permissions: [], permissionsVisible: false }, DOMAIN);
+    assert.equal(hidden.blocked, false);
+    assert.deepEqual(hidden.checks.filter(check => check.level === 'warn').map(check => check.id), ['no-link-sharing', 'no-external-members', 'no-domain-wide'], '구성원 목록을 못 보면 통과가 아니라 "확인 못 함"');
     assert.equal(security.securityCheckDue(undefined), true);
     assert.equal(security.securityCheckDue(new Date().toISOString()), false);
     assert.equal(security.securityCheckDue(new Date(Date.now() - 25 * 3600 * 1000).toISOString()), true);
@@ -427,6 +430,119 @@ await test('위조 방어: 기관 키 없이 파일 속성만 고친 삭제·버
     const before = Y.engine.keyId;
     await assert.rejects(Y.engine.adoptKey(await orgKey.deriveOrgKey(orgKey.generateOrgSecret())), /맞지 않습니다/);
     assert.equal(Y.engine.keyId, before);
+});
+
+await test('덮어쓰기 방어: 열어 둔 기록·대기 표지 없는 수정·같은 버전 동시 올리기·상태 없는 기록은 충돌로 남기고, 드라이브에서 지운 파일은 새로 만든다', async () => {
+    const d = createFakeSharedDrive();
+    const P = await makePc(d, secret, `kim@${DOMAIN}`);
+    const Q = await makePc(d, secret, `lee@${DOMAIN}`);
+    P.local.stores.seekers.set('s1', seeker('s1', '가온해'));
+    P.local.stores.seekers.set('s2', seeker('s2', '나래솔'));
+    P.local.stores.caseDocuments.set('d1', doc('d1', 's1', '첫 기록'));
+    await P.engine.ensureKeyCheck();
+    await P.engine.initialSync();
+    await Q.engine.initialSync();
+
+    // 1) Q가 s1을 화면에 열어 둔 사이 P가 고침 → Q는 덮어쓰지 않고 충돌
+    await Q.engine.setEditing('seekers', 's1', true);
+    await P.local.appPut('seekers', { ...P.local.stores.seekers.get('s1'), phone: '010-1111-0000' });
+    await P.engine.push();
+    const whileEditing = await Q.engine.pull();
+    assert.equal(whileEditing.conflicts, 1);
+    assert.equal(Q.local.stores.seekers.get('s1').phone, '010-0000-0000', '열어 둔 기록은 그대로');
+    assert.equal(Q.engine.isEditingLocally('seekers', 's1'), true);
+    await Q.engine.resolveConflict('seekers:s1', 'take-remote');
+    await Q.engine.setEditing('seekers', 's1', false);
+    assert.equal(Q.local.stores.seekers.get('s1').phone, '010-1111-0000');
+
+    // 2) 대기 표지 없이 고친 기록(동기화를 꺼 둔 사이): reconcileLocal이 올릴 목록에 넣고, 받기에서는 덮지 않는다
+    Q.local.stores.seekers.set('s2', { ...Q.local.stores.seekers.get('s2'), phone: '010-2222-9999' }); // appPut이 아니라 직접 저장(표지 없음)
+    assert.equal((await Q.engine.reconcileLocal()).queued, 1);
+    await P.local.appPut('seekers', { ...P.local.stores.seekers.get('s2'), organization: 'org-P' });
+    await P.engine.push();
+    const unnoted = await Q.engine.pull();
+    assert.equal(unnoted.conflicts, 1, '표지 없는 수정도 덮어쓰지 않고 충돌');
+    await Q.engine.resolveConflict('seekers:s2', 'keep-local');
+    await Q.engine.push();
+    await P.engine.pull();
+    assert.equal(P.local.stores.seekers.get('s2').phone, '010-2222-9999');
+
+    // 3) 같은 버전 위에 두 PC가 동시에 올림(둘 다 올리기 성공) → 받는 쪽이 지문 차이를 보고 충돌
+    await P.local.appPut('caseDocuments', { ...P.local.stores.caseDocuments.get('d1'), content: 'P가 고침' });
+    await Q.local.appPut('caseDocuments', { ...Q.local.stores.caseDocuments.get('d1'), content: 'Q가 고침' });
+    await P.engine.push();
+    const fileD1 = d.rawFiles().find(file => file.appProperties.rid === 'caseDocuments:d1');
+    // Q의 올리기가 P의 결과를 못 본 척(확인 응답이 늦은 경우): 같은 버전 번호로 덮어 씀
+    const qVersion = fileD1.appProperties.version;
+    const sealedQ = await orgKey.encryptRecord(Q.key, 'caseDocuments:d1', { format: 'jjss-record-v1', version: Number(qVersion), deleted: false, record: Q.local.stores.caseDocuments.get('d1') });
+    await d.api.upload({ fileId: fileD1.id, folder: 'documents/2026', name: fileD1.name, appProperties: { version: qVersion, hash: await orgKey.contentHash(Q.key, Q.local.stores.caseDocuments.get('d1')), updatedBy: `lee@${DOMAIN}` }, content: sealedQ });
+    const race = await P.engine.pull();
+    assert.equal(race.conflicts, 1, '같은 버전인데 내용이 다르면 충돌');
+    await P.engine.resolveConflict('caseDocuments:d1', 'keep-local');
+    await P.engine.push();
+    assert.equal(d.rawFiles().find(file => file.appProperties.rid === 'caseDocuments:d1').appProperties.version, String(Number(qVersion) + 1));
+
+    // 4) 드라이브에서 파일을 완전히 지움 → 다음 올리기는 알던 버전 위로 새 파일을 만든다(휴지통·버전 1로 되돌리지 않음)
+    const s1File = d.rawFiles().find(file => file.appProperties.rid === 'seekers:s1');
+    const s1Version = Number(s1File.appProperties.version);
+    d.files.delete(s1File.id);
+    await P.local.appPut('seekers', { ...P.local.stores.seekers.get('s1'), phone: '010-1111-2222' });
+    assert.equal((await P.engine.push()).uploaded, 1);
+    const recreated = d.rawFiles().filter(file => file.appProperties.rid === 'seekers:s1');
+    assert.equal(recreated.length, 1);
+    assert.ok(recreated[0].id !== s1File.id);
+    assert.equal(Number(recreated[0].appProperties.version), s1Version + 1, '알던 버전 다음 번호');
+
+    // 5) 상태를 모르는 기록(새 PC에 같은 id가 이미 있음): 내용이 같으면 연결, 다르면 충돌(덮어쓰지 않음)
+    const R = await makePc(d, secret, `park@${DOMAIN}`);
+    R.local.stores.seekers.set('s2', { ...P.local.stores.seekers.get('s2') });
+    R.local.stores.seekers.set('s1', seeker('s1', '가온해', 'R-LOCAL'));
+    const joined = await R.engine.initialSync();
+    assert.equal(joined.linked, 1);
+    assert.equal(joined.conflicts, 1);
+    assert.equal(R.local.stores.seekers.get('s1').seekerId, 'R-LOCAL');
+});
+
+await test('기관 키 바꾸기 중단: 다른 PC는 옛 키로 계속 쓰고, 같은 새 키로 이어서 바꾸면 끝까지 간다', async () => {
+    const d = createFakeSharedDrive();
+    const P = await makePc(d, secret, `kim@${DOMAIN}`);
+    const Q = await makePc(d, secret, `lee@${DOMAIN}`);
+    for (let i = 1; i <= 6; i += 1) P.local.stores.caseDocuments.set(`r${i}`, doc(`r${i}`, 's1', `기록 ${i}`));
+    await P.engine.ensureKeyCheck();
+    await P.engine.initialSync();
+    await Q.engine.initialSync();
+    const newSecret = orgKey.generateOrgSecret();
+    const newKey = await orgKey.deriveOrgKey(newSecret);
+    // 증명을 올리고 파일 몇 개를 다시 쓴 뒤 끊긴다(네 번째 올리기에서 실패)
+    d.failNext(0);
+    let uploads = 0;
+    const originalUpload = d.api.upload;
+    d.api.upload = async input => {
+        uploads += 1;
+        if (uploads === 4) throw Object.assign(new Error('synthetic network failure'), { code: 'ENETDOWN' });
+        return originalUpload(input);
+    };
+    await assert.rejects(P.engine.rotateKey(newKey), /synthetic/);
+    d.api.upload = originalUpload;
+    const rewritten = d.rawFiles().filter(file => file.appProperties.jjssKind === 'record' && file.appProperties.keyId === newKey.keyId).length;
+    assert.ok(rewritten >= 1 && rewritten < 6, `일부만 바뀜(${rewritten})`);
+    // 다른 PC: 표식이 아직 옛 키로 열리므로 멈추지 않는다. 새 키 파일은 격리하고 나머지는 계속 받는다.
+    assert.equal(await Q.engine.keyStatus(), 'current');
+    const during = await Q.engine.pull();
+    assert.equal(during.needsNewKey, false);
+    assert.equal(during.quarantined, rewritten);
+    // 같은 새 키로 이어서 바꾸면 이미 바뀐 파일은 건너뛰고 나머지를 바꾼다.
+    const resumed = await P.engine.rotateKey(newKey);
+    assert.equal(resumed.rewritten, 6);
+    assert.equal(resumed.skipped.length, 0);
+    assert.equal(await Q.engine.keyStatus(), 'rotated');
+    await Q.engine.adoptKey(newKey);
+    assert.equal((await Q.state.getMeta()).needsFullResync, true);
+    assert.deepEqual((await Q.state.getMeta()).quarantined, [], '새 키를 넣으면 격리 목록을 비우고 전체를 다시 맞춘다');
+    const full = await Q.engine.initialSync();
+    assert.equal(full.conflicts, 0, '바뀌지 않은 기록은 충돌이 아니다');
+    assert.equal(full.quarantined.length, 0);
+    for (let i = 1; i <= 6; i += 1) assert.equal(Q.local.stores.caseDocuments.get(`r${i}`).content, `기록 ${i}`);
 });
 
 await test('상태 저장소(IndexedDB): 올리는 사이 새로 찍힌 대기 표지는 지우지 않고, 충돌 사본은 암호화해 둔다', async () => {

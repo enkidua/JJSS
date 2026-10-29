@@ -32,6 +32,8 @@ interface JjssDriveBridge {
     findMeta(name: string): Promise<JjssDriveResult<import('../features/sharedDrive/types').RemoteFile | null>>;
     setOrgKey(base64: string): Promise<JjssDriveResult<JjssDriveStatus>>;
     getOrgKey(): Promise<JjssDriveResult<string | null>>;
+    setPendingOrgKey(base64: string | null): Promise<JjssDriveResult<JjssDriveStatus>>;
+    getPendingOrgKey(): Promise<JjssDriveResult<string | null>>;
     setEnabled(enabled: boolean): Promise<JjssDriveResult<JjssDriveStatus>>;
     backupLocalData(): Promise<JjssDriveResult<{ copied: boolean }>>;
 }

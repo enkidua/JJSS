@@ -136,15 +136,25 @@ export interface SyncEngineOptions {
 
 const EDITING_STALE_MS = 30 * 60 * 1000;
 
+/**
+ * 동시 실행(최대 limit). 하나가 실패해도 나머지가 끝날 때까지 기다린 뒤 첫 오류를 던진다
+ * (exclusive가 풀린 뒤에도 남은 작업이 드라이브에 쓰는 일이 없게). 실패가 나면 새 작업은 더 시작하지 않는다.
+ */
 async function pool<T>(items: T[], limit: number, worker: (item: T) => Promise<void>): Promise<void> {
     let index = 0;
+    let failure: unknown = null;
     const runners = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
-        while (index < items.length) {
+        while (index < items.length && failure === null) {
             const current = items[index++];
-            await worker(current);
+            try {
+                await worker(current);
+            } catch (error) {
+                if (failure === null) failure = error ?? new Error('pool worker failed');
+            }
         }
     });
     await Promise.all(runners);
+    if (failure !== null) throw failure;
 }
 
 function stampYear(record: Record<string, unknown> | null | undefined, fallback: Date): number {
@@ -173,6 +183,8 @@ export class SyncEngine {
     private readonly concurrency: number;
     private readonly onProgress?: (progress: SyncProgress) => void;
     private readonly editing = new Map<string, EditingInfo>();
+    /** 이 PC에서 지금 화면에 열어 둔 레코드. 받기에서 덮어쓰지 않고 충돌로 남긴다. */
+    private readonly localEditing = new Set<string>();
     private running: Promise<unknown> = Promise.resolve();
 
     constructor(options: SyncEngineOptions) {
@@ -221,19 +233,22 @@ export class SyncEngine {
      * - none: 표식이 없다(처음).
      */
     async keyStatus(): Promise<KeyStatus> {
-        // 증명을 먼저 본다: 교체가 진행 중이면(표식은 아직 옛 키) 이미 새 키로 바뀐 파일을 격리하지 않게.
-        const proof = await this.drive.findMeta(rotationMetaName(this.key.keyId));
-        if (proof) {
-            try {
-                const value = await decryptRecord<{ purpose?: string; newKeyId?: string }>(this.key, `_meta:key-rotation|${this.key.keyId}`, await this.drive.download(proof.id));
-                if (value?.purpose === KEY_ROTATION_PURPOSE && typeof value.newKeyId === 'string' && value.newKeyId !== this.key.keyId) return 'rotated';
-            } catch {
-                // 열리지 않는 증명은 위조
-            }
-        }
+        // 표식이 이 키로 열리면 아직 이 키가 유효하다(교체가 진행 중이거나 중간에 끊겼어도). 교체가 끝나야 표식이 새 키로 바뀐다.
         const ok = await this.verifyOrgKey();
         if (ok === true) return 'current';
-        return ok === null ? 'none' : 'tampered';
+        if (ok === null) return 'none';
+        const proof = await this.drive.findMeta(rotationMetaName(this.key.keyId));
+        if (proof) {
+            let value: { purpose?: string; newKeyId?: string } | null = null;
+            try {
+                value = await decryptRecord(this.key, `_meta:key-rotation|${this.key.keyId}`, await this.drive.download(proof.id));
+            } catch (error) {
+                // 이 키로 열리지 않는 증명은 위조로 본다. 내려받기 자체가 실패한 것(네트워크)은 그대로 올린다.
+                if ((error as { code?: string })?.code !== 'SHARED_DRIVE_DECRYPT_FAILED' && !/형식이 올바르지/.test(String((error as Error)?.message))) throw error;
+            }
+            if (value?.purpose === KEY_ROTATION_PURPOSE && typeof value.newKeyId === 'string' && value.newKeyId !== this.key.keyId) return 'rotated';
+        }
+        return 'tampered';
     }
 
     /** 첫 PC: 키 확인 표식을 만든다(이미 있으면 그대로 둔다). */
@@ -329,7 +344,7 @@ export class SyncEngine {
             if (!meta.pageToken) await this.state.setMeta({ pageToken: await this.drive.getStartPageToken() });
             const remote = await this.listAllRemote();
             const result: InitialSyncResult = { uploaded: 0, downloaded: 0, linked: 0, conflicts: 0, skippedUnreadable: [], duplicates: [], quarantined: [] };
-            const uploads: Array<{ store: SyncedStore; record: Record<string, unknown> & { id: string } }> = [];
+            const uploads: Array<{ store: SyncedStore; record: Record<string, unknown> & { id: string }; base: number }> = [];
             const localKeys = new Set<string>();
 
             for (const store of SYNCED_STORES) {
@@ -345,7 +360,9 @@ export class SyncEngine {
                     const file = remote.get(rid);
                     const known = await this.state.getRecord(rid);
                     if (!file) {
-                        uploads.push({ store, record });
+                        // 드라이브에 없다. 전에 올린 적이 있는데 사라졌으면(휴지통·삭제) 알던 버전 위로 새 파일을 만든다
+                        // (버전 1로 되돌리면 다른 PC가 "예전 버전"으로 보고 격리한다).
+                        uploads.push({ store, record, base: known?.fileId ? known.baseVersion : 0 });
                         continue;
                     }
                     const remoteVersion = parseVersion(file.appProperties.version);
@@ -354,30 +371,55 @@ export class SyncEngine {
                         result.quarantined.push(rid);
                         continue;
                     }
-                    if (known && known.baseVersion === remoteVersion && known.fileId === file.id) {
-                        result.linked += 1;
-                        continue;
-                    }
                     const hash = await contentHash(this.key, record);
-                    if (file.appProperties.hash === hash && file.appProperties.deleted !== '1') {
-                        await this.state.putRecord({ rid, fileId: file.id, baseVersion: remoteVersion, baseHash: hash });
+                    if (known && known.baseVersion === remoteVersion && known.fileId === file.id && file.appProperties.hash === known.baseHash) {
                         result.linked += 1;
+                        // 동기화를 끈 사이에 고친 기록은 올릴 목록에 넣는다.
+                        if (hash !== known.baseHash) await this.state.enqueue(rid);
                         continue;
                     }
+                    // 속성(평문)은 믿지 않는다: 봉투를 열어 실제 내용으로 같은지 본다.
+                    let opened: OpenedRemote;
                     try {
-                        await this.recordConflict(rid, record, file);
-                        result.conflicts += 1;
+                        opened = await this.openRemote(file, this.key, known?.baseVersion ?? 0);
                     } catch (error) {
                         if (!(error instanceof QuarantineError)) throw error;
                         result.quarantined.push(rid);
+                        continue;
                     }
+                    if (!opened.deleted && opened.hash === hash) {
+                        await this.state.putRecord({ rid, fileId: file.id, baseVersion: opened.version, baseHash: hash });
+                        result.linked += 1;
+                        continue;
+                    }
+                    if (known && !known.deleted && hash === known.baseHash && !this.localEditing.has(rid)) {
+                        // 이 PC는 마지막으로 맞춘 그대로이고 드라이브만 바뀌었다(끊겼다 이어서 하는 경우·키 교체 뒤) → 받는다.
+                        if (opened.deleted) {
+                            await this.local.deleteFromSync(store, record.id);
+                            await this.state.putRecord({ rid, fileId: file.id, baseVersion: opened.version, baseHash: '', deleted: true });
+                        } else {
+                            await this.local.putFromSync(store, opened.record!);
+                            await this.state.putRecord({ rid, fileId: file.id, baseVersion: opened.version, baseHash: opened.hash });
+                        }
+                        result.downloaded += 1;
+                        continue;
+                    }
+                    if (known && !opened.deleted && opened.hash === known.baseHash) {
+                        // 드라이브는 그대로이고 이 PC만 고쳤다(동기화를 끈 사이 등) → 연결하고 올릴 목록에 넣는다.
+                        await this.state.putRecord({ rid, fileId: file.id, baseVersion: opened.version, baseHash: opened.hash });
+                        await this.state.enqueue(rid);
+                        result.linked += 1;
+                        continue;
+                    }
+                    await this.recordConflict(rid, record, file, opened);
+                    result.conflicts += 1;
                 }
             }
 
             const total = uploads.length;
             let done = 0;
-            await pool(uploads, Math.max(1, Math.floor(this.concurrency / 2)), async ({ store, record }) => {
-                await this.uploadRecord(store, record.id, record, 0, undefined);
+            await pool(uploads, Math.max(1, Math.floor(this.concurrency / 2)), async ({ store, record, base }) => {
+                await this.uploadRecord(store, record.id, record, base, undefined);
                 result.uploaded += 1;
                 this.progress('uploading', ++done, total);
             });
@@ -545,6 +587,7 @@ export class SyncEngine {
             const conflict = (await this.state.conflicts()).find(item => item.rid === rid);
             const parsed = parseRecordKey(rid);
             if (!conflict || !parsed) return;
+            if (conflict.undecodable) throw new Error('이 충돌 사본을 이 PC의 데이터 키로 열지 못해 해결할 수 없습니다. 데이터 복구 안내를 먼저 확인해 주세요.');
             if (choice === 'take-remote') {
                 if (conflict.remote) {
                     await this.local.putFromSync(parsed.store, conflict.remote as Record<string, unknown> & { id: string });
@@ -557,8 +600,14 @@ export class SyncEngine {
                 await this.state.removeConflict(rid);
                 return;
             }
-            // 이 PC 것으로: 드라이브의 지금 버전을 기준으로 삼아 다음 올리기에서 덮는다(그사이 또 바뀌면 다시 충돌).
-            await this.state.putRecord({ rid, fileId: conflict.fileId, baseVersion: conflict.remoteVersion, baseHash: 'resolve-keep-local' });
+            // 이 PC 것으로: 드라이브의 지금 버전·지문을 기준으로 삼아 다음 올리기에서 덮는다(그사이 또 바뀌면 다시 충돌).
+            await this.state.putRecord({
+                rid,
+                fileId: conflict.fileId,
+                baseVersion: conflict.remoteVersion,
+                baseHash: conflict.remote ? await contentHash(this.key, conflict.remote) : '',
+                deleted: !conflict.remote,
+            });
             await this.state.removeConflict(rid);
             await this.state.enqueue(rid);
         });
@@ -600,11 +649,19 @@ export class SyncEngine {
     // ─── 편집 중 표시 ───
 
     async setEditing(store: SyncedStore, id: string, editing: boolean): Promise<void> {
-        const state = await this.state.getRecord(recordKey(store, id));
+        const rid = recordKey(store, id);
+        if (editing) this.localEditing.add(rid);
+        else this.localEditing.delete(rid);
+        const state = await this.state.getRecord(rid);
         if (!state?.fileId) return;
         await this.drive.setProperties(state.fileId, editing
             ? { editingBy: this.accountEmail, editingSince: this.now().toISOString() }
             : { editingBy: null, editingSince: null });
+    }
+
+    /** 화면에 열어 둔 레코드인가(드라이브 표시와 무관하게 이 PC 안에서만) */
+    isEditingLocally(store: SyncedStore, id: string): boolean {
+        return this.localEditing.has(recordKey(store, id));
     }
 
     // ─── 같은 사람으로 보이는 이용자 ───
@@ -700,14 +757,65 @@ export class SyncEngine {
         });
     }
 
-    /** 다른 PC에서 키가 바뀐 뒤 새 키를 넣었을 때: 키를 바꾸고 전체를 다시 맞춘다. */
+    /**
+     * 다른 PC에서 키가 바뀐 뒤 새 키를 넣었을 때: 키를 바꾸고 "전체 다시 맞추기"를 표시한다.
+     * (교체 중에 격리됐던 파일과 토큰 뒤의 변경을 모두 새 키로 다시 받기 위해 다음에는 initialSync를 돈다.)
+     */
     async adoptKey(newKey: OrgKey): Promise<void> {
         // 확인이 끝나기 전에는 지금 키를 바꾸지 않는다(틀린 코드를 넣어도 기존 키로 계속 쓸 수 있게).
         const ok = await this.verifyOrgKey(newKey);
         if (ok !== true) throw new Error('입력한 기관 키 코드가 공유 저장소의 키와 맞지 않습니다.');
-        this.key = newKey;
-        // 변경 토큰은 그대로 둔다: "새 키 필요"일 때 토큰을 넘기지 않았으므로, 다음 받기가 그 사이 바뀐 것
-        // (키 교체로 다시 쓴 파일과 다른 PC의 수정)을 새 키로 모두 다시 받는다.
+        await this.exclusive(async () => {
+            // 내용 지문은 키에 묶여 있다. 마지막으로 맞춘 뒤 바뀌지 않은 기록은 새 키 지문으로 바꿔 둔다
+            // (안 그러면 모든 기록이 "이 PC에서 고친 것"으로 보여 충돌이 된다). 바뀐 기록은 그대로 두어 올라가게 한다.
+            const oldKey = this.key;
+            for (const known of await this.state.allRecords()) {
+                const parsed = parseRecordKey(known.rid);
+                if (known.deleted || !known.baseHash || !parsed) continue;
+                const local = await this.local.get(parsed.store, parsed.id);
+                if (!local) continue;
+                if (await contentHash(oldKey, local) === known.baseHash) {
+                    await this.state.putRecord({ ...known, baseHash: await contentHash(newKey, local) });
+                }
+            }
+            this.key = newKey;
+            await this.state.setMeta({ keyId: newKey.keyId, needsFullResync: true, quarantined: [] });
+        });
+    }
+
+    /**
+     * 이 PC 기록과 동기화 상태를 대조해 올리지 않은 변경을 올릴 목록에 넣는다
+     * (동기화를 꺼 둔 사이의 수정·삭제, 마법사와 켜기 사이의 수정, 대기 표지 기록이 실패한 경우).
+     * 켤 때마다 한 번 돈다. 내용 지문만 계산하고 드라이브에는 요청하지 않는다.
+     */
+    reconcileLocal(): Promise<{ queued: number }> {
+        return this.exclusive(async () => {
+            let queued = 0;
+            const present = new Set<string>();
+            for (const store of SYNCED_STORES) {
+                const records = await this.local.all(store);
+                const broken = new Set(this.local.unreadableIds(store));
+                for (const record of records) {
+                    const rid = recordKey(store, record.id);
+                    present.add(rid);
+                    if (broken.has(record.id)) continue;
+                    const known = await this.state.getRecord(rid);
+                    if (known && !known.deleted && known.baseHash === await contentHash(this.key, record)) continue;
+                    if (!(await this.state.isQueued(rid))) {
+                        await this.state.enqueue(rid);
+                        queued += 1;
+                    }
+                }
+            }
+            for (const known of await this.state.allRecords()) {
+                if (known.deleted || present.has(known.rid) || !known.fileId) continue;
+                if (!(await this.state.isQueued(known.rid))) {
+                    await this.state.enqueue(known.rid);
+                    queued += 1;
+                }
+            }
+            return { queued };
+        });
     }
 
     // ─── 내부 ───
@@ -838,18 +946,26 @@ export class SyncEngine {
         }
         if (known?.fileId) {
             const remote = await this.drive.getFile(known.fileId);
-            const remoteVersion = parseVersion(remote?.appProperties.version);
-            if (remote && remoteVersion !== known.baseVersion) {
-                // 드라이브가 바뀌었다: 속성이 아니라 봉투를 열어 실제 내용으로 판단한다
-                // (열리지 않거나 이 PC가 맞춘 버전보다 낮으면 격리).
+            if (!remote) {
+                // 드라이브에서 파일이 사라졌다(휴지통·삭제). 알던 버전 위로 새 파일을 만든다(휴지통 파일에 쓰면 아무도 못 본다).
+                await this.uploadRecord(store, id, local, known.baseVersion, undefined, queuedAt);
+                return 'uploaded';
+            }
+            const remoteVersion = parseVersion(remote.appProperties.version);
+            // 버전이 다르거나, 같은 버전인데 지문이 다르면(두 PC가 같은 버전 위에 동시에 올린 경우) 봉투를 열어 실제 내용으로 판단한다
+            // (열리지 않거나 이 PC가 맞춘 버전보다 낮으면 격리).
+            if (remoteVersion !== known.baseVersion || (!known.deleted && remote.appProperties.hash !== known.baseHash)) {
                 const opened = await this.openRemote(remote, this.key, known.baseVersion);
-                if (local && !opened.deleted && opened.hash === hash) {
+                if (opened.version === known.baseVersion && opened.hash === known.baseHash && opened.deleted === Boolean(known.deleted)) {
+                    // 속성만 달랐다(위조·손상 표시). 내용은 내가 맞춘 그대로이므로 그 위에 올린다.
+                } else if (local && !opened.deleted && opened.hash === hash) {
                     await this.state.putRecord({ rid, fileId: known.fileId, baseVersion: opened.version, baseHash: hash });
                     await this.state.dequeue(rid, queuedAt);
                     return 'skipped';
+                } else {
+                    await this.recordConflict(rid, local, remote, opened);
+                    return 'conflict';
                 }
-                await this.recordConflict(rid, local, remote, opened);
-                return 'conflict';
             }
             await this.uploadRecord(store, id, local, known.baseVersion, known.fileId, queuedAt);
             return 'uploaded';
@@ -865,7 +981,9 @@ export class SyncEngine {
         const remoteVersion = parseVersion(file.appProperties.version);
         if (remoteVersion < 0) return 'quarantined';
         const known = await this.state.getRecord(rid);
-        if (known && known.baseVersion >= remoteVersion) return 'skipped';
+        if (known && known.baseVersion > remoteVersion) return 'skipped';
+        // 같은 버전인데 지문까지 같으면 이미 받은 것. 지문이 다르면 두 PC가 같은 버전 위에 동시에 올린 것일 수 있어 봉투를 연다.
+        if (known && known.baseVersion === remoteVersion && (known.deleted || file.appProperties.hash === known.baseHash)) return 'skipped';
         if (file.appProperties.keyId !== this.key.keyId) return 'unknown-key';
         // 삭제 여부·버전·내용은 모두 봉투(기관 키로 인증된 값)에서 읽는다. 속성의 deleted는 쓰지 않는다.
         let opened: OpenedRemote;
@@ -875,12 +993,24 @@ export class SyncEngine {
             if (error instanceof QuarantineError) return 'quarantined';
             throw error;
         }
-        const queued = !initial && await this.state.isQueued(rid);
-        if (queued) {
-            const local = (await this.local.get(parsed.store, parsed.id)) ?? null;
-            if (local && !opened.deleted && opened.hash === await contentHash(this.key, local)) {
+        if (known && known.baseVersion === opened.version && opened.hash === known.baseHash) return 'skipped';
+        const local = (await this.local.get(parsed.store, parsed.id)) ?? null;
+        const entry = initial ? undefined : await this.state.queuedEntry(rid);
+        const localHash = local ? await contentHash(this.key, local) : '';
+        if (known && !known.deleted && opened.version === known.baseVersion && opened.hash !== known.baseHash) {
+            // 내가 올린 버전 위에 다른 PC가 같은 번호로 덮어 썼다(동시 올리기). 내 내용이 드라이브에서 사라졌으므로 충돌로 남긴다.
+            await this.recordConflict(rid, local, file, opened);
+            return 'conflict';
+        }
+        // 이 PC 쪽에 드라이브와 맞추지 않은 것이 있으면(올릴 목록에 있음, 상태를 모르는 기록, 알던 지문과 다른 내용,
+        // 화면에 열어 둔 기록, 기록해 두지 않은 삭제) 덮어쓰지 않고 충돌로 남긴다.
+        const localDiverged = local
+            ? Boolean(entry) || !known || localHash !== known.baseHash || this.localEditing.has(rid)
+            : Boolean(known && !known.deleted && known.fileId && !entry && !initial);
+        if (localDiverged) {
+            if (local && !opened.deleted && opened.hash === localHash) {
                 await this.state.putRecord({ rid, fileId: file.id, baseVersion: opened.version, baseHash: opened.hash });
-                await this.state.dequeue(rid);
+                await this.state.dequeue(rid, entry?.queuedAt);
                 return 'skipped';
             }
             await this.recordConflict(rid, local, file, opened);

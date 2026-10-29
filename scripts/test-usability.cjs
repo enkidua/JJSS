@@ -841,6 +841,8 @@ async function main() {
                     findMeta: track('findMeta', name => { const file = [...files.values()].find(f => f.folder === 'meta' && f.name === name); return ok(file ? snap(file) : null); }),
                     setOrgKey: track('setOrgKey', value => { orgKey = value; status.hasOrgKey = true; return ok({ ...status }); }),
                     getOrgKey: track('getOrgKey', () => ok(orgKey)),
+                    setPendingOrgKey: track('setPendingOrgKey', value => { window.uxPendingOrgKey = value; return ok({ ...status }); }),
+                    getPendingOrgKey: track('getPendingOrgKey', () => ok(window.uxPendingOrgKey ?? null)),
                     setEnabled: track('setEnabled', enabled => { status.enabled = Boolean(enabled); return ok({ ...status }); }),
                     backupLocalData: track('backupLocalData', () => ok({ copied: true })),
                 };

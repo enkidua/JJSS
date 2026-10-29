@@ -15,6 +15,7 @@ let expenseRevision = 0;
 let expenseRequest = 0;
 let documentRequest = 0;
 let documentRevision = 0;
+let lastDocumentSeeker: string | Seeker | null = null;
 
 /** 조회 도중 성공한 저장·삭제가 있으면 최신 저장소를 다시 읽는다. */
 async function readStable<T>(revision: () => number, read: () => Promise<T>): Promise<T> {
@@ -42,6 +43,7 @@ interface DataState {
     deleteSeeker: (id: string) => Promise<void>;
     deleteJob: (id: string) => Promise<void>;
     fetchCaseDocuments: (seeker: string | Seeker) => Promise<CaseDocument[]>;
+    refreshAfterSync: () => Promise<void>;
     addCaseDocument: (doc: Omit<CaseDocument, 'id' | 'organization' | 'createdAt'>) => Promise<CaseDocument>;
     /** extra: 직무분석지 사진 목록처럼 본문과 함께 바뀌는 메타 정보(본문만 고칠 때는 생략) */
     updateCaseDocument: (id: string, content: string, extra?: CaseDocumentUpdateExtra) => Promise<void>;
@@ -344,8 +346,16 @@ export const useDataStore = create<DataState>()((set, get) => ({
         }
     },
 
+    /** 공유 저장소가 다른 PC의 변경을 받아 왔을 때: 이용자·구인 목록과 마지막으로 연 이용자의 문서 목록을 다시 읽는다. */
+    refreshAfterSync: async () => {
+        documentRevision += 1;
+        await get().fetchData(true);
+        if (lastDocumentSeeker !== null) await get().fetchCaseDocuments(lastDocumentSeeker).catch(() => undefined);
+    },
+
     fetchCaseDocuments: async (seeker: string | Seeker) => {
         const request = ++documentRequest;
+        lastDocumentSeeker = seeker;
         try {
             const seekers = get().seekers;
             const seekerKeys = getPrimarySeekerKeys(seeker, seekers);

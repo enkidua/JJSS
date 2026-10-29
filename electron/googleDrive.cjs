@@ -205,20 +205,26 @@ function createDriveService(deps) {
         const state = base64url(crypto.randomBytes(24));
         return new Promise((resolve, reject) => {
             let settled = false;
+            let handling = false;
             let timer = null;
             const server = http.createServer(async (request, response) => {
                 const url = new URL(request.url, 'http://127.0.0.1');
-                if (url.pathname !== '/' || settled) {
-                    response.writeHead(404);
-                    response.end();
-                    return;
-                }
                 const finish = (ok, message) => {
                     response.writeHead(ok ? 200 : 400, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'" });
                     response.end(`<!doctype html><meta charset="utf-8"><title>JJSS</title><body style="font-family:sans-serif;padding:40px"><h2>${ok ? '로그인되었습니다' : '로그인하지 못했습니다'}</h2><p>${message}</p><p>이 창을 닫고 JJSS로 돌아가세요.</p></body>`);
                 };
+                // 다른 요청(다른 경로, state가 다른 요청, 브라우저가 같은 주소를 두 번 여는 경우)은 로그인을 끝내지 않고 거절만 한다.
+                if (url.pathname !== '/' || url.searchParams.get('state') !== state) {
+                    response.writeHead(404);
+                    response.end();
+                    return;
+                }
+                if (settled || handling) {
+                    finish(settled, settled ? '이미 로그인을 마쳤습니다.' : '로그인을 처리하는 중입니다.');
+                    return;
+                }
+                handling = true;
                 try {
-                    if (url.searchParams.get('state') !== state) throw new DriveError('로그인 요청이 맞지 않습니다(state).', 'DRIVE_SIGN_IN_STATE');
                     if (url.searchParams.get('error')) throw new DriveError('로그인을 취소했거나 허용하지 않았습니다.', 'DRIVE_SIGN_IN_DENIED');
                     const code = url.searchParams.get('code');
                     if (!code) throw new DriveError('로그인 코드를 받지 못했습니다.', 'DRIVE_SIGN_IN_FAILED');
@@ -280,7 +286,7 @@ function createDriveService(deps) {
         accessToken = null;
         accessTokenExpiresAt = 0;
         verifiedFileIds.clear();
-        writeConfig({ refreshToken: undefined, accountEmail: undefined, driveId: undefined, driveName: undefined, folders: undefined, orgKey: undefined, enabled: false });
+        writeConfig({ refreshToken: undefined, accountEmail: undefined, driveId: undefined, driveName: undefined, folders: undefined, orgKey: undefined, pendingOrgKey: undefined, enabled: false });
         return status();
     }
 
@@ -402,7 +408,17 @@ function createDriveService(deps) {
         return result.id;
     }
 
-    async function ensureFolder(folderKey) {
+    const folderPromises = new Map();
+
+    /** 폴더 id(캐시). 같은 폴더를 동시에 여러 번 만들지 않게 진행 중인 조회를 공유한다. */
+    function ensureFolder(folderKey) {
+        if (folderPromises.has(folderKey)) return folderPromises.get(folderKey);
+        const pending = resolveFolder(folderKey).finally(() => folderPromises.delete(folderKey));
+        folderPromises.set(folderKey, pending);
+        return pending;
+    }
+
+    async function resolveFolder(folderKey) {
         const driveId = requireDrive();
         const current = readConfig();
         const folders = { ...(current.folders || {}) };
@@ -424,6 +440,11 @@ function createDriveService(deps) {
         }
         writeConfig({ folders });
         return id;
+    }
+
+    /** 폴더 캐시를 버린다(누군가 드라이브에서 폴더를 지웠을 때 다음 올리기가 다시 찾거나 만든다). */
+    function forgetFolders() {
+        writeConfig({ folders: undefined });
     }
 
     const FILE_FIELDS = 'id,name,modifiedTime,trashed,driveId,appProperties';
@@ -525,7 +546,22 @@ function createDriveService(deps) {
             Buffer.from(bytes),
             Buffer.from(`\r\n--${boundary}--`),
         ]);
-        const file = await driveFetch(url, { method, headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body });
+        let file;
+        try {
+            file = await driveFetch(url, { method, headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body });
+        } catch (error) {
+            // 새 파일을 만들 때 부모 폴더가 사라졌으면(누군가 드라이브에서 지움) 폴더 캐시를 버리고 한 번 다시 만든다.
+            if (!(error instanceof DriveError) || error.code !== 'DRIVE_NOT_FOUND' || fileId) throw error;
+            forgetFolders();
+            const parent = await ensureFolder(folder);
+            const retryMetadata = { ...metadata, parents: [parent] };
+            const retryBody = Buffer.concat([
+                Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(retryMetadata)}\r\n--${boundary}\r\nContent-Type: application/octet-stream\r\n\r\n`),
+                Buffer.from(bytes),
+                Buffer.from(`\r\n--${boundary}--`),
+            ]);
+            file = await driveFetch(url, { method, headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body: retryBody });
+        }
         if (file.driveId && file.driveId !== requireDrive()) throw new DriveError('선택한 공유 드라이브 밖의 파일입니다.', 'DRIVE_OUT_OF_SCOPE', 403);
         return toRemote(file);
     }
@@ -563,6 +599,26 @@ function createDriveService(deps) {
         return value || null;
     }
 
+    /**
+     * 기관 키 바꾸기를 시작하기 전에 새 키를 먼저 암호화해 둔다. 바꾸는 도중 앱이 꺼져도 같은 새 키로 이어서 할 수 있다
+     * (새 키로 이미 다시 쓴 파일을 다른 키로는 열 수 없다). 끝나면 지운다.
+     */
+    function setPendingOrgKey(base64) {
+        if (base64 === null) {
+            writeConfig({ pendingOrgKey: undefined });
+            return status();
+        }
+        const bytes = Buffer.from(String(base64 || ''), 'base64');
+        if (bytes.length !== 16) throw new DriveError('기관 키 길이가 올바르지 않습니다.', 'DRIVE_BAD_KEY');
+        writeConfig({ pendingOrgKey: seal(bytes.toString('base64')) });
+        return status();
+    }
+
+    function getPendingOrgKey() {
+        const value = unseal(readConfig().pendingOrgKey);
+        return value || null;
+    }
+
     function setEnabled(enabled) {
         if (enabled) {
             const current = readConfig();
@@ -595,6 +651,8 @@ function createDriveService(deps) {
         'jjss-drive:find-meta': async name => findMeta(name),
         'jjss-drive:set-org-key': async base64 => setOrgKey(base64),
         'jjss-drive:get-org-key': async () => getOrgKey(),
+        'jjss-drive:set-pending-org-key': async base64 => setPendingOrgKey(base64),
+        'jjss-drive:get-pending-org-key': async () => getPendingOrgKey(),
         'jjss-drive:set-enabled': async enabled => setEnabled(enabled),
         'jjss-drive:backup-local-data': async () => backupLocalData(),
     };
