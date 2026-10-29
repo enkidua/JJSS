@@ -11,6 +11,7 @@ function moduleUrl(source) {
 
 const responseUrl = moduleUrl(await readFile(new URL('../src/services/aiTextResponse.ts', import.meta.url), 'utf8'));
 const reasoningUrl = moduleUrl(await readFile(new URL('../src/config/aiReasoning.ts', import.meta.url), 'utf8'));
+const keyFormatUrl = moduleUrl(await readFile(new URL('../src/config/apiKeyFormat.ts', import.meta.url), 'utf8'));
 const { getAIReasoningLevels, normalizeAIReasoningLevel, geminiThinkingLevel, openAIReasoningEffort, claudeReasoningEffort } = await import(reasoningUrl);
 assert.deepEqual(getAIReasoningLevels('gemini', 'gemini-3.5-flash-lite'), ['auto', 'low', 'medium', 'high']);
 assert.deepEqual(getAIReasoningLevels('anthropic', 'claude-haiku-4-5'), ['auto']);
@@ -74,6 +75,7 @@ const adapterUrl = moduleUrl(`
     import { readOpenAIText, readAnthropicText, readGeminiText, requireAIText, aiResponseError } from ${JSON.stringify(responseUrl)};
     import { openAIReasoningEffort, claudeReasoningEffort, geminiThinkingLevel } from ${JSON.stringify(reasoningUrl)};
     import { attachProviderMessage } from ${JSON.stringify(classificationUrl)};
+    import { assertKeyUsableForSlot } from ${JSON.stringify(keyFormatUrl)};
     const stripMarkdown = (text: string) => text;
     ${sharedConstants.map(node => node.getText(parsed).replace(/^export\s+/, '')).join('\n')}
     const ThinkingLevel = { LOW: 'LOW', MEDIUM: 'MEDIUM', HIGH: 'HIGH' };

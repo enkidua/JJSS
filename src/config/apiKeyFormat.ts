@@ -77,6 +77,23 @@ export type KeyFormatVerdict =
     /** 어느 제공업체 형식과도 맞지 않는다(잘림·일부만 복사 등). 저장은 막지 않는다. */
     | { status: 'unknown'; message: string };
 
+/**
+ * 다른 제공업체 형식의 키는 이 칸에서 쓰지 않는다(요청에 실어 보내면 그 비밀값이 엉뚱한 서비스로 나간다).
+ * 저장은 막지 않되(사용자가 옮기거나 고칠 수 있게) 전송 직전에는 반드시 이 검사를 거친다.
+ */
+export function isKeyUsableForSlot(slot: ApiKeySlot, key: string): boolean {
+    const verdict = checkKeyFormatForSlot(slot, key);
+    return verdict.status !== 'empty' && verdict.status !== 'mismatch';
+}
+
+/** 전송 직전 검사: 다른 제공업체 형식이면 보내지 않고 안내 오류를 던진다. */
+export function assertKeyUsableForSlot(slot: ApiKeySlot, key: string): void {
+    const verdict = checkKeyFormatForSlot(slot, key);
+    if (verdict.status === 'mismatch') {
+        throw Object.assign(new Error(`${verdict.message} 설정 → API 키에서 ${API_KEY_SLOT_LABELS[verdict.suggestedSlot]} 칸으로 옮겨 주세요.`), { code: 'API_KEY_SLOT_MISMATCH', slot, suggestedSlot: verdict.suggestedSlot });
+    }
+}
+
 /** 이 칸(slot)에 이 키를 넣는 것이 형식상 맞는지 판정한다. */
 export function checkKeyFormatForSlot(slot: ApiKeySlot, key: string): KeyFormatVerdict {
     const value = String(key ?? '').trim();

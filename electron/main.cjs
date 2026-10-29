@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, dialog, ipcMain, safeStorage, shell } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain, safeStorage, session, shell } = require('electron');
 const path = require('path');
 const { fileURLToPath } = require('url');
 const { getAllowedExternalUrl } = require('./externalUrl.cjs');
@@ -221,6 +221,13 @@ if (!hasSingleInstanceLock) {
         Menu.setApplicationMenu(process.platform === 'darwin'
             ? Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }])
             : null);
+        // 렌더러의 권한 요청(카메라·마이크·위치·알림 등)은 쓰지 않으므로 모두 거부한다. 복사 버튼의 클립보드 쓰기만 허용.
+        const ALLOWED_PERMISSIONS = new Set(['clipboard-sanitized-write']);
+        const defaultSession = session?.defaultSession;
+        if (defaultSession) {
+            defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => callback(ALLOWED_PERMISSIONS.has(permission)));
+            defaultSession.setPermissionCheckHandler((_webContents, permission) => ALLOWED_PERMISSIONS.has(permission));
+        }
         registerJjssFileIpc({ app, ipcMain, dialog, shell, BrowserWindow, expectedIndexPath: INDEX_PATH });
         registerDataKeyIpc({ app, ipcMain, safeStorage, expectedIndexPath: INDEX_PATH });
         // 공유 저장소(기관 공유 드라이브): 사용자가 설정에서 켜기 전에는 구글에 아무 요청도 하지 않는다.
@@ -246,6 +253,7 @@ if (!hasSingleInstanceLock) {
                 getWindow: () => mainWindow,
                 validateSender, expectedIndexPath: INDEX_PATH,
                 loadAutoUpdater: () => require('electron-updater').autoUpdater,
+                execFile: require('child_process').execFile,
                 platform: process.platform,
                 env: process.env,
                 fs: require('fs'),

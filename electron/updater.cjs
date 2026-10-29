@@ -3,7 +3,8 @@
 // 원칙
 // - 알림이 먼저다. 업데이트가 있으면 화면에 알리기만 하고, 내려받기는 사용자가 누를 때만 한다(autoDownload=false).
 // - 설치는 사용자가 "지금 다시 시작"을 누르거나 앱을 끌 때 한다. 미저장 보호(will-prevent-unload)는 그대로 거친다.
-// - Windows는 내려받은 설치파일의 서명이 지금 설치된 앱의 서명자(CN=JJSS)와 같아야 설치된다(electron-updater 기본 검증).
+// - Windows는 내려받은 설치파일의 서명이 유효하고 서명자(CN=JJSS)·인증서 지문(ALLOWED_SIGNER_THUMBPRINTS)이 맞아야 설치된다
+//   (electron-updater 기본 검증 대신 createSignatureVerifier: 검증 도구가 실패해도 통과시키지 않는다).
 // - macOS는 Apple Developer ID 서명·공증이 없으면 설치가 거부되므로 알림 + 내려받기 페이지 열기만 한다.
 // - 설치 직전에 이 PC의 저장소(IndexedDB 폴더 — 필드는 이미 암호화된 상태)를 사본으로 남긴다(최근 2개 보관).
 // - 업데이트 확인은 버전·운영체제 정보만 GitHub에 보낸다. 업무 데이터·API 키는 보내지 않는다.
@@ -12,6 +13,56 @@
 const RELEASES_PAGE_URL = 'https://github.com/enkidua/JJSS/releases/latest';
 /** 업데이트 설치파일이 반드시 가져야 하는 서명자(코드서명 인증서 CN). package.json build.win.signtoolOptions.publisherName과 같아야 한다. */
 const REQUIRED_PUBLISHER = 'JJSS';
+/**
+ * 설치파일 서명 인증서의 지문(SHA-1, 대문자). CN("JJSS")만 보면 같은 이름으로 만든 다른 자체 서명 인증서도 통과하므로 지문까지 고정한다.
+ * 인증서를 갱신할 때는 새 지문을 이 목록에 "먼저" 넣은 버전을 배포한 뒤에 새 인증서로 서명해야 기존 설치본이 업데이트를 받는다
+ * (docs/WINDOWS_INTERNAL_SIGNING.md). scripts/check-win-signing.cjs가 빌드 전에 PFX 지문이 이 목록에 있는지 확인한다.
+ */
+const ALLOWED_SIGNER_THUMBPRINTS = ['3339E81B295088C34C256AC7DA8F5303D567FF07'];
+
+/**
+ * electron-updater의 Windows 서명 검증을 대신한다(verifyUpdateCodeSignature).
+ * - 기본 검증은 Status=Valid와 CN만 보고, PowerShell을 실행하지 못하면 검증을 건너뛴다(통과 처리).
+ * - 여기서는 지문까지 비교하고, PowerShell이 실패하거나 결과를 읽지 못하면 거부한다(fail-closed).
+ * 반환값: 문제 없으면 null, 아니면 거부 사유(문자열) — electron-updater는 null이 아니면 설치파일을 지우고 오류로 끝낸다.
+ */
+function createSignatureVerifier({ execFile, thumbprints = ALLOWED_SIGNER_THUMBPRINTS, publisher = REQUIRED_PUBLISHER, timeoutMs = 30_000 } = {}) {
+    const allowed = new Set(thumbprints.map(value => String(value).toUpperCase()));
+    return async function verifyUpdateCodeSignature(_publisherNames, filePath) {
+        if (typeof execFile !== 'function') return '서명을 확인할 수 없습니다(검증 도구 없음).';
+        // 파일 경로는 환경변수로 넘겨 명령줄 인용 문제를 피한다.
+        const script = [
+            "$ErrorActionPreference = 'Stop'",
+            "$s = Get-AuthenticodeSignature -LiteralPath ([System.Environment]::GetEnvironmentVariable('JJSS_UPDATE_FILE'))",
+            '@{ status = [int]$s.Status; statusText = [string]$s.Status; subject = [string]$s.SignerCertificate.Subject; thumbprint = [string]$s.SignerCertificate.Thumbprint } | ConvertTo-Json -Compress',
+        ].join('; ');
+        let output;
+        try {
+            output = await new Promise((resolve, reject) => {
+                execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-InputFormat', 'None', '-Command', script], {
+                    env: { ...process.env, JJSS_UPDATE_FILE: String(filePath) },
+                    timeout: timeoutMs,
+                    windowsHide: true,
+                    maxBuffer: 1024 * 1024,
+                }, (error, stdout) => (error ? reject(error) : resolve(String(stdout || ''))));
+            });
+        } catch (error) {
+            return `서명을 확인하지 못했습니다(${String(error?.message || error).slice(0, 200)}).`;
+        }
+        let parsed;
+        try {
+            parsed = JSON.parse(output.trim());
+        } catch {
+            return '서명 확인 결과를 읽지 못했습니다.';
+        }
+        if (Number(parsed?.status) !== 0) return `설치파일 서명이 유효하지 않습니다(${String(parsed?.statusText || parsed?.status)}).`;
+        const subject = String(parsed?.subject || '');
+        if (!new RegExp(`(^|,\\s*)CN=${publisher.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(,|$)`).test(subject)) return `설치파일 서명자가 다릅니다(${subject.slice(0, 120)}).`;
+        const thumbprint = String(parsed?.thumbprint || '').toUpperCase();
+        if (!thumbprint || !allowed.has(thumbprint)) return '설치파일 서명 인증서가 이 앱에 고정된 인증서가 아닙니다.';
+        return null;
+    };
+}
 
 /**
  * 배포본의 resources/app-update.yml에 서명자가 고정돼 있는지 본다(Windows).
@@ -99,6 +150,7 @@ function createUpdateService(deps) {
     const {
         app, ipcMain, shell, getWindow, validateSender, expectedIndexPath,
         loadAutoUpdater, platform, env, fs, path, logMainEvent, logMainError,
+        execFile,
         readUpdateConfig = () => fs.readFileSync(path.join(process.resourcesPath, 'app-update.yml'), 'utf8'),
         setTimeoutFn = setTimeout, setIntervalFn = setInterval,
     } = deps;
@@ -155,6 +207,8 @@ function createUpdateService(deps) {
     function ensureUpdater() {
         if (updater || disabled) return updater;
         updater = loadAutoUpdater();
+        // Windows: 서명 검증을 지문 고정·fail-closed 검증으로 바꾼다.
+        if (platform === 'win32') updater.verifyUpdateCodeSignature = createSignatureVerifier({ execFile });
         updater.autoDownload = false;
         updater.autoInstallOnAppQuit = !manualOnly;
         updater.allowPrerelease = false;
@@ -288,4 +342,4 @@ function createUpdateService(deps) {
     return { register, check, download, install, getState: () => publicState(state) };
 }
 
-module.exports = { createUpdateService, copyLocalDataForUpdate, hasPinnedPublisher, userMessageFor, RELEASES_PAGE_URL, REQUIRED_PUBLISHER, FIRST_CHECK_DELAY_MS, CHECK_INTERVAL_MS };
+module.exports = { createUpdateService, copyLocalDataForUpdate, hasPinnedPublisher, userMessageFor, createSignatureVerifier, ALLOWED_SIGNER_THUMBPRINTS, RELEASES_PAGE_URL, REQUIRED_PUBLISHER, FIRST_CHECK_DELAY_MS, CHECK_INTERVAL_MS };

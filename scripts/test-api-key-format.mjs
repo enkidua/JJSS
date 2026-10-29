@@ -126,4 +126,16 @@ await test('키 거부가 아닌 오류(할당량·네트워크)는 키 실패�
     assert.match(message, /만료·삭제되었거나 다른 계정의 키/);
 });
 
+await test('다른 제공업체 형식의 키는 그 칸에서 쓰지 않는다(전송 직전 차단, 전환 후보에서도 제외)', () => {
+    assert.equal(format.isKeyUsableForSlot('openai', ANTHROPIC), false, 'OpenAI 칸의 Claude 키는 없는 것으로 본다');
+    assert.equal(format.isKeyUsableForSlot('openai', OPENAI), true);
+    assert.equal(format.isKeyUsableForSlot('gemini', OPENAI), false);
+    assert.equal(format.isKeyUsableForSlot('vision', GOOGLE), true);
+    assert.equal(format.isKeyUsableForSlot('anthropic', 'weird-key-shape-xyz'), true, '모르는 형식은 막지 않는다(저장·시도는 사용자 몫)');
+    assert.equal(format.isKeyUsableForSlot('anthropic', ''), false);
+    assert.throws(() => format.assertKeyUsableForSlot('openai', ANTHROPIC), error => error.code === 'API_KEY_SLOT_MISMATCH' && /Anthropic Claude 칸으로 옮겨/.test(error.message));
+    assert.doesNotThrow(() => format.assertKeyUsableForSlot('anthropic', ANTHROPIC));
+    assert.doesNotThrow(() => format.assertKeyUsableForSlot('gemini', 'weird-key-shape-xyz'));
+});
+
 console.log(`api key format tests passed (${passed}) — synthetic keys only, no network.`);

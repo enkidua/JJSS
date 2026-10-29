@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
-const { createUpdateService, copyLocalDataForUpdate, hasPinnedPublisher, RELEASES_PAGE_URL, FIRST_CHECK_DELAY_MS, CHECK_INTERVAL_MS } = require('../electron/updater.cjs');
+const { createUpdateService, copyLocalDataForUpdate, hasPinnedPublisher, createSignatureVerifier, ALLOWED_SIGNER_THUMBPRINTS, RELEASES_PAGE_URL, FIRST_CHECK_DELAY_MS, CHECK_INTERVAL_MS } = require('../electron/updater.cjs');
 
 const SIGNED_UPDATE_YML = ['owner: enkidua', 'repo: JJSS', 'provider: github', 'publisherName:', '  - JJSS', 'updaterCacheDirName: jjss-updater', ''].join('\n');
 
@@ -286,6 +286,39 @@ const ALLOWED_STATUS_KEYS = ['availableVersion', 'currentVersion', 'lastCheckedA
         assert.match((await h.invoke('jjss-update:check')).message, /게시된 업데이트 정보를 찾지 못했습니다/);
         h.updater.nextCheck = () => { throw new Error('New version 3.2.0 is not signed by the application owner: publisherNames: JJSS'); };
         assert.match((await h.invoke('jjss-update:check')).message, /서명을 확인하지 못해 설치하지 않았습니다/);
+    });
+
+    await test('서명 검증: 유효+CN+고정 지문만 통과, 다른 지문·다른 CN·무효 서명·PowerShell 실패·읽을 수 없는 결과는 모두 거부(fail-closed)', async () => {
+        const pinned = ALLOWED_SIGNER_THUMBPRINTS[0];
+        assert.match(pinned, /^[0-9A-F]{40}$/, '지문은 SHA-1 40자 대문자');
+        const calls = [];
+        const fakeExec = result => (file, args, options, callback) => {
+            calls.push({ file, args, options });
+            if (result instanceof Error) callback(result);
+            else callback(null, typeof result === 'string' ? result : JSON.stringify(result));
+        };
+        const verify = (result, thumbprints) => createSignatureVerifier({ execFile: fakeExec(result), thumbprints })(['JJSS'], 'C:\\Temp\\JJSS Setup 3.3.0.exe');
+        assert.equal(await verify({ status: 0, statusText: 'Valid', subject: 'CN=JJSS', thumbprint: pinned.toLowerCase() }), null, '고정 지문(대소문자 무관)');
+        assert.equal(calls[0].file, 'powershell.exe');
+        assert.ok(calls[0].args.includes('-NonInteractive'));
+        assert.equal(calls[0].options.env.JJSS_UPDATE_FILE, 'C:\\Temp\\JJSS Setup 3.3.0.exe', '경로는 환경변수로 넘긴다(인용 문제 없음)');
+        assert.match(await verify({ status: 0, statusText: 'Valid', subject: 'CN=JJSS', thumbprint: 'A'.repeat(40) }), /고정된 인증서가 아닙니다/, '같은 CN의 다른 인증서는 거부');
+        assert.match(await verify({ status: 0, statusText: 'Valid', subject: 'CN=JJSS2, O=x', thumbprint: pinned }), /서명자가 다릅니다/);
+        assert.match(await verify({ status: 0, statusText: 'Valid', subject: 'O=x, CN=JJSS', thumbprint: pinned }) || '', /^$/, 'CN이 뒤에 와도 된다');
+        assert.match(await verify({ status: 1, statusText: 'UnknownError', subject: 'CN=JJSS', thumbprint: pinned }), /유효하지 않습니다/);
+        assert.match(await verify({ status: 3, statusText: 'NotSigned', subject: '', thumbprint: '' }), /유효하지 않습니다/);
+        assert.match(await verify(new Error('powershell blocked')), /서명을 확인하지 못했습니다/, 'PowerShell 실패는 통과가 아니라 거부');
+        assert.match(await verify('not json'), /읽지 못했습니다/);
+        assert.match(await createSignatureVerifier({ execFile: undefined })(['JJSS'], 'x.exe'), /검증 도구 없음/);
+        // Windows 서비스는 updater에 이 검증을 건다
+        const h = makeHarness();
+        h.service.register();
+        await h.invoke('jjss-update:check');
+        assert.equal(typeof h.updater.verifyUpdateCodeSignature, 'function');
+        const mac = makeHarness({ platform: 'darwin' });
+        mac.service.register();
+        await mac.invoke('jjss-update:check');
+        assert.equal(mac.updater.verifyUpdateCodeSignature, undefined, 'macOS는 바꾸지 않는다');
     });
 
     console.log(`updater tests passed (${passed}) — fake updater, no network, no install.`);
