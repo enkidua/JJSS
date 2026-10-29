@@ -25,6 +25,7 @@ import { lockAttachmentRequestPlan, supportsAttachments } from './aiProviderCapa
 import { readAnthropicText, readGeminiText, readOpenAIText } from './aiTextResponse';
 import { isKnownNamesReady, KNOWN_NAMES_NOT_READY_MESSAGE } from './knownNames';
 import { apiKeyRejectionMessage, isApiKeyRejection, reportApiKeyRejection } from './apiKeyRejection';
+import { assertKeyUsableForSlot, isKeyUsableForSlot } from '../config/apiKeyFormat';
 import {
   assertAttachmentApproved,
   BASE64_ATTACHMENT_ACCESSOR,
@@ -972,6 +973,8 @@ function recordFeatureFailure(featureKey: string, error?: any, userMessage?: str
 // Gemini API 호출 (가장 안정적인 방식)
 // ──────────────────────────────────────────────
 export function createGoogleAIClient(apiKey: string): GoogleGenAI {
+  // 다른 제공업체 형식의 키(OpenAI·Anthropic)는 구글로 보내지 않는다.
+  assertKeyUsableForSlot('gemini', apiKey);
   return new GoogleGenAI({
     apiKey,
     httpOptions: { retryOptions: { attempts: 1 } },
@@ -1068,6 +1071,7 @@ async function callGemini(apiKey: string, model: string, systemPrompt: string, u
 // OpenAI API 호출
 // ──────────────────────────────────────────────
 async function callOpenAI(apiKey: string, model: string, systemPrompt: string, userInput: string, history?: ChatMessage[], signal?: AbortSignal, reasoningLevel?: AIReasoningLevel): Promise<string> {
+  assertKeyUsableForSlot('openai', apiKey);
   const messages: any[] = [{ role: 'system', content: systemPrompt }];
   
   if (history) {
@@ -1113,6 +1117,7 @@ async function callOpenAI(apiKey: string, model: string, systemPrompt: string, u
 // Anthropic API 호출
 // ──────────────────────────────────────────────
 async function callAnthropic(apiKey: string, model: string, systemPrompt: string, userInput: string, history?: ChatMessage[], signal?: AbortSignal, reasoningLevel?: AIReasoningLevel): Promise<string> {
+  assertKeyUsableForSlot('anthropic', apiKey);
   const messages: any[] = [];
   
   if (history) {
@@ -1261,7 +1266,8 @@ export async function generateText(
   const requestPlan = lockAttachmentRequestPlan(buildAIRequestPlan({
     selectedProvider: activeConfig.provider,
     selectedModels: Object.fromEntries(settings.llmConfigs.map(config => [config.provider, config.model])),
-    providersWithKeys: settings.llmConfigs.filter(config => config.apiKey.trim()).map(config => config.provider),
+    // 다른 제공업체 형식의 키가 든 칸은 "키 없음"으로 본다(전환해도 그 서비스로 보내지 않는다).
+    providersWithKeys: settings.llmConfigs.filter(config => isKeyUsableForSlot(config.provider, config.apiKey)).map(config => config.provider),
     failover,
   }), activeConfig.provider, hasAttachments);
 

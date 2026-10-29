@@ -18,6 +18,7 @@ import {
     wrapAsData,
 } from './gemini';
 import { geminiThinkingLevel } from '../config/aiReasoning';
+import { assertKeyUsableForSlot } from '../config/apiKeyFormat';
 import { getAiDocumentValidationError } from '../utils/fileValidation';
 import { fileToBase64 } from '../utils/file';
 import { toAmount } from '../utils/currency';
@@ -130,6 +131,7 @@ async function extractTextWithGemini(file: File, geminiApiKey: string, signal?: 
 }
 
 async function extractTextWithVision(file: File, visionApiKey: string, signal: AbortSignal): Promise<string> {
+    assertKeyUsableForSlot('vision', visionApiKey);
     // 원본 전송 확인(동의 C)을 거친 파일만 보낸다.
     assertAttachmentApproved(file);
     const requestBody = {
