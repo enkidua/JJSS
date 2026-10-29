@@ -264,13 +264,14 @@ const props = (rid, version, extra = {}) => ({ jjssKind: 'record', store: rid.sp
         const tree = makeGoogleDriveTree();
         const pc = await folderPc(tree);
         const created = await pc.value('jjss-drive:upload', { folder: 'seekers', name: 'seekers-s1.jjss', appProperties: props('seekers:s1', 1), content: Buffer.from('v1') });
-        const target = path.join(tree.shared, FOLDER_ROOT_NAME, 'seekers', 'seekers-s1.jjss');
+        // 백엔드는 고른 폴더의 실제 경로(macOS 임시 폴더는 /private/var/…)를 쓰므로 같은 형태로 맞춘다.
+        const target = path.join(fs.realpathSync.native(tree.shared), FOLDER_ROOT_NAME, 'seekers', 'seekers-s1.jjss');
         // 다른 PC의 v2가 내려온 상황을 흉내 낸다: setProperties가 읽은 직후 파일을 바꿔 둔다.
         const realReadFile = fs.promises.readFile;
         let swapped = false;
         fs.promises.readFile = async (...args) => {
             const bytes = await realReadFile(...args);
-            if (!swapped && String(args[0]) === target) {
+            if (!swapped && path.resolve(String(args[0])) === target) {
                 swapped = true;
                 const v2 = await pcRaw(tree, target, props('seekers:s1', 2), Buffer.from('v2'));
                 assert.ok(v2);
@@ -280,6 +281,7 @@ const props = (rid, version, extra = {}) => ({ jjssKind: 'record', store: rid.sp
         let failed = null;
         try {
             await pc.value('jjss-drive:set-properties', created.id, { editingBy: `lee@${DOMAIN}` });
+            assert.equal(swapped, true, '교체 시나리오가 실제로 실행되었다');
         } catch (error) {
             failed = error;
         } finally {
