@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, KeyRound, LogIn, ShieldAlert, ShieldCheck, Upload } from 'lucide-react';
+import { CheckCircle2, FolderOpen, KeyRound, LogIn, ShieldAlert, ShieldCheck, Upload } from 'lucide-react';
 import { createDriveClient, getDriveBridge, unwrap, bytesToBase64 } from '../../../features/sharedDrive/driveClient';
 import { SyncEngine, KEY_CHECK_META_NAME, type InitialSyncResult, type SyncProgress, type VerifyResult } from '../../../features/sharedDrive/engine';
 import { deriveOrgKey, formatOrgKeyCode, generateOrgSecret, parseOrgKeyCode } from '../../../features/sharedDrive/orgKey';
@@ -11,13 +11,22 @@ import { SHARED_DRIVE_RESTORE_PAUSE_KEY } from '../../../config/localDB';
 import { useBeforeUnloadGuard } from '../../../hooks/useBeforeUnloadGuard';
 import SecurityReportView from './SecurityReportView';
 
-type Step = 'guide' | 'admin' | 'sign-in' | 'drive' | 'security' | 'key' | 'upload' | 'done';
-const STEPS: Array<[Step, string]> = [
+type Step = 'guide' | 'admin' | 'sign-in' | 'drive' | 'folder-admin' | 'folder' | 'security' | 'key' | 'upload' | 'done';
+type Method = 'api' | 'folder';
+const API_STEPS: Array<[Step, string]> = [
     ['guide', '안내'],
     ['admin', '관리자 설정'],
     ['sign-in', '로그인'],
     ['drive', '공유 드라이브'],
     ['security', '보안 점검'],
+    ['key', '기관 키'],
+    ['upload', '기존 자료 올리기'],
+];
+const FOLDER_STEPS: Array<[Step, string]> = [
+    ['guide', '안내'],
+    ['folder-admin', '기관 정보'],
+    ['folder', '폴더 고르기'],
+    ['security', '보안 확인'],
     ['key', '기관 키'],
     ['upload', '기존 자료 올리기'],
 ];
@@ -30,9 +39,18 @@ const PHASE_LABEL: Record<SyncProgress['phase'], string> = {
     rotating: '기관 키 바꾸는 중',
 };
 
-function nextStepFor(status: JjssDriveStatus | null, consented: boolean): Step {
+function modeOf(status: JjssDriveStatus | null): Method {
+    return status?.mode === 'folder' ? 'folder' : 'api';
+}
+
+function nextStepFor(status: JjssDriveStatus | null, consented: boolean, method: Method = modeOf(status)): Step {
     if (!consented) return 'guide';
-    if (!status?.configured) return 'admin';
+    if (method === 'folder') {
+        if (modeOf(status) !== 'folder' || !status?.configured) return 'folder-admin';
+        if (!status.folderPath) return 'folder';
+        return 'security';
+    }
+    if (modeOf(status) === 'folder' || !status?.configured) return 'admin';
     if (!status.signedIn) return 'sign-in';
     if (!status.driveId) return 'drive';
     return 'security';
@@ -48,6 +66,9 @@ interface Props {
 export default function SharedDriveSetup({ status, onStatus, onFinished }: Props) {
     const bridge = getDriveBridge()!;
     const [consented, setConsented] = useState(false);
+    const [method, setMethod] = useState<Method>(modeOf(status));
+    const [folderForm, setFolderForm] = useState({ domain: status?.domain || '', email: status?.mode === 'folder' ? status.accountEmail : '' });
+    const [adminChecked, setAdminChecked] = useState(false);
     const [step, setStep] = useState<Step>('guide');
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
@@ -70,10 +91,19 @@ export default function SharedDriveSetup({ status, onStatus, onFinished }: Props
     useBeforeUnloadGuard(uploading);
 
     useEffect(() => {
-        if (step !== 'guide' && step !== 'key' && step !== 'upload' && step !== 'done') setStep(nextStepFor(status, consented));
+        if (step !== 'guide' && step !== 'key' && step !== 'upload' && step !== 'done') setStep(nextStepFor(status, consented, method));
         // 상태가 바뀔 때만 다음 단계로 옮긴다(키·올리기 단계는 화면 안에서 진행).
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [status?.configured, status?.signedIn, status?.driveId]);
+    }, [status?.configured, status?.signedIn, status?.driveId, status?.mode, status?.folderPath]);
+
+    // 폴더를 바꾸면 이전 폴더의 점검 결과와 관리자 확인 체크는 쓰지 않는다.
+    useEffect(() => {
+        setSecurity(null);
+        setAdminChecked(false);
+    }, [status?.folderPath]);
+
+    const STEPS = method === 'folder' ? FOLDER_STEPS : API_STEPS;
+    const isFolder = method === 'folder';
 
     const run = async (action: () => Promise<void>) => {
         setBusy(true);
@@ -165,14 +195,34 @@ export default function SharedDriveSetup({ status, onStatus, onFinished }: Props
                         <li><b className="text-white/85">어디에:</b> 기관 Google Workspace의 <b>공유 드라이브</b> 한 곳. 개인 "내 드라이브"는 쓸 수 없습니다.</li>
                         <li><b className="text-white/85">어떻게 보호하나:</b> 이 PC에서 <b>기관 키</b>로 암호화한 뒤 올립니다. 구글과 드라이브 관리자도 내용을 읽을 수 없고, 기관 키를 가진 JJSS만 엽니다. 파일 이름·속성에는 이름·연락처를 넣지 않습니다.</li>
                         <li><b className="text-white/85">누가 쓰나:</b> 기관 도메인 계정으로 로그인하고 공유 드라이브 구성원인 직원만. 기관 키 코드는 메일·메신저로 보내지 말고 직접 전달하세요.</li>
-                        <li><b className="text-white/85">관리자가 먼저 할 일:</b> 공유 드라이브 만들기 → 사례관리 담당 그룹만 구성원으로 추가 → 공유 드라이브 설정에서 "조직 외부 사용자 접근 허용", "구성원이 아닌 사용자에게 파일 공유 허용", "뷰어의 다운로드·인쇄·복사"를 끄기 → 기관 내부용 OAuth 클라이언트(데스크톱 앱) 만들기. 자세한 순서는 관리자 안내서(JJSS 저장소의 docs/SHARED_DRIVE_SETUP.md)에 있습니다.</li>
+                        <li><b className="text-white/85">관리자가 먼저 할 일:</b> 공유 드라이브 만들기 → 사례관리 담당 그룹만 구성원으로 추가 → 공유 드라이브 설정에서 "조직 외부 사용자 접근 허용", "구성원이 아닌 사용자에게 파일 공유 허용", "뷰어의 다운로드·인쇄·복사"를 끄기{isFolder ? ' → 각 직원 PC에 구글 드라이브(데스크톱) 설치·기관 계정 로그인' : ' → 기관 내부용 OAuth 클라이언트(데스크톱 앱) 만들기'}. 자세한 순서는 관리자 안내서(JJSS 저장소의 docs/SHARED_DRIVE_SETUP.md)에 있습니다.</li>
+                        <li><b className="text-white/85">기관의 모든 PC가 같은 방식을 써야 합니다.</b> 두 방식은 드라이브 안의 폴더가 달라 서로의 기록을 보지 못합니다.</li>
                         <li><b className="text-white/85">끄면:</b> 이 PC 자료는 그대로이고 드라이브와 주고받기만 멈춥니다. 시작 전에 이 PC 자료 사본을 자동으로 만듭니다(설정 → 파일·백업에서 .jjss 백업도 한 번 만들어 두기를 권장합니다).</li>
                     </ul>
+                    <fieldset className="space-y-2" aria-label="연결 방식">
+                        <legend className="text-xs font-semibold text-white">연결 방식</legend>
+                        <label className={`flex items-start gap-2 rounded-xl border p-3 text-xs ${method === 'api' ? 'border-sky-400/50 bg-sky-500/10' : 'border-white/10 bg-white/5'}`}>
+                            <input type="radio" name="shared-drive-method" value="api" checked={method === 'api'} onChange={() => setMethod('api')} className="mt-0.5" />
+                            <span><b className="text-white">구글 로그인 방식(권장)</b><br />JJSS가 구글 드라이브에 직접 연결합니다. 관리자가 기관 내부용 OAuth 클라이언트를 한 번 만들어야 합니다. 공유 드라이브의 구성원·링크 공유를 앱이 자동으로 점검하고, 문제가 생기면 동기화를 멈춥니다.</span>
+                        </label>
+                        <label className={`flex items-start gap-2 rounded-xl border p-3 text-xs ${method === 'folder' ? 'border-sky-400/50 bg-sky-500/10' : 'border-white/10 bg-white/5'}`}>
+                            <input type="radio" name="shared-drive-method" value="folder" checked={method === 'folder'} onChange={() => setMethod('folder')} className="mt-0.5" />
+                            <span><b className="text-white">PC 폴더 방식</b><br />각 PC에 설치한 <b>구글 드라이브(데스크톱)</b>가 붙여 둔 공유 드라이브 폴더(예: G:\공유 드라이브\사례관리)를 씁니다. OAuth 클라이언트가 필요 없습니다. 대신 앱이 구성원·공유 설정을 볼 수 없어 <b>관리자가 직접 확인</b>해야 하고, 두 PC가 몇 초 안에 같은 기록을 저장하면 구글 드라이브가 사본을 만들어 다음 동기화 때 충돌로 보입니다.</span>
+                        </label>
+                    </fieldset>
                     <label className="flex items-start gap-2 text-xs text-white/80">
                         <input type="checkbox" checked={consented} onChange={event => setConsented(event.target.checked)} className="mt-0.5" />
                         기관의 개인정보 처리방침에 따라 공유 드라이브에 사례관리 기록을 보관하는 것이 허용되었고, 위 보안 설정을 확인했습니다.
                     </label>
-                    <button type="button" disabled={!consented} onClick={() => setStep(nextStepFor(status, true))} className="btn-primary px-4! py-2! text-sm disabled:opacity-50">설정 시작</button>
+                    <button type="button" disabled={!consented || busy} onClick={() => void run(async () => {
+                        // 고른 방식이 지금 저장된 방식과 다르면 바꾼다(바꾸면 꺼진 상태로 다시 설정).
+                        let next = status;
+                        if (modeOf(status) !== method && typeof bridge.setMode === 'function') {
+                            next = await unwrap(bridge.setMode(method));
+                            onStatus(next);
+                        }
+                        setStep(nextStepFor(next, true, method));
+                    })} className="btn-primary px-4! py-2! text-sm disabled:opacity-50">설정 시작</button>
                 </div>
             )}
 
@@ -204,6 +254,48 @@ export default function SharedDriveSetup({ status, onStatus, onFinished }: Props
                     </label>
                     <button type="submit" disabled={busy} className="btn-primary px-4! py-2! text-sm disabled:opacity-50">저장</button>
                 </form>
+            )}
+
+            {step === 'folder-admin' && (
+                <form
+                    className="space-y-3"
+                    onSubmit={event => {
+                        event.preventDefault();
+                        void run(async () => {
+                            const next = await unwrap(bridge.configureFolder(folderForm));
+                            onStatus(next);
+                            setStep(nextStepFor(next, true, 'folder'));
+                        });
+                    }}
+                >
+                    <p className="text-xs text-white/60">기관 도메인과 이 PC를 쓰는 직원의 기관 메일을 넣어 주세요. 메일은 드라이브의 "수정한 사람" 표시와 "편집 중" 안내에 씁니다(구글 로그인은 이 PC의 구글 드라이브 프로그램이 합니다).</p>
+                    <label className="block text-xs text-white/70">기관 도메인
+                        <input className="input-field mt-1 w-full" placeholder="example.org" value={folderForm.domain} onChange={event => setFolderForm({ ...folderForm, domain: event.target.value })} autoComplete="off" />
+                    </label>
+                    <label className="block text-xs text-white/70">내 기관 메일(이 PC의 구글 드라이브에 로그인한 계정)
+                        <input className="input-field mt-1 w-full" placeholder="kim@example.org" value={folderForm.email} onChange={event => setFolderForm({ ...folderForm, email: event.target.value })} autoComplete="off" />
+                    </label>
+                    <button type="submit" disabled={busy} className="btn-primary px-4! py-2! text-sm disabled:opacity-50">저장</button>
+                </form>
+            )}
+
+            {step === 'folder' && (
+                <div className="space-y-3 text-sm text-white/75">
+                    <p>사례관리를 함께 쓸 <b>공유 드라이브 폴더</b>를 고르세요.</p>
+                    <ol className="list-decimal space-y-1 pl-5 text-xs text-white/60">
+                        <li>이 PC에 <b>구글 드라이브(데스크톱)</b>를 설치하고 {status?.accountEmail || '기관 계정'}으로 로그인합니다.</li>
+                        <li>탐색기에 생긴 <b>Google Drive</b>(보통 G:) → <b>공유 드라이브</b> → 사례관리용 드라이브 폴더를 고릅니다(macOS: Finder 사이드바의 Google Drive → 공유 드라이브).</li>
+                        <li>JJSS는 그 안에 "JJSS 사례관리 (PC 폴더 방식)" 폴더를 만들어 씁니다. 그 폴더의 파일은 직접 열거나 옮기지 마세요.</li>
+                    </ol>
+                    {status?.folderPath && <p className="break-all rounded-xl bg-white/5 p-2 text-xs text-white/80">고른 폴더: {status.folderPath}</p>}
+                    <div className="flex flex-wrap gap-2">
+                        <button type="button" disabled={busy} onClick={() => void run(async () => onStatus(await unwrap(bridge.chooseFolder())))} className="btn-primary px-4! py-2! text-sm inline-flex items-center gap-1.5 disabled:opacity-50">
+                            <FolderOpen className="h-4 w-4" /> {status?.folderPath ? '다른 폴더 고르기' : '폴더 고르기'}
+                        </button>
+                        {status?.folderPath && <button type="button" disabled={busy} onClick={() => { setSecurity(null); setAdminChecked(false); setStep('security'); }} className="btn-secondary px-3! py-2! text-xs">다음</button>}
+                        <button type="button" disabled={busy} onClick={() => setStep('folder-admin')} className="text-xs text-white/50 underline">기관 정보 고치기</button>
+                    </div>
+                </div>
             )}
 
             {step === 'sign-in' && (
@@ -239,7 +331,7 @@ export default function SharedDriveSetup({ status, onStatus, onFinished }: Props
 
             {step === 'security' && (
                 <div className="space-y-3 text-sm text-white/75">
-                    <p>"{status?.driveName}" 공유 드라이브의 보안 설정을 확인합니다. 막힌 항목이 있으면 켤 수 없습니다.</p>
+                    <p>{isFolder ? <>"{status?.folderPath}" 폴더를 확인합니다. 막힌 항목이 있으면 켤 수 없습니다.</> : <>"{status?.driveName}" 공유 드라이브의 보안 설정을 확인합니다. 막힌 항목이 있으면 켤 수 없습니다.</>}</p>
                     <div className="flex flex-wrap gap-2">
                         <button type="button" disabled={busy} onClick={() => void run(async () => {
                             const facts = await unwrap(bridge.securityFacts());
@@ -247,11 +339,17 @@ export default function SharedDriveSetup({ status, onStatus, onFinished }: Props
                         })} className="btn-secondary px-3! py-2! text-xs inline-flex items-center gap-1.5">
                             <ShieldCheck className="h-3.5 w-3.5" /> {security ? '다시 점검' : '보안 점검'}
                         </button>
-                        <button type="button" disabled={busy} onClick={() => { setSecurity(null); setDrives(null); setStep('drive'); }} className="text-xs text-white/50 underline">다른 드라이브 고르기</button>
+                        <button type="button" disabled={busy} onClick={() => { setSecurity(null); setDrives(null); setAdminChecked(false); setStep(isFolder ? 'folder' : 'drive'); }} className="text-xs text-white/50 underline">{isFolder ? '다른 폴더 고르기' : '다른 드라이브 고르기'}</button>
                     </div>
                     {security && <SecurityReportView report={security} />}
+                    {security && !security.blocked && isFolder && (
+                        <label className="flex items-start gap-2 rounded-xl border border-amber-300/30 bg-amber-500/10 p-3 text-xs text-amber-50">
+                            <input type="checkbox" checked={adminChecked} onChange={event => setAdminChecked(event.target.checked)} className="mt-0.5" />
+                            관리자가 이 공유 드라이브의 구성원(사례관리 담당자만)과 공유 설정(링크 공유·외부 공유 꺼짐)을 확인했습니다. PC 폴더 방식에서는 앱이 이 설정을 확인할 수 없습니다.
+                        </label>
+                    )}
                     {security && !security.blocked && (
-                        <button type="button" disabled={busy} onClick={() => void run(enterKeyStep)} className="btn-primary px-4! py-2! text-sm">다음</button>
+                        <button type="button" disabled={busy || (isFolder && !adminChecked)} onClick={() => void run(enterKeyStep)} className="btn-primary px-4! py-2! text-sm disabled:opacity-50">다음</button>
                     )}
                     {security?.blocked && <p className="flex items-center gap-1.5 text-xs text-rose-200"><ShieldAlert className="h-4 w-4" /> 관리자에게 막힌 항목을 고쳐 달라고 요청한 뒤 다시 점검해 주세요.</p>}
                 </div>

@@ -2,6 +2,10 @@
 type JjssDriveResult<T> = { ok: true; value: T } | { ok: false; error: { message: string; code: string; status?: number } };
 
 interface JjssDriveStatus {
+    /** api: 구글 로그인(기관 OAuth 클라이언트), folder: 구글 드라이브(데스크톱)가 PC에 붙인 공유 드라이브 폴더 */
+    mode: 'api' | 'folder';
+    /** 폴더 방식에서 고른 폴더(그 밖에는 빈 값) */
+    folderPath: string;
     configured: boolean;
     domain: string;
     clientIdHint: string;
@@ -16,7 +20,11 @@ interface JjssDriveStatus {
 
 interface JjssDriveBridge {
     getStatus(): Promise<JjssDriveResult<JjssDriveStatus>>;
+    setMode(mode: 'api' | 'folder'): Promise<JjssDriveResult<JjssDriveStatus>>;
     configure(input: { clientId: string; clientSecret: string; domain: string }): Promise<JjssDriveResult<JjssDriveStatus>>;
+    configureFolder(input: { domain: string; email: string }): Promise<JjssDriveResult<JjssDriveStatus>>;
+    chooseFolder(): Promise<JjssDriveResult<JjssDriveStatus>>;
+    inspectFolder(): Promise<JjssDriveResult<{ folderPath: string; isSharedDrive: boolean; isMyDrive: boolean; isGoogleDrive: boolean; driveName: string; accountEmail: string } | null>>;
     signIn(): Promise<JjssDriveResult<JjssDriveStatus>>;
     signOut(): Promise<JjssDriveResult<JjssDriveStatus>>;
     listSharedDrives(): Promise<JjssDriveResult<Array<{ id: string; name: string }>>>;

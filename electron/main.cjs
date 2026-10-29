@@ -233,6 +233,7 @@ if (!hasSingleInstanceLock) {
         // 공유 저장소(기관 공유 드라이브): 사용자가 설정에서 켜기 전에는 구글에 아무 요청도 하지 않는다.
         createDriveService({
             app, ipcMain, shell, safeStorage,
+            dialog, getWindow: () => mainWindow,
             fs: require('fs'), path, http: require('http'), crypto: require('crypto'),
             validateSender, expectedIndexPath: INDEX_PATH,
             logMainError,

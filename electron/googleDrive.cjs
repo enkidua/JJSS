@@ -7,6 +7,10 @@
 // - 드라이브 범위는 drive 전체 권한이 필요하다(drive.file은 "이 사용자가 이 앱으로 만든 파일"만 보여 여러 직원이 공유할 수 없다).
 //   대신 코드에서 모든 요청을 선택한 공유 드라이브 하나로 제한한다(파일 id마다 driveId 확인).
 // - 요청 주소는 구글 고정 주소만 쓴다. 429·5xx는 잠시 기다렸다 다시 시도한다(최대 3번).
+// - 방식은 두 가지다. "api"(위 설명, 기관 OAuth 클라이언트 필요)와 "folder"(구글 드라이브 데스크톱이 PC에 붙인 공유 드라이브 폴더를
+//   읽고 쓰기, electron/folderDrive.cjs). 렌더러가 쓰는 IPC는 같고, 여기서 방식에 따라 나눈다.
+
+const { createFolderBackend, inspectFolderPath, INDEX_FILE: FOLDER_INDEX_FILE } = require('./folderDrive.cjs');
 
 const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -82,9 +86,15 @@ function userMessage(error) {
     return '공유 저장소 요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.';
 }
 
+function validEmail(email) {
+    return /^[^\s@]{1,64}@([a-z0-9-]+\.)+[a-z]{2,}$/i.test(String(email || '')) && String(email).length <= 100;
+}
+
 function createDriveService(deps) {
     const {
         app, ipcMain, shell, safeStorage, fs, path, http, crypto,
+        dialog = null,
+        getWindow = () => null,
         fetchFn = globalThis.fetch,
         validateSender, expectedIndexPath,
         logMainError = () => {},
@@ -142,20 +152,120 @@ function createDriveService(deps) {
         }
     }
 
+    function modeOf(current = readConfig()) {
+        return current.mode === 'folder' ? 'folder' : 'api';
+    }
+
+    /** 폴더 방식의 드라이브 id: 고른 폴더 경로에서 만든 고정 값(폴더를 바꾸면 동기화 상태를 처음부터 맞춘다) */
+    function folderDriveId(folderPath) {
+        if (!folderPath) return '';
+        return `folder-${crypto.createHash('sha256').update(String(folderPath).toLowerCase()).digest('hex').slice(0, 20)}`;
+    }
+
     function status() {
         const current = readConfig();
-        return {
-            configured: Boolean(current.clientId && current.clientSecret && current.domain),
+        const common = {
+            mode: modeOf(current),
             domain: current.domain || '',
+            enabled: Boolean(current.enabled),
+            hasOrgKey: Boolean(current.orgKey),
+            secureStorage: secureStorageAvailable(),
+        };
+        if (common.mode === 'folder') {
+            return {
+                ...common,
+                configured: Boolean(current.domain && current.folderAccountEmail),
+                clientIdHint: '',
+                accountEmail: current.folderAccountEmail || '',
+                signedIn: Boolean(current.folderAccountEmail),
+                driveId: folderDriveId(current.folderPath),
+                driveName: current.folderPath ? path.basename(current.folderPath) : '',
+                folderPath: current.folderPath || '',
+            };
+        }
+        return {
+            ...common,
+            configured: Boolean(current.clientId && current.clientSecret && current.domain),
             clientIdHint: current.clientId ? `${String(current.clientId).slice(0, 8)}…` : '',
             accountEmail: current.accountEmail || '',
             signedIn: Boolean(current.refreshToken),
             driveId: current.driveId || '',
             driveName: current.driveName || '',
-            enabled: Boolean(current.enabled),
-            hasOrgKey: Boolean(current.orgKey),
-            secureStorage: secureStorageAvailable(),
+            folderPath: '',
         };
+    }
+
+    // ─── 방식 고르기·PC 폴더 방식 설정 ───
+
+    /** 방식을 바꾸면 끄고(다시 설정을 마쳐야 켬) 폴더 캐시를 버린다. 다른 방식의 로그인·폴더 정보는 남겨 둔다. */
+    function setMode(mode) {
+        if (mode !== 'api' && mode !== 'folder') throw new DriveError('알 수 없는 방식입니다.', 'DRIVE_BAD_MODE');
+        if (modeOf() !== mode) {
+            verifiedFileIds.clear();
+            writeConfig({ mode, enabled: false });
+        }
+        return status();
+    }
+
+    /** 폴더 방식: 기관 도메인과 이 직원의 기관 메일(수정한 사람 표시용). 메일은 기관 도메인이어야 한다. */
+    function configureFolder({ domain, email } = {}) {
+        const orgDomain = String(domain || '').trim().toLowerCase();
+        const staffEmail = String(email || '').trim().toLowerCase();
+        if (!validDomain(orgDomain)) throw new DriveError('기관 도메인 형식이 아닙니다(예: example.org).', 'DRIVE_BAD_DOMAIN');
+        if (!validEmail(staffEmail)) throw new DriveError('기관 메일 주소 형식이 아닙니다(예: kim@example.org).', 'DRIVE_BAD_EMAIL');
+        if (!staffEmail.endsWith(`@${orgDomain}`)) throw new DriveError(`기관 메일(@${orgDomain})을 넣어 주세요.`, 'DRIVE_WRONG_DOMAIN');
+        const current = readConfig();
+        writeConfig({
+            mode: 'folder',
+            domain: orgDomain,
+            folderAccountEmail: staffEmail,
+            // 도메인이 바뀌면(다른 기관) API 방식 로그인도 다시 해야 한다.
+            ...(current.domain && current.domain !== orgDomain ? { refreshToken: undefined, accountEmail: undefined, driveId: undefined, driveName: undefined, folders: undefined } : {}),
+            enabled: false,
+        });
+        return status();
+    }
+
+    /** 폴더 방식: 공유 드라이브 폴더 고르기(운영체제 폴더 선택 창). 고르기만 하고 보안 확인은 다음 단계에서 한다. */
+    async function chooseFolder() {
+        if (modeOf() !== 'folder') throw new DriveError('PC 폴더 방식을 먼저 골라 주세요.', 'DRIVE_BAD_MODE');
+        if (!dialog?.showOpenDialog) throw new DriveError('폴더 선택 창을 열 수 없습니다.', 'DRIVE_NO_DIALOG');
+        const window = getWindow();
+        const options = {
+            title: '기관 공유 드라이브 폴더 고르기',
+            buttonLabel: '이 폴더 사용',
+            properties: ['openDirectory', 'createDirectory', 'dontAddToRecent'],
+        };
+        const result = window && !window.isDestroyed?.() ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
+        if (result?.canceled || !result?.filePaths?.[0]) return status();
+        let chosen = String(result.filePaths[0]);
+        try { chosen = fs.realpathSync.native ? fs.realpathSync.native(chosen) : fs.realpathSync(chosen); } catch { /* 가상 드라이브는 그대로 쓴다 */ }
+        if (!fs.statSync(chosen).isDirectory()) throw new DriveError('폴더를 골라 주세요.', 'DRIVE_BAD_FOLDER');
+        const current = readConfig();
+        writeConfig({ folderPath: chosen, enabled: false, ...(current.folderPath !== chosen ? { folderSecurityAck: undefined } : {}) });
+        return status();
+    }
+
+    /** 폴더 방식에서 쓸 수 있는가(설정 마법사 안내용): 고른 경로를 다시 살펴본 결과 */
+    function inspectFolder() {
+        const current = readConfig();
+        if (!current.folderPath) return null;
+        return inspectFolderPath({ fs, path }, current.folderPath);
+    }
+
+    const folderBackend = createFolderBackend({
+        fs, path, crypto,
+        DriveError,
+        sanitizeProperties,
+        recordPropertyKeys: RECORD_PROPERTY_KEYS,
+        editingPropertyKeys: EDITING_PROPERTY_KEYS,
+        getRoot: () => readConfig().folderPath || '',
+        indexPath: () => path.join(app.getPath('userData'), FOLDER_INDEX_FILE),
+        maxFileBytes: 20 * 1024 * 1024,
+    });
+
+    function isFolderMode() {
+        return modeOf() === 'folder';
     }
 
     // ─── OAuth ───
@@ -286,6 +396,11 @@ function createDriveService(deps) {
 
     async function signOut() {
         const current = readConfig();
+        if (modeOf(current) === 'folder') {
+            // 폴더 방식 "연결 해제": 폴더·메일·기관 키를 지우고 끈다(이 PC 자료와 드라이브 폴더의 파일은 그대로).
+            writeConfig({ folderPath: undefined, folderAccountEmail: undefined, folderSecurityAck: undefined, orgKey: undefined, pendingOrgKey: undefined, enabled: false });
+            return status();
+        }
         const refresh = unseal(current.refreshToken);
         if (refresh) {
             await fetchFn(`${REVOKE_URL}?token=${encodeURIComponent(refresh)}`, { method: 'POST' }).catch(() => undefined);
@@ -664,7 +779,11 @@ function createDriveService(deps) {
     function setEnabled(enabled) {
         if (enabled) {
             const current = readConfig();
-            if (!current.refreshToken || !current.driveId || !current.orgKey) throw new DriveError('로그인·공유 드라이브 선택·기관 키 등록을 마친 뒤에 켤 수 있습니다.', 'DRIVE_NOT_READY');
+            if (modeOf(current) === 'folder') {
+                if (!current.folderAccountEmail || !current.folderPath || !current.orgKey) throw new DriveError('기관 메일·공유 드라이브 폴더·기관 키 등록을 마친 뒤에 켤 수 있습니다.', 'DRIVE_NOT_READY');
+            } else if (!current.refreshToken || !current.driveId || !current.orgKey) {
+                throw new DriveError('로그인·공유 드라이브 선택·기관 키 등록을 마친 뒤에 켤 수 있습니다.', 'DRIVE_NOT_READY');
+            }
         }
         writeConfig({ enabled: Boolean(enabled) });
         return status();
@@ -675,22 +794,41 @@ function createDriveService(deps) {
         return { copied: Boolean(copy) };
     }
 
+    /** API 방식 전용 기능은 폴더 방식에서 쓰지 않는다. */
+    const apiOnly = fn => async (...args) => {
+        if (isFolderMode()) throw new DriveError('PC 폴더 방식에서는 쓰지 않는 기능입니다.', 'DRIVE_BAD_MODE');
+        return fn(...args);
+    };
+    const folderOnly = fn => async (...args) => {
+        if (!isFolderMode()) throw new DriveError('PC 폴더 방식을 먼저 골라 주세요.', 'DRIVE_BAD_MODE');
+        return fn(...args);
+    };
+    /** 저장소 기능: 방식에 따라 구글 API 또는 PC 폴더로 보낸다. */
+    const byMode = (apiFn, folderFn) => async (...args) => (isFolderMode() ? folderFn(...args) : apiFn(...args));
+
     const handlers = {
         'jjss-drive:get-status': async () => status(),
-        'jjss-drive:configure': async input => configure(input),
-        'jjss-drive:sign-in': async () => signIn(),
+        'jjss-drive:set-mode': async mode => setMode(mode),
+        'jjss-drive:configure': async input => { setMode('api'); return configure(input); },
+        'jjss-drive:configure-folder': async input => configureFolder(input),
+        'jjss-drive:choose-folder': folderOnly(() => chooseFolder()),
+        'jjss-drive:inspect-folder': folderOnly(async () => inspectFolder()),
+        'jjss-drive:sign-in': apiOnly(() => signIn()),
         'jjss-drive:sign-out': async () => signOut(),
-        'jjss-drive:list-shared-drives': async () => listSharedDrives(),
-        'jjss-drive:select-drive': async driveId => selectDrive(driveId),
-        'jjss-drive:security-facts': async () => securityFacts(),
-        'jjss-drive:list-records': async pageToken => listRecords(pageToken),
-        'jjss-drive:get-start-token': async () => getStartPageToken(),
-        'jjss-drive:list-changes': async pageToken => listChanges(pageToken),
-        'jjss-drive:get-file': async fileId => getFile(fileId),
-        'jjss-drive:download': async fileId => download(fileId),
-        'jjss-drive:upload': async input => upload(input),
-        'jjss-drive:set-properties': async (fileId, properties) => setProperties(fileId, properties),
-        'jjss-drive:find-meta': async name => findMeta(name),
+        'jjss-drive:list-shared-drives': apiOnly(() => listSharedDrives()),
+        'jjss-drive:select-drive': apiOnly(driveId => selectDrive(driveId)),
+        'jjss-drive:security-facts': byMode(() => securityFacts(), async () => {
+            const current = readConfig();
+            return folderBackend.securityFacts({ domain: current.domain || '', accountEmail: current.folderAccountEmail || '' });
+        }),
+        'jjss-drive:list-records': byMode(pageToken => listRecords(pageToken), async () => folderBackend.listRecords()),
+        'jjss-drive:get-start-token': byMode(() => getStartPageToken(), async () => folderBackend.getStartPageToken()),
+        'jjss-drive:list-changes': byMode(pageToken => listChanges(pageToken), async pageToken => folderBackend.listChanges(pageToken)),
+        'jjss-drive:get-file': byMode(fileId => getFile(fileId), async fileId => folderBackend.getFile(fileId)),
+        'jjss-drive:download': byMode(fileId => download(fileId), async fileId => folderBackend.download(fileId)),
+        'jjss-drive:upload': byMode(input => upload(input), async input => folderBackend.upload(input)),
+        'jjss-drive:set-properties': byMode((fileId, properties) => setProperties(fileId, properties), async (fileId, properties) => folderBackend.setProperties(fileId, properties)),
+        'jjss-drive:find-meta': byMode(name => findMeta(name), async name => folderBackend.findMeta(name)),
         'jjss-drive:set-org-key': async base64 => setOrgKey(base64),
         'jjss-drive:get-org-key': async () => getOrgKey(),
         'jjss-drive:set-pending-org-key': async base64 => setPendingOrgKey(base64),

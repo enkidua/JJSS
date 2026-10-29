@@ -800,53 +800,58 @@ async function main() {
         await page.evaluate(() => { location.hash = '/settings'; });
         await page.locator('#ai-model').waitFor();
         assert.equal(await page.locator('#shared-drive').count(), 0, '브라우저 실행에는 공유 저장소 섹션이 없음');
+        const fakeDriveInit = () => {
+            localStorage.setItem('jjss:api-key-onboarding-v1', 'later');
+            const files = new Map();
+            const log = [];
+            let nextId = 1;
+            const status = { mode: 'api', folderPath: '', configured: false, domain: '', clientIdHint: '', accountEmail: '', signedIn: false, driveId: '', driveName: '', enabled: false, hasOrgKey: false, secureStorage: true };
+            const FOLDER = 'G:\\공유 드라이브\\합성 사례관리';
+            let orgKey = null;
+            const ok = value => Promise.resolve({ ok: true, value });
+            const snap = file => ({ id: file.id, name: file.name, appProperties: { ...file.appProperties } });
+            const merge = (target, patch) => { for (const [k, v] of Object.entries(patch || {})) { if (v === null) delete target[k]; else target[k] = String(v); } };
+            window.uxDriveFiles = files;
+            window.uxDriveCalls = [];
+            const track = (name, fn) => (...args) => { window.uxDriveCalls.push(name); return fn(...args); };
+            window.jjssDrive = {
+                getStatus: track('getStatus', () => ok({ ...status })),
+                setMode: track('setMode', mode => { if (status.mode !== mode) Object.assign(status, { mode, enabled: false, configured: false, signedIn: false, accountEmail: '', driveId: '', driveName: '', folderPath: '' }); return ok({ ...status }); }),
+                configureFolder: track('configureFolder', input => { Object.assign(status, { mode: 'folder', configured: true, signedIn: true, domain: input.domain.toLowerCase(), accountEmail: input.email.toLowerCase() }); return ok({ ...status }); }),
+                chooseFolder: track('chooseFolder', () => { Object.assign(status, { folderPath: FOLDER, driveId: 'folder-0123456789abcdef0123', driveName: '합성 사례관리' }); return ok({ ...status }); }),
+                configure: track('configure', input => { Object.assign(status, { configured: true, domain: input.domain.toLowerCase(), clientIdHint: 'test…' }); return ok({ ...status }); }),
+                signIn: track('signIn', () => { Object.assign(status, { signedIn: true, accountEmail: `kim@${status.domain}` }); return ok({ ...status }); }),
+                signOut: track('signOut', () => { Object.assign(status, { signedIn: false, enabled: false, driveId: '', hasOrgKey: false }); orgKey = null; return ok({ ...status }); }),
+                listSharedDrives: track('listSharedDrives', () => ok([{ id: 'drive-test-0001', name: '합성 사례관리 드라이브' }])),
+                selectDrive: track('selectDrive', id => { Object.assign(status, { driveId: id, driveName: '합성 사례관리 드라이브' }); return ok({ ...status }); }),
+                securityFacts: track('securityFacts', () => status.mode === 'folder' ? ok({ mode: 'folder', isSharedDrive: true, driveName: '합성 사례관리', accountEmail: status.accountEmail, accountIsMember: true, restrictions: {}, permissions: [], permissionsVisible: false, folder: { path: FOLDER, isGoogleDrive: true, isSharedDrive: true, isMyDrive: false, detectedAccountEmail: '', writable: true, orgDomain: status.domain } }) : ok({ isSharedDrive: true, driveName: '합성 사례관리 드라이브', accountEmail: status.accountEmail, accountIsMember: true, restrictions: { domainUsersOnly: true, driveMembersOnly: true, copyRequiresWriterPermission: true }, permissions: [{ type: 'group', emailAddress: `team@${status.domain}` }], permissionsVisible: true })),
+                listRecords: track('listRecords', () => ok({ files: [...files.values()].filter(f => f.appProperties.jjssKind === 'record').map(snap) })),
+                getStartPageToken: track('getStartPageToken', () => ok(String(log.length + 1))),
+                listChanges: track('listChanges', token => ok({ changes: log.slice(Number(token) - 1).map(id => ({ fileId: id, removed: false, file: { ...snap(files.get(id)), trashed: false } })), newStartPageToken: String(log.length + 1) })),
+                getFile: track('getFile', id => ok(files.has(id) ? snap(files.get(id)) : null)),
+                download: track('download', id => ok(new Uint8Array(files.get(id).content))),
+                upload: track('upload', input => {
+                    if (input.folder !== 'meta') window.uxDriveCalls.push('upload-record');
+                    let file = input.fileId ? files.get(input.fileId) : null;
+                    if (!file) { file = { id: `file${nextId++}`, name: input.name, folder: input.folder, appProperties: {}, content: new Uint8Array() }; files.set(file.id, file); }
+                    merge(file.appProperties, input.appProperties);
+                    file.content = new Uint8Array(input.content);
+                    log.push(file.id);
+                    return ok(snap(file));
+                }),
+                setProperties: track('setProperties', (id, props) => { merge(files.get(id).appProperties, props); log.push(id); return ok(undefined); }),
+                findMeta: track('findMeta', name => { const file = [...files.values()].find(f => f.folder === 'meta' && f.name === name); return ok(file ? snap(file) : null); }),
+                setOrgKey: track('setOrgKey', value => { orgKey = value; status.hasOrgKey = true; return ok({ ...status }); }),
+                getOrgKey: track('getOrgKey', () => ok(orgKey)),
+                setPendingOrgKey: track('setPendingOrgKey', value => { window.uxPendingOrgKey = value; return ok({ ...status }); }),
+                getPendingOrgKey: track('getPendingOrgKey', () => ok(window.uxPendingOrgKey ?? null)),
+                setEnabled: track('setEnabled', enabled => { status.enabled = Boolean(enabled); return ok({ ...status }); }),
+                backupLocalData: track('backupLocalData', () => ok({ copied: true })),
+            };
+        };
         const driveContext = await browser.newContext({ viewport: { width: 1100, height: 850 } });
         try {
-            await driveContext.addInitScript(() => {
-                localStorage.setItem('jjss:api-key-onboarding-v1', 'later');
-                const files = new Map();
-                const log = [];
-                let nextId = 1;
-                const status = { configured: false, domain: '', clientIdHint: '', accountEmail: '', signedIn: false, driveId: '', driveName: '', enabled: false, hasOrgKey: false, secureStorage: true };
-                let orgKey = null;
-                const ok = value => Promise.resolve({ ok: true, value });
-                const snap = file => ({ id: file.id, name: file.name, appProperties: { ...file.appProperties } });
-                const merge = (target, patch) => { for (const [k, v] of Object.entries(patch || {})) { if (v === null) delete target[k]; else target[k] = String(v); } };
-                window.uxDriveFiles = files;
-                window.uxDriveCalls = [];
-                const track = (name, fn) => (...args) => { window.uxDriveCalls.push(name); return fn(...args); };
-                window.jjssDrive = {
-                    getStatus: track('getStatus', () => ok({ ...status })),
-                    configure: track('configure', input => { Object.assign(status, { configured: true, domain: input.domain.toLowerCase(), clientIdHint: 'test…' }); return ok({ ...status }); }),
-                    signIn: track('signIn', () => { Object.assign(status, { signedIn: true, accountEmail: `kim@${status.domain}` }); return ok({ ...status }); }),
-                    signOut: track('signOut', () => { Object.assign(status, { signedIn: false, enabled: false, driveId: '', hasOrgKey: false }); orgKey = null; return ok({ ...status }); }),
-                    listSharedDrives: track('listSharedDrives', () => ok([{ id: 'drive-test-0001', name: '합성 사례관리 드라이브' }])),
-                    selectDrive: track('selectDrive', id => { Object.assign(status, { driveId: id, driveName: '합성 사례관리 드라이브' }); return ok({ ...status }); }),
-                    securityFacts: track('securityFacts', () => ok({ isSharedDrive: true, driveName: '합성 사례관리 드라이브', accountEmail: status.accountEmail, accountIsMember: true, restrictions: { domainUsersOnly: true, driveMembersOnly: true, copyRequiresWriterPermission: true }, permissions: [{ type: 'group', emailAddress: `team@${status.domain}` }], permissionsVisible: true })),
-                    listRecords: track('listRecords', () => ok({ files: [...files.values()].filter(f => f.appProperties.jjssKind === 'record').map(snap) })),
-                    getStartPageToken: track('getStartPageToken', () => ok(String(log.length + 1))),
-                    listChanges: track('listChanges', token => ok({ changes: log.slice(Number(token) - 1).map(id => ({ fileId: id, removed: false, file: { ...snap(files.get(id)), trashed: false } })), newStartPageToken: String(log.length + 1) })),
-                    getFile: track('getFile', id => ok(files.has(id) ? snap(files.get(id)) : null)),
-                    download: track('download', id => ok(new Uint8Array(files.get(id).content))),
-                    upload: track('upload', input => {
-                        if (input.folder !== 'meta') window.uxDriveCalls.push('upload-record');
-                        let file = input.fileId ? files.get(input.fileId) : null;
-                        if (!file) { file = { id: `file${nextId++}`, name: input.name, folder: input.folder, appProperties: {}, content: new Uint8Array() }; files.set(file.id, file); }
-                        merge(file.appProperties, input.appProperties);
-                        file.content = new Uint8Array(input.content);
-                        log.push(file.id);
-                        return ok(snap(file));
-                    }),
-                    setProperties: track('setProperties', (id, props) => { merge(files.get(id).appProperties, props); log.push(id); return ok(undefined); }),
-                    findMeta: track('findMeta', name => { const file = [...files.values()].find(f => f.folder === 'meta' && f.name === name); return ok(file ? snap(file) : null); }),
-                    setOrgKey: track('setOrgKey', value => { orgKey = value; status.hasOrgKey = true; return ok({ ...status }); }),
-                    getOrgKey: track('getOrgKey', () => ok(orgKey)),
-                    setPendingOrgKey: track('setPendingOrgKey', value => { window.uxPendingOrgKey = value; return ok({ ...status }); }),
-                    getPendingOrgKey: track('getPendingOrgKey', () => ok(window.uxPendingOrgKey ?? null)),
-                    setEnabled: track('setEnabled', enabled => { status.enabled = Boolean(enabled); return ok({ ...status }); }),
-                    backupLocalData: track('backupLocalData', () => ok({ copied: true })),
-                };
-            });
+            await driveContext.addInitScript(fakeDriveInit);
             await driveContext.route('**/*', route => new URL(route.request().url()).origin === new URL(base).origin ? route.continue() : route.abort());
             const drivePage = await driveContext.newPage();
             drivePage.on('pageerror', error => errors.push(error.message));
@@ -929,6 +934,60 @@ async function main() {
             console.log('PASS shared drive: hidden in browser build, zero requests while off, guided setup with security check, org key confirmation, backup-then-encrypted upload, live sync after enabling, editing notice in seeker edit modal');
         } finally {
             await driveContext.close();
+        }
+        // 공유 저장소 PC 폴더 방식: 구글 로그인 없이 기관 정보 → 폴더 고르기 → 보안 확인(관리자 확인 체크) → 기관 키 → 올리기 → 켜기
+        const folderContext = await browser.newContext({ viewport: { width: 1100, height: 850 } });
+        try {
+            await folderContext.addInitScript(fakeDriveInit);
+            await folderContext.route('**/*', route => new URL(route.request().url()).origin === new URL(base).origin ? route.continue() : route.abort());
+            const folderPage = await folderContext.newPage();
+            folderPage.on('pageerror', error => errors.push(error.message));
+            await folderPage.goto(base);
+            await folderPage.locator('h1').waitFor();
+            await folderPage.evaluate(async () => {
+                const db = await import('/src/config/localDB.ts');
+                await db.addDoc('seekers', { name: '합성폴더이용자', seekerId: 'UX-FOLDER', phone: '010-0000-2222', organization: '검증용' });
+                location.hash = '/settings';
+            });
+            const folderSection = folderPage.locator('#shared-drive');
+            await folderSection.waitFor();
+            await folderSection.getByTestId('shared-drive-start-setup').click();
+            await folderSection.getByRole('radio', { name: /PC 폴더 방식/ }).check();
+            await folderSection.getByLabel(/개인정보 처리방침에 따라/).check();
+            await folderSection.getByRole('button', { name: '설정 시작' }).click();
+            await folderSection.getByLabel(/내 기관 메일/).waitFor();
+            await folderSection.getByLabel('기관 도메인').fill('example-org.org');
+            await folderSection.getByLabel(/내 기관 메일/).fill('kim@example-org.org');
+            await folderSection.getByRole('button', { name: '저장' }).click();
+            await folderSection.getByRole('button', { name: '폴더 고르기' }).click();
+            // 폴더를 고르면 곧바로 보안 확인 단계로 넘어간다.
+            await folderSection.getByText(/폴더를 확인합니다/).waitFor();
+            await folderSection.getByRole('button', { name: '보안 점검' }).click();
+            await folderSection.getByText('공유 드라이브 구성원·공유 설정(관리자 확인)').waitFor();
+            const folderNext = folderSection.getByRole('button', { name: '다음', exact: true });
+            assert.equal(await folderNext.isDisabled(), true, '관리자 확인 체크 전에는 진행 불가');
+            await folderSection.getByLabel(/관리자가 이 공유 드라이브의 구성원/).check();
+            await folderNext.click();
+            await folderSection.getByRole('button', { name: '새 기관 키 만들기' }).click();
+            const folderCode = (await folderSection.getByTestId('org-key-code').textContent()).trim();
+            await folderSection.getByLabel(/마지막 4자/).fill(folderCode.slice(-4));
+            await folderSection.getByRole('button', { name: '이 키로 시작' }).click();
+            await folderSection.getByRole('button', { name: /사본을 만든 뒤 올리기 시작/ }).click();
+            await folderSection.getByTestId('initial-sync-result').getByText(/확인 완료/).waitFor();
+            await folderSection.getByRole('button', { name: '공유 저장소 켜기' }).click();
+            await folderPage.waitForFunction(() => document.querySelector('[data-testid="shared-drive-phase"]')?.getAttribute('data-phase') === 'idle');
+            assert.match(await folderSection.getByTestId('shared-drive-folder').textContent(), /공유 드라이브.*합성 사례관리.*kim@example-org\.org/);
+            assert.equal(await folderSection.getByRole('button', { name: '연결 해제' }).count(), 1);
+            assert.equal(await folderSection.getByRole('button', { name: '로그아웃' }).count(), 0);
+            const folderCalls = await folderPage.evaluate(() => window.uxDriveCalls);
+            for (const name of ['signIn', 'configure', 'listSharedDrives', 'selectDrive']) assert.equal(folderCalls.includes(name), false, `폴더 방식은 ${name}을 쓰지 않음`);
+            assert.ok(folderCalls.includes('setMode') && folderCalls.includes('configureFolder') && folderCalls.includes('chooseFolder'));
+            const folderDump = await folderPage.evaluate(() => [...window.uxDriveFiles.values()].map(file => JSON.stringify(file.appProperties) + new TextDecoder('utf-8', { fatal: false }).decode(file.content)));
+            assert.equal(folderDump.some(text => text.includes('합성폴더이용자') || text.includes('010-0000-2222')), false, '폴더에도 평문 없음');
+            assert.deepEqual(errors, [], 'no uncaught runtime errors in folder mode flow');
+            console.log('PASS shared drive folder mode: method choice, org info without OAuth, folder pick, admin attestation required, key, encrypted upload, enabled status shows folder and disconnect');
+        } finally {
+            await folderContext.close();
         }
     } finally { await browser.close(); }
 }

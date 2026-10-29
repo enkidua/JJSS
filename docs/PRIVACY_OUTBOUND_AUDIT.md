@@ -13,6 +13,7 @@
 | `src/services/ocr.ts` | `extractTextWithVision` / `extractTextWithGemini` / `smartParseItemizedReceiptWithAI` | Vision / Gemini | `fetch`(키는 `x-goog-api-key` 헤더) / SDK |
 | `src/services/connectionCheck.ts` | `checkProviderConnection` | 4사 | 모델 조회·빈 요청만(업무 데이터 없음, 과금 생성 없음). 키 저장 직후 자동으로도 실행 |
 | `electron/updater.cjs`(main 프로세스) | `checkForUpdates` / `downloadUpdate` | GitHub(enkidua/JJSS Releases) | 앱 버전·운영체제만. 업무 데이터·API 키 없음. 배포본에서만, 내려받기는 사용자가 누를 때만 |
+| `electron/folderDrive.cjs`(main 프로세스, PC 폴더 방식) | 고른 공유 드라이브 폴더 읽기·쓰기 | 없음(구글 드라이브 데스크톱 프로그램이 폴더를 구글과 동기화) | **공유 저장소를 PC 폴더 방식으로 켠 경우에만.** 구글 로그인 방식과 같은 암호문·평문 속성을 한 파일에 담아 고른 폴더의 `JJSS 사례관리 (PC 폴더 방식)` 아래에만 쓴다. JJSS 자체의 네트워크 요청 0건(`test:folder-drive`, `test:shared-drive`로 확인) |
 | `electron/googleDrive.cjs`(main 프로세스) | 로그인·`listRecords`·`listChanges`·`download`·`upload`·`securityFacts` | Google(accounts.google.com, oauth2.googleapis.com, www.googleapis.com/drive) | **공유 저장소를 켠 경우에만.** 이용자·사례 기록을 이 PC에서 기관 키(AES-256-GCM)로 암호화한 파일과 평문 속성(레코드 id·버전·수정 시각·수정자 기관 메일·내용 지문 HMAC). 이름·연락처 등은 속성·파일 이름에 넣지 않음. 기관 키·토큰은 구글에 보내지 않음(토큰은 구글 인증에만). 끈 상태(기본값)에서는 요청 0건(`test:google-drive`, `test:shared-drive`로 확인) |
 
 그 밖의 `fetch`(`rehabPlanDocx.ts` 템플릿, `jjssFileService.ts` data URL)는 앱 내부 자원만 읽는다. 분석·원격 오류수집·추적 코드는 없다.

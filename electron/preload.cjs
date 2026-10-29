@@ -36,7 +36,11 @@ contextBridge.exposeInMainWorld('jjssUpdates', Object.freeze({
 const driveCall = channel => (...args) => ipcRenderer.invoke(channel, ...args);
 contextBridge.exposeInMainWorld('jjssDrive', Object.freeze({
     getStatus: driveCall('jjss-drive:get-status'),
+    setMode: driveCall('jjss-drive:set-mode'),
     configure: driveCall('jjss-drive:configure'),
+    configureFolder: driveCall('jjss-drive:configure-folder'),
+    chooseFolder: driveCall('jjss-drive:choose-folder'),
+    inspectFolder: driveCall('jjss-drive:inspect-folder'),
     signIn: driveCall('jjss-drive:sign-in'),
     signOut: driveCall('jjss-drive:sign-out'),
     listSharedDrives: driveCall('jjss-drive:list-shared-drives'),

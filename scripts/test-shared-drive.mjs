@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
 import ts from 'typescript';
 import { createFakeLocal, createFakeSharedDrive } from './fakeSharedDrive.mjs';
 import { createFakeIndexedDB } from './fakeIndexedDB.mjs';
@@ -831,6 +832,133 @@ await test('기관 키 바꾸기와 다른 PC의 수정: 교체 중 올리기는
     await A2.engine.push();
     await B2.engine.pull();
     assert.equal(B2.local.stores.seekers.get('s2').phone, '010-6666-6666');
+});
+
+await test('PC 폴더 방식: 두 PC가 같은 공유 드라이브 폴더로 올리기·받기·수정·삭제, 동시 수정과 구글 드라이브 충돌 사본은 충돌로, 보안 점검', async () => {
+    const require = createRequire(import.meta.url);
+    const nodeFs = require('node:fs');
+    const nodeOs = require('node:os');
+    const nodePath = require('node:path');
+    const nodeCrypto = require('node:crypto');
+    const nodeHttp = require('node:http');
+    const { createDriveService } = require('../electron/googleDrive.cjs');
+    const base = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'jjss-folder-e2e-'));
+    nodeFs.mkdirSync(nodePath.join(base, 'G', '내 드라이브'), { recursive: true });
+    const sharedFolder = nodePath.join(base, 'G', '공유 드라이브', '사례관리');
+    nodeFs.mkdirSync(sharedFolder, { recursive: true });
+    const storeRoot = nodePath.join(sharedFolder, 'JJSS 사례관리 (PC 폴더 방식)');
+    async function folderPc(email) {
+        const handlers = new Map();
+        createDriveService({
+            app: { getPath: () => nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'jjss-folder-e2e-user-')) },
+            ipcMain: { handle: (channel, handler) => handlers.set(channel, handler) },
+            shell: { openExternal: async () => undefined },
+            safeStorage: { isEncryptionAvailable: () => true, encryptString: text => Buffer.from(text), decryptString: buffer => String(buffer) },
+            fs: nodeFs, path: nodePath, http: nodeHttp, crypto: nodeCrypto,
+            fetchFn: async () => { throw new Error('폴더 방식은 구글에 요청하지 않는다'); },
+            dialog: { showOpenDialog: async () => ({ canceled: false, filePaths: [sharedFolder] }) },
+            validateSender: () => {}, expectedIndexPath: 'index.html', copyLocalData: async () => 'copied',
+        }).register();
+        const call = async (channel, ...args) => {
+            const result = await handlers.get(channel)({}, ...args);
+            if (!result.ok) throw Object.assign(new Error(result.error.message), { code: result.error.code });
+            return result.value;
+        };
+        await call('jjss-drive:configure-folder', { domain: DOMAIN, email });
+        await call('jjss-drive:choose-folder');
+        const api = {
+            listRecords: token => call('jjss-drive:list-records', token),
+            getStartPageToken: () => call('jjss-drive:get-start-token'),
+            listChanges: token => call('jjss-drive:list-changes', token),
+            getFile: id => call('jjss-drive:get-file', id),
+            download: async id => new Uint8Array(await call('jjss-drive:download', id)),
+            upload: input => call('jjss-drive:upload', input),
+            setProperties: (id, properties) => call('jjss-drive:set-properties', id, properties),
+            findMeta: name => call('jjss-drive:find-meta', name),
+        };
+        const pc = await makePc({ api }, secret, email);
+        return { ...pc, call };
+    }
+    const A = await folderPc(`kim@${DOMAIN}`);
+    const B = await folderPc(`lee@${DOMAIN}`);
+    // 1) 첫 PC: 기존 자료 올리기, 둘째 PC: 받기
+    await A.local.appPut('seekers', seeker('s1', '폴더이용자', 'FOLDER-1'));
+    await A.local.appPut('caseDocuments', doc('d1', 's1', '폴더 방식 상담 기록'));
+    await A.engine.ensureKeyCheck();
+    const first = await A.engine.initialSync();
+    assert.equal(first.uploaded, 2);
+    assert.equal(await B.engine.verifyOrgKey(), true);
+    const joined = await B.engine.initialSync();
+    assert.equal(joined.downloaded, 2);
+    assert.equal(B.local.stores.seekers.get('s1').name, '폴더이용자');
+    // 드라이브 폴더에는 평문이 없다
+    const walk = dir => nodeFs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.isDirectory() ? walk(nodePath.join(dir, entry.name)) : [nodePath.join(dir, entry.name)]);
+    for (const file of walk(storeRoot)) {
+        const text = nodeFs.readFileSync(file).toString('utf8');
+        for (const secretText of ['폴더이용자', 'FOLDER-1', '010-0000-0000', '폴더 방식 상담 기록']) assert.equal(text.includes(secretText) || file.includes(secretText), false, `폴더에 평문 없음: ${secretText}`);
+    }
+    // 2) 평소 동기화: 수정·새 기록·삭제
+    await A.local.appPut('seekers', { ...A.local.stores.seekers.get('s1'), phone: '010-1212-3434' });
+    await A.local.appPut('seekers', seeker('s2', '두번째'));
+    await A.engine.push();
+    const pulled = await B.engine.pull();
+    assert.equal(pulled.applied, 2);
+    assert.equal(B.local.stores.seekers.get('s1').phone, '010-1212-3434');
+    await A.local.appDelete('caseDocuments', 'd1');
+    await A.engine.push();
+    assert.equal((await B.engine.pull()).deleted, 1);
+    assert.equal(B.local.stores.caseDocuments.has('d1'), false);
+    // 3) 동시 수정(받기 전에 둘 다 고침): 나중에 올리는 PC에 충돌로 남는다
+    await A.engine.pull();
+    await A.local.appPut('seekers', { ...A.local.stores.seekers.get('s1'), phone: '010-0001-0001' });
+    await B.local.appPut('seekers', { ...B.local.stores.seekers.get('s1'), phone: '010-0002-0002' });
+    await A.engine.push();
+    const late = await B.engine.push();
+    assert.equal(late.conflicts, 1, '덮어쓰지 않고 충돌');
+    await B.engine.resolveConflict('seekers:s1', 'keep-local');
+    await B.engine.push();
+    await A.engine.pull();
+    assert.equal(A.local.stores.seekers.get('s1').phone, '010-0002-0002');
+    // 4) 구글 드라이브(데스크톱) 충돌 사본: 두 PC가 몇 초 안에 같은 기록을 올려, 한 파일에는 B 것이 남고 A 것은 "(1)" 사본이 된 경우
+    await B.engine.pull();
+    const s2File = nodePath.join(storeRoot, 'seekers', 'seekers-s2.jjss');
+    const before = nodeFs.readFileSync(s2File);
+    await A.local.appPut('seekers', { ...A.local.stores.seekers.get('s2'), phone: '010-7777-0000' });
+    await A.engine.push();
+    const aBytes = nodeFs.readFileSync(s2File);
+    nodeFs.writeFileSync(s2File, before); // B는 아직 A의 쓰기를 받지 못했다
+    await B.local.appPut('seekers', { ...B.local.stores.seekers.get('s2'), phone: '010-8888-0000' });
+    assert.equal((await B.engine.push()).uploaded, 1);
+    nodeFs.writeFileSync(nodePath.join(storeRoot, 'seekers', 'seekers-s2 (1).jjss'), aBytes); // 구글 드라이브가 남긴 A의 사본
+    const onB = await B.engine.pull();
+    const onA = await A.engine.pull();
+    assert.ok(onB.conflicts + onA.conflicts >= 1, '적어도 한 PC가 충돌로 알게 된다(조용히 사라지지 않음)');
+    const s2Conflicts = [...await A.engine.conflicts(), ...await B.engine.conflicts()].filter(conflict => conflict.rid === 'seekers:s2');
+    assert.ok(s2Conflicts.some(conflict => {
+        const phones = [conflict.local?.phone, conflict.remote?.phone];
+        return phones.includes('010-7777-0000') && phones.includes('010-8888-0000');
+    }), '충돌 안에 두 PC의 내용이 모두 있다');
+    // 충돌을 고르면 다시 한 내용으로 모인다
+    const owner = (await A.engine.conflicts()).some(conflict => conflict.rid === 'seekers:s2') ? A : B;
+    const other = owner === A ? B : A;
+    await owner.engine.resolveConflict('seekers:s2', 'keep-local');
+    await owner.engine.push();
+    await other.engine.pull();
+    assert.equal(other.local.stores.seekers.get('s2').phone, owner.local.stores.seekers.get('s2').phone);
+    // 5) 보안 점검: 구글 드라이브 공유 드라이브 폴더는 통과(관리자 확인 항목은 주의), 일반 폴더는 막힘
+    const facts = await A.call('jjss-drive:security-facts');
+    const report = security.evaluateDriveSecurity(facts, DOMAIN);
+    assert.equal(report.blocked, false);
+    assert.ok(report.checks.some(check => check.id === 'admin-settings' && check.level === 'warn'));
+    assert.ok(report.checks.some(check => check.id === 'account-domain' && check.level === 'warn'), 'Windows 경로에서는 계정을 직접 확인');
+    const notGoogle = security.evaluateDriveSecurity({ ...facts, isSharedDrive: false, folder: { ...facts.folder, isGoogleDrive: false } }, DOMAIN);
+    assert.equal(notGoogle.blocked, true);
+    const myDrive = security.evaluateDriveSecurity({ ...facts, folder: { ...facts.folder, isSharedDrive: false, isMyDrive: true } }, DOMAIN);
+    assert.equal(myDrive.blocked, true);
+    const macOther = security.evaluateDriveSecurity({ ...facts, folder: { ...facts.folder, detectedAccountEmail: 'me@gmail.com' } }, DOMAIN);
+    assert.ok(macOther.checks.some(check => check.id === 'account-domain' && check.level === 'block'), 'macOS 경로의 계정이 기관 밖이면 막힘');
+    const readOnly = security.evaluateDriveSecurity({ ...facts, folder: { ...facts.folder, writable: false } }, DOMAIN);
+    assert.equal(readOnly.blocked, true);
 });
 
 console.log(`shared drive tests passed (${passed}) — fake drive only, no network, synthetic data.`);

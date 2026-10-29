@@ -79,6 +79,22 @@ export interface DriveSecurityFacts {
     permissionsVisible?: boolean;
     accountEmail: string;
     accountIsMember: boolean;
+    /** PC 폴더 방식이면 'folder'(구성원·공유 설정은 앱이 볼 수 없다) */
+    mode?: 'api' | 'folder';
+    folder?: {
+        path: string;
+        /** 구글 드라이브(데스크톱) 폴더로 보인다(같은 뿌리에 "내 드라이브"가 있거나 macOS CloudStorage/GoogleDrive-메일) */
+        isGoogleDrive: boolean;
+        /** "공유 드라이브" 아래의 드라이브 폴더 */
+        isSharedDrive: boolean;
+        /** 개인 "내 드라이브" 아래 */
+        isMyDrive: boolean;
+        /** macOS 경로에서 읽은 구글 계정(Windows는 경로에 없음) */
+        detectedAccountEmail: string;
+        /** 이 PC에서 쓰고 지울 수 있다 */
+        writable: boolean;
+        orgDomain: string;
+    };
 }
 
 export type FolderKey = 'meta' | 'seekers' | `documents/${number}`;

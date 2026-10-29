@@ -80,7 +80,8 @@ function messageOf(error: unknown): string {
 }
 
 function isOffline(error: unknown): boolean {
-    return /인터넷에 연결하지 못했/.test(String((error as Error)?.message));
+    // PC 폴더 방식에서 구글 드라이브(데스크톱)가 꺼져 있거나 로그아웃된 경우도 연결이 없는 것으로 본다(다시 연결되면 이어서 올린다).
+    return /인터넷에 연결하지 못했/.test(String((error as Error)?.message)) || (error as SharedDriveError)?.code === 'DRIVE_FOLDER_UNAVAILABLE';
 }
 
 /** 드라이브가 잠시 응답하지 않음(429·5xx 재시도 소진). 오프라인이 아니므로 다음 주기에 그냥 다시 한다. */

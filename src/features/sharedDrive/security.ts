@@ -25,7 +25,56 @@ function domainOf(email: string | undefined): string {
     return at >= 0 ? value.slice(at + 1) : '';
 }
 
+/**
+ * PC 폴더 방식 점검. 앱이 공유 드라이브의 구성원·공유 설정을 볼 수 없으므로 "경로가 기관 공유 드라이브인가", "쓸 수 있는가",
+ * (macOS) "로그인한 구글 계정이 기관 도메인인가"만 확인하고, 나머지는 관리자가 직접 확인하도록 "주의"로 남긴다.
+ */
+export function evaluateFolderSecurity(facts: DriveSecurityFacts, orgDomain: string): SecurityReport {
+    const domain = orgDomain.toLowerCase().trim();
+    const folder = facts.folder;
+    const checks: SecurityCheck[] = [];
+    const add = (id: string, level: SecurityLevel, title: string, detail: string) => checks.push({ id, level, title, detail });
+
+    add('folder-google-drive', folder?.isGoogleDrive ? 'pass' : 'block',
+        '구글 드라이브(데스크톱) 폴더',
+        folder?.isGoogleDrive
+            ? '구글 드라이브(데스크톱)가 PC에 붙인 폴더입니다.'
+            : '구글 드라이브(데스크톱) 폴더로 보이지 않습니다. 탐색기의 "Google Drive(G:)" → "공유 드라이브" 아래 폴더를 골라 주세요(다른 동기화 폴더·USB·네트워크 폴더는 쓸 수 없습니다).');
+
+    add('shared-drive', folder?.isSharedDrive && !folder?.isMyDrive ? 'pass' : 'block',
+        '공유 드라이브 사용',
+        folder?.isMyDrive
+            ? '개인 "내 드라이브" 폴더입니다. 기관 공유 드라이브 폴더를 골라 주세요(공유 드라이브는 파일이 기관 소유라 퇴사해도 남습니다).'
+            : folder?.isSharedDrive ? `"${facts.driveName}" 공유 드라이브` : '"공유 드라이브" 아래의 폴더가 아닙니다.');
+
+    add('folder-writable', folder?.writable ? 'pass' : 'block',
+        '이 PC에서 쓰기 가능',
+        folder?.writable ? '파일을 만들고 지울 수 있습니다.' : '이 폴더에 파일을 쓸 수 없습니다. 이 계정이 공유 드라이브의 "참여자" 이상 구성원인지, 구글 드라이브가 실행 중인지 확인해 주세요.');
+
+    const detected = String(folder?.detectedAccountEmail || '').toLowerCase();
+    if (detected) {
+        add('account-domain', domainOf(detected) === domain ? 'pass' : 'block',
+            '기관 계정으로 로그인한 구글 드라이브',
+            domainOf(detected) === domain ? detected : `이 PC의 구글 드라이브 계정(${detected})이 기관 도메인(${domain})이 아닙니다.`);
+    } else {
+        add('account-domain', 'warn',
+            '기관 계정으로 로그인한 구글 드라이브',
+            `이 PC의 구글 드라이브(데스크톱)에 기관 계정(@${domain})으로 로그인했는지 직접 확인해 주세요(Windows에서는 앱이 계정을 알 수 없습니다). 수정한 사람 표시: ${facts.accountEmail || '알 수 없음'}`);
+    }
+
+    add('admin-settings', 'warn',
+        '공유 드라이브 구성원·공유 설정(관리자 확인)',
+        'PC 폴더 방식에서는 앱이 구성원 목록과 공유 설정을 볼 수 없습니다. 관리자가 공유 드라이브 설정에서 ① 사례관리 담당자만 구성원 ② "링크가 있는 모든 사용자" 공유 없음 ③ 조직 외부 사용자 접근·구성원 아닌 사용자에게 공유 끄기 ④ 뷰어의 다운로드·인쇄·복사 끄기를 확인해 주세요.');
+
+    return {
+        checks,
+        blocked: checks.some(check => check.level === 'block'),
+        warnings: checks.filter(check => check.level === 'warn').length,
+    };
+}
+
 export function evaluateDriveSecurity(facts: DriveSecurityFacts, orgDomain: string): SecurityReport {
+    if (facts.mode === 'folder') return evaluateFolderSecurity(facts, orgDomain);
     const domain = orgDomain.toLowerCase().trim();
     const checks: SecurityCheck[] = [];
     const add = (id: string, level: SecurityLevel, title: string, detail: string) => checks.push({ id, level, title, detail });

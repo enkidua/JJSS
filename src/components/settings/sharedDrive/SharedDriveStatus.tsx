@@ -131,17 +131,21 @@ export default function SharedDriveStatus({ status, onStatus }: { status: JjssDr
 
     const engine = controller?.syncEngine ?? null;
     const syncing = view.phase === 'syncing' || view.phase === 'starting';
-    const needsSignIn = /다시 로그인|로그인해 주세요/.test(view.message);
+    const isFolder = status.mode === 'folder';
+    const needsSignIn = !isFolder && /다시 로그인|로그인해 주세요/.test(view.message);
 
     return (
         <div className="space-y-4 text-sm text-white/75">
             <dl className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
                 <div className="rounded-xl bg-white/5 p-2"><dt className="text-white/45">상태</dt><dd data-testid="shared-drive-phase" data-phase={view.phase} className="text-white">{PHASE_TEXT[view.phase]}{view.offline ? ' (인터넷 연결 없음 — 다시 연결되면 이어서 올립니다)' : ''}</dd></div>
-                <div className="rounded-xl bg-white/5 p-2"><dt className="text-white/45">계정 · 공유 드라이브</dt><dd className="text-white">{status.accountEmail} · {status.driveName}</dd></div>
+                {isFolder
+                    ? <div className="rounded-xl bg-white/5 p-2"><dt className="text-white/45">PC 폴더 방식 · 직원 메일</dt><dd className="break-all text-white" data-testid="shared-drive-folder">{status.folderPath} · {status.accountEmail}</dd></div>
+                    : <div className="rounded-xl bg-white/5 p-2"><dt className="text-white/45">계정 · 공유 드라이브</dt><dd className="text-white">{status.accountEmail} · {status.driveName}</dd></div>}
                 <div className="rounded-xl bg-white/5 p-2"><dt className="text-white/45">마지막 받기</dt><dd className="text-white">{formatTime(view.lastSyncAt)}</dd></div>
                 <div className="rounded-xl bg-white/5 p-2"><dt className="text-white/45">올릴 변경 · 충돌 · 격리</dt><dd className="text-white">{view.pending} · {view.conflicts} · {view.quarantined}</dd></div>
             </dl>
             {view.message && <p className="text-xs text-amber-200">{view.message}</p>}
+            {isFolder && view.offline && <p className="text-xs text-white/50">구글 드라이브(데스크톱)가 실행 중이고 기관 계정으로 로그인돼 있는지 확인하세요. 다시 연결되면 이어서 올립니다.</p>}
             {view.keyCheckTampered && <p className="text-xs text-rose-200">드라이브의 기관 키 확인 표식이 바뀌었습니다(기관 키 교체 증명 없음). 누군가 드라이브 파일을 고쳤을 수 있으니 관리자에게 알리세요. 동기화는 계속하며 열 수 없는 파일은 받지 않습니다.</p>}
             {error && <p role="alert" className="rounded-xl border border-rose-400/30 bg-rose-500/10 p-3 text-xs text-rose-100">{error}</p>}
             {notice && <p role="status" className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 p-3 text-xs text-emerald-100">{notice}</p>}
@@ -152,7 +156,7 @@ export default function SharedDriveStatus({ status, onStatus }: { status: JjssDr
                     const passed = await controller?.checkSecurity(true);
                     if (passed && view.phase === 'blocked') await controller?.start();
                 })} className="btn-secondary px-3! py-2! text-xs inline-flex items-center gap-1.5"><ShieldCheck className="h-3.5 w-3.5" /> 보안 다시 점검</button>
-                {(needsSignIn || view.phase === 'error') && (
+                {!isFolder && (needsSignIn || view.phase === 'error') && (
                     <button type="button" disabled={busy || syncing} onClick={() => void run(async () => {
                         onStatus(await unwrap(bridge.signIn()));
                         await controller?.start();
@@ -165,15 +169,17 @@ export default function SharedDriveStatus({ status, onStatus }: { status: JjssDr
                     useSharedDriveStore.setState({ phase: 'off', message: '' });
                 })} className="btn-secondary px-3! py-2! text-xs">끄기</button>
                 <button type="button" disabled={busy || syncing} onClick={() => {
-                    if (!window.confirm('로그아웃하면 이 PC의 구글 로그인과 기관 키를 지우고 공유 저장소를 끕니다. 이 PC 자료는 그대로입니다. 다시 쓰려면 기관 키 코드가 다시 필요합니다. 계속할까요?')) return;
+                    if (!window.confirm(isFolder
+                        ? '연결을 해제하면 이 PC의 폴더 설정과 기관 키를 지우고 공유 저장소를 끕니다. 이 PC 자료와 드라이브 폴더의 파일은 그대로입니다. 다시 쓰려면 기관 키 코드가 다시 필요합니다. 계속할까요?'
+                        : '로그아웃하면 이 PC의 구글 로그인과 기관 키를 지우고 공유 저장소를 끕니다. 이 PC 자료는 그대로입니다. 다시 쓰려면 기관 키 코드가 다시 필요합니다. 계속할까요?')) return;
                     void run(async () => {
                         controller?.stop();
                         onStatus(await unwrap(bridge.signOut()));
                         useSharedDriveStore.setState({ phase: 'off', message: '' });
                     });
-                }} className="btn-secondary px-3! py-2! text-xs">로그아웃</button>
+                }} className="btn-secondary px-3! py-2! text-xs">{isFolder ? '연결 해제' : '로그아웃'}</button>
             </div>
-            {syncing && <p className="text-xs text-white/45">주고받는 중에는 끄기·로그아웃을 할 수 없습니다. 잠시 기다려 주세요.</p>}
+            {syncing && <p className="text-xs text-white/45">주고받는 중에는 끄기·{isFolder ? '연결 해제' : '로그아웃'}를 할 수 없습니다. 잠시 기다려 주세요.</p>}
 
             {view.security && <details className="text-xs"><summary className="cursor-pointer text-white/60">보안 점검 결과</summary><div className="mt-2"><SecurityReportView report={view.security} /></div></details>}
 
