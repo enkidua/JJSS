@@ -132,7 +132,7 @@ function getCanonicalSeekerId(seeker: Seeker): string {
     return seeker.id || seeker.seekerId || '';
 }
 
-function resolveCaseDocumentSeeker(doc: CaseDocument, seekers: Seeker[]): Seeker | null {
+function resolveCaseDocumentSeeker(doc: CaseDocument, seekers: Seeker[], { nameFallbackForKeyedDocs = true } = {}): Seeker | null {
     const docPrimaryKeys = getCaseDocumentPrimaryKeys(doc as any);
     if (docPrimaryKeys.size > 0) {
         const primaryMatch = seekers.find(seeker => {
@@ -140,6 +140,8 @@ function resolveCaseDocumentSeeker(doc: CaseDocument, seekers: Seeker[]): Seeker
             return [...docPrimaryKeys].some(key => seekerKeys.has(key));
         });
         if (primaryMatch) return primaryMatch;
+        // id가 있는데 못 찾은 문서: 공유 저장소에서는 그 이용자가 아직 안 왔거나 충돌·격리 중일 수 있다. 이름만으로 동명이인에게 붙이지 않는다.
+        if (!nameFallbackForKeyedDocs) return null;
     }
 
     const docNames = getCaseDocumentNames(doc as any);
@@ -168,10 +170,11 @@ async function collectSeekerDocumentIds(seekerId: string, seekers: Seeker[]): Pr
 
 async function migrateCaseDocumentSeekerIds(seekers: Seeker[]) {
     if (seekers.length === 0) return;
+    const nameFallbackForKeyedDocs = !(typeof localDB.isSharedDriveActive === 'function' && localDB.isSharedDriveActive());
     const docs = await localDB.getAll<CaseDocument>('caseDocuments');
     await Promise.all(docs.map(async (doc) => {
         if (!doc.id) return;
-        const matched = resolveCaseDocumentSeeker(doc, seekers);
+        const matched = resolveCaseDocumentSeeker(doc, seekers, { nameFallbackForKeyedDocs });
         if (!matched) return;
         const canonicalSeekerId = getCanonicalSeekerId(matched);
         if (!canonicalSeekerId || doc.seekerId === canonicalSeekerId) return;

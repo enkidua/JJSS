@@ -6,6 +6,7 @@ import { useDataStore } from '../store/dataStore';
 import type { Seeker } from '../types/matching';
 import { useToast } from '../components/Toast';
 import { ClientContextBox } from '../components/ClientContextBox';
+import SharedDriveEditingBanner from '../components/SharedDriveEditingBanner';
 import { MatchingView } from '../components/MatchingView';
 import { DocumentReviewTab } from '../components/DocumentReviewTab';
 import { RehabPlanTemplatePreview } from '../components/RehabPlanTemplatePreview';
@@ -268,6 +269,8 @@ export default function WorkMate() {
                                     />
 
                                     {/* ── STEP 1: 사례회의록 ── */}
+                                    {/* 공유 저장소: 저장된 회의록을 열어 두는 동안 다른 PC의 수정은 충돌로 남긴다 */}
+                                    <SharedDriveEditingBanner store="caseDocuments" id={caseMeetingDoc?.id} />
                                     <CaseStage
                                         title="STEP 1. 사례회의록 작성"
                                         description="사례회의 내용을 바탕으로 공식 회의록을 자동 생성합니다."
@@ -290,6 +293,7 @@ export default function WorkMate() {
                                     />
 
                                     {/* ── STEP 2: 직업재활계획서 ── */}
+                                    <SharedDriveEditingBanner store="caseDocuments" id={casePlanDoc?.id} />
                                     <CaseStage
                                         title="STEP 2. 직업재활계획 수립"
                                         description="사례회의 내용을 연동하여 구체적인 목표와 수행방법을 수립합니다."
@@ -390,6 +394,9 @@ export default function WorkMate() {
                     </motion.div>
             );
             case 'interview': return (
+                    <>
+                    {/* 공유 저장소: 저장된 면접일지를 열어 두는 동안 다른 PC의 수정은 충돌로 남긴다 */}
+                    <SharedDriveEditingBanner store="caseDocuments" id={employment.interviewDocId} />
                     <EmploymentDocumentTab
                         key="interview"
                         title="면접일지 작성"
@@ -427,8 +434,11 @@ export default function WorkMate() {
                         onLoadContext={() => void employmentContext.load()}
                         onClearContext={employmentContext.clear}
                     />
+                    </>
             );
             case 'jobAnalysis': return (
+                    <>
+                    <SharedDriveEditingBanner store="caseDocuments" id={employment.jobAnalysisDocId} />
                     <JobAnalysisDocumentTab
                         key="job-analysis"
                         jobs={employment.jobs}
@@ -461,6 +471,7 @@ export default function WorkMate() {
                         onLoadContext={() => void employmentContext.load()}
                         onClearContext={employmentContext.clear}
                     />
+                    </>
             );
             case 'adaptation': return (
                     <motion.div

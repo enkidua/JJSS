@@ -8,7 +8,7 @@
  * - 보안 점검에 "차단"이 있으면 동기화하지 않는다.
  */
 import { create } from 'zustand';
-import { onLocalMutation, SHARED_DRIVE_RESTORE_PAUSE_KEY, type LocalMutation } from '../../config/localDB';
+import { onLocalMutation, setSharedDriveActive, SHARED_DRIVE_RESTORE_PAUSE_KEY, type LocalMutation } from '../../config/localDB';
 import { base64ToBytes, createDriveClient, getDriveBridge, SharedDriveError, unwrap } from './driveClient';
 import { SyncEngine, type EditingInfo, type InitialSyncResult, type SyncProgress } from './engine';
 import { deriveOrgKey, type OrgKey } from './orgKey';
@@ -66,7 +66,7 @@ export interface ControllerDeps {
     createState: () => SyncStateStore;
     subscribe: (listener: (mutation: LocalMutation) => void) => () => void;
     storage: Pick<Storage, 'getItem' | 'removeItem'>;
-    onApplied: (count: number) => void;
+    onApplied: (count: number, deleted?: number) => void;
     setTimer: (run: () => void, ms: number) => unknown;
     clearTimer: (handle: unknown) => void;
     setRepeat: (run: () => void, ms: number) => unknown;
@@ -80,7 +80,12 @@ function messageOf(error: unknown): string {
 }
 
 function isOffline(error: unknown): boolean {
-    return /인터넷에 연결하지 못했|잠시 응답하지 않|DRIVE_BUSY/.test(`${(error as Error)?.message} ${(error as SharedDriveError)?.code}`);
+    return /인터넷에 연결하지 못했/.test(String((error as Error)?.message));
+}
+
+/** 드라이브가 잠시 응답하지 않음(429·5xx 재시도 소진). 오프라인이 아니므로 다음 주기에 그냥 다시 한다. */
+function isBusy(error: unknown): boolean {
+    return /잠시 응답하지 않|DRIVE_BUSY/.test(`${(error as Error)?.message} ${(error as SharedDriveError)?.code}`);
 }
 
 export class SharedDriveController {
@@ -98,6 +103,8 @@ export class SharedDriveController {
 
     private set(patch: Partial<SharedDriveViewState>) {
         useSharedDriveStore.setState(patch);
+        const phase = useSharedDriveStore.getState().phase;
+        setSharedDriveActive(phase !== 'off' && phase !== 'unavailable');
     }
 
     async refreshStatus(): Promise<JjssDriveStatus> {
@@ -256,7 +263,7 @@ export class SharedDriveController {
             if (!(await this.checkSecurity(false))) return;
             const { pull } = await engine.syncOnce();
             if (!alive()) return;
-            if (pull.applied > 0) this.deps.onApplied(pull.applied);
+            if (pull.applied > 0) this.deps.onApplied(pull.applied, pull.deleted);
             await this.refreshCounts();
             if (pull.needsNewKey) {
                 this.set({ phase: 'needs-key', message: '기관 키가 바뀌었습니다. 관리자에게 새 기관 키 코드를 받아 넣어 주세요.' });
@@ -265,7 +272,8 @@ export class SharedDriveController {
             this.set({ phase: 'idle', message: '', offline: false, progress: null, keyCheckTampered: Boolean(pull.keyCheckTampered) || useSharedDriveStore.getState().keyCheckTampered });
         } catch (error) {
             if (!alive()) return;
-            this.set({ phase: isOffline(error) ? 'idle' : 'error', message: messageOf(error), offline: isOffline(error), progress: null });
+            const transient = isOffline(error) || isBusy(error);
+            this.set({ phase: transient ? 'idle' : 'error', message: messageOf(error), offline: isOffline(error), progress: null });
             await this.refreshCounts().catch(() => undefined);
         } finally {
             this.running = false;
@@ -279,7 +287,7 @@ export class SharedDriveController {
         this.running = true;
         try {
             const result = await engine.initialSync();
-            if (result.downloaded > 0) this.deps.onApplied(result.downloaded);
+            if (result.downloaded > 0) this.deps.onApplied(result.downloaded, result.deleted);
             await this.refreshCounts();
             return result;
         } finally {
@@ -357,7 +365,7 @@ export function getSharedDriveController(): SharedDriveController | null {
         createState: () => new IndexedDbSyncState(conflictCodec),
         subscribe: onLocalMutation,
         storage: window.localStorage,
-        onApplied: count => window.dispatchEvent(new CustomEvent(SHARED_DRIVE_APPLIED_EVENT, { detail: { count } })),
+        onApplied: (count, deleted = 0) => window.dispatchEvent(new CustomEvent(SHARED_DRIVE_APPLIED_EVENT, { detail: { count, deleted } })),
         setTimer: (run, ms) => window.setTimeout(run, ms),
         clearTimer: handle => window.clearTimeout(handle as number),
         setRepeat: (run, ms) => window.setInterval(run, ms),

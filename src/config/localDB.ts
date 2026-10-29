@@ -205,6 +205,15 @@ export interface LocalMutation {
 type LocalMutationListener = (mutation: LocalMutation) => void;
 const mutationListeners = new Set<LocalMutationListener>();
 
+/** 공유 저장소가 켜져 동작 중인가(제어부가 갱신). 데이터 저장소가 동기화 모듈을 직접 불러오지 않고도 판단할 수 있게 둔다. */
+let sharedDriveActive = false;
+export function setSharedDriveActive(active: boolean): void {
+    sharedDriveActive = active;
+}
+export function isSharedDriveActive(): boolean {
+    return sharedDriveActive;
+}
+
 export function onLocalMutation(listener: LocalMutationListener): () => void {
     mutationListeners.add(listener);
     return () => mutationListeners.delete(listener);
@@ -1343,20 +1352,31 @@ export async function importAllData(source: string | ParsedBackupData): Promise<
     };
     const hasWindow = typeof window !== 'undefined' && typeof window.addEventListener === 'function';
     if (hasWindow) window.addEventListener('beforeunload', preventUnload);
+    // 공유 저장소를 쓰고 있으면 다시 불러온 뒤 동기화를 멈추고 "복원본/드라이브 기준"을 묻는다. 표지는 복원 "전"에 남긴다:
+    // 표지 없이 복원본이 들어가면 다음 실행이 복원본(옛 내용)을 드라이브의 최신 내용 위에 그대로 올리므로, 표지를 못 남기면 복원을 시작하지 않는다.
+    try {
+        localStorage.setItem(SHARED_DRIVE_RESTORE_PAUSE_KEY, new Date().toISOString());
+    } catch {
+        restoreInProgress = false;
+        if (hasWindow) window.removeEventListener('beforeunload', preventUnload);
+        throw new Error('복원 표지를 남기지 못해 복원을 시작하지 않았습니다. 앱을 다시 실행한 뒤 시도해 주세요.');
+    }
     try {
         await restoreAllData(source);
         // 성공: 다시 불러올 때까지 모든 쓰기를 막는다. 실패(원복 완료)면 기존 데이터 그대로이므로 막지 않는다.
         sealedUntilReload = true;
         try {
             localStorage.setItem(POST_RESTORE_CHECK_KEY, new Date().toISOString());
-            // 공유 저장소를 쓰고 있으면 다시 불러온 뒤 동기화를 멈추고 "복원본/드라이브 기준"을 묻는다.
-            localStorage.setItem(SHARED_DRIVE_RESTORE_PAUSE_KEY, new Date().toISOString());
         } catch {
             // 표지를 남기지 못해도 복원은 끝났다. 다음 실행의 이관은 앱 시작 시 기본 이관이 맡는다.
         }
     } catch (error) {
         // 원복까지 실패해 저장소가 섞였으면 성공 때와 같이 봉인한다(미완료 표지는 restoreAllData가 남겨 둔다).
+        // 섞인 저장소도 드라이브에 올라가면 안 되므로 동기화 멈춤 표지는 그대로 둔다. 원복이 끝났으면(기존 자료 그대로) 표지를 치운다.
         if (isRestoreStorageMixedError(error)) sealedUntilReload = true;
+        else {
+            try { localStorage.removeItem(SHARED_DRIVE_RESTORE_PAUSE_KEY); } catch { /* 표지가 남아도 "기준 고르기"만 한 번 더 묻는다 */ }
+        }
         throw error;
     } finally {
         restoreInProgress = false;

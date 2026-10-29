@@ -80,7 +80,16 @@ function createFakeGoogle({ account = `kim@${DOMAIN}`, hd = DOMAIN } = {}) {
         if (fileMatch && method === 'GET') {
             const file = files.get(fileMatch[1]);
             if (!file) return jsonResponse(404, { error: { status: 'NOT_FOUND' } });
-            if (target.searchParams.get('alt') === 'media') return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
+            if (target.searchParams.get('alt') === 'media') {
+                if (state.download === 'declared-big') return new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { 'Content-Length': String(21 * 1024 * 1024) } });
+                if (state.download === 'stream-big') {
+                    const chunk = new Uint8Array(1024 * 1024);
+                    let sent = 0;
+                    const stream = new ReadableStream({ pull(controller) { if (sent >= 22) { controller.close(); return; } sent += 1; controller.enqueue(chunk); } });
+                    return new Response(stream, { status: 200 });
+                }
+                return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
+            }
             return jsonResponse(200, file);
         }
         if (fileMatch && method === 'PATCH') return jsonResponse(200, { id: fileMatch[1] });
@@ -330,6 +339,25 @@ async function signedInService(options = {}) {
         assert.equal(result.ok, false);
         assert.equal(result.error.code, 'DRIVE_SIGN_IN_REQUIRED');
         assert.equal(decodeJwtPayload('a.b'), null);
+    });
+
+    await test('내려받기 상한: Content-Length가 크거나 실제 본문이 20MB를 넘으면 DRIVE_TOO_LARGE로 거부(메모리에 올리지 않음)', async () => {
+        const ctx = await signedInService();
+        const { google } = ctx;
+        assert.equal((await ctx.call('jjss-drive:select-drive', DRIVE_ID)).ok, true);
+        const download = id => ctx.call('jjss-drive:download', id);
+        const small = await download('fileInDrive01');
+        assert.equal(small.ok, true);
+        google.state.download = 'declared-big';
+        const declared = await download('fileInDrive01');
+        assert.equal(declared.ok, false);
+        assert.equal(declared.error.code, 'DRIVE_TOO_LARGE');
+        google.state.download = 'stream-big';
+        const streamed = await download('fileInDrive01');
+        assert.equal(streamed.ok, false);
+        assert.equal(streamed.error.code, 'DRIVE_TOO_LARGE');
+        google.state.download = null;
+        assert.equal((await download('fileInDrive01')).ok, true, '상한 거부 뒤에도 정상 파일은 받는다');
     });
 
     console.log(`google drive main tests passed (${passed}) — fake Google, loopback only, no real account.`);

@@ -37,6 +37,8 @@ export interface SyncProgress {
 export interface InitialSyncResult {
     uploaded: number;
     downloaded: number;
+    /** downloaded 가운데 다른 PC의 삭제를 이 PC에도 적용한 수 */
+    deleted: number;
     linked: number;
     conflicts: number;
     skippedUnreadable: string[];
@@ -47,6 +49,8 @@ export interface InitialSyncResult {
 
 export interface PullResult {
     applied: number;
+    /** applied 가운데 다른 PC의 삭제를 이 PC에도 적용한 수 */
+    deleted: number;
     conflicts: number;
     /** 드라이브의 키 확인 표식이 이 PC 키로 열리지 않아(기관 키 교체) 새 기관 키 코드가 필요하다 */
     needsNewKey: boolean;
@@ -63,6 +67,8 @@ interface RecordEnvelope {
     version: number;
     deleted: boolean;
     record: (Record<string, unknown> & { id: string }) | null;
+    /** 기관 키 교체로 다시 봉인한 것(내용은 바로 전 버전과 같다). 봉투 안에 있으므로 기관 키 없이는 꾸밀 수 없다. */
+    rotated?: boolean;
 }
 
 interface OpenedRemote {
@@ -70,7 +76,12 @@ interface OpenedRemote {
     deleted: boolean;
     record: (Record<string, unknown> & { id: string }) | null;
     hash: string;
+    /** 키 교체로 다시 봉인한 버전(내용은 바로 전 버전과 같음) */
+    rotated: boolean;
 }
+
+/** 이 기록 하나만 올릴 수 없는 드라이브 오류(다른 기록 올리기는 계속한다) */
+const UNSYNCABLE_CODES = new Set(['DRIVE_BAD_NAME', 'DRIVE_BAD_FOLDER', 'DRIVE_BAD_PROPERTY', 'DRIVE_TOO_LARGE']);
 
 /** 드라이브 파일을 믿을 수 없을 때(위조·손상·속성과 내용 불일치) */
 export class QuarantineError extends Error {
@@ -160,9 +171,12 @@ async function pool<T>(items: T[], limit: number, worker: (item: T) => Promise<v
 function stampYear(record: Record<string, unknown> | null | undefined, fallback: Date): number {
     const created = record?.createdAt as { seconds?: number } | string | undefined;
     const seconds = typeof created === 'object' && created ? Number(created.seconds) : NaN;
-    if (Number.isFinite(seconds)) return new Date(seconds * 1000).getUTCFullYear();
-    if (typeof created === 'string' && Number.isFinite(Date.parse(created))) return new Date(created).getUTCFullYear();
-    return fallback.getUTCFullYear();
+    let year = NaN;
+    if (Number.isFinite(seconds)) year = new Date(seconds * 1000).getUTCFullYear();
+    else if (typeof created === 'string' && Number.isFinite(Date.parse(created))) year = new Date(created).getUTCFullYear();
+    // 깨진 날짜(가져오기·복원으로 들어온 값)로 네 자리가 아닌 연도 폴더를 만들지 않는다.
+    if (!Number.isFinite(year) || year < 1970 || year > 2200) year = fallback.getUTCFullYear();
+    return year;
 }
 
 function folderFor(store: SyncedStore, record: Record<string, unknown> | null, now: Date): FolderKey {
@@ -249,6 +263,20 @@ export class SyncEngine {
             if (value?.purpose === KEY_ROTATION_PURPOSE && typeof value.newKeyId === 'string' && value.newKeyId !== this.key.keyId) return 'rotated';
         }
         return 'tampered';
+    }
+
+    /** 지금 키로 봉인한 교체 증명이 가리키는 새 키 id(증명이 없거나 열리지 않으면 null) */
+    private async rotationTarget(): Promise<string | null> {
+        const proof = await this.drive.findMeta(rotationMetaName(this.key.keyId));
+        if (!proof) return null;
+        try {
+            const value = await decryptRecord<{ purpose?: string; newKeyId?: string }>(this.key, `_meta:key-rotation|${this.key.keyId}`, await this.drive.download(proof.id));
+            if (value?.purpose === KEY_ROTATION_PURPOSE && typeof value.newKeyId === 'string' && value.newKeyId !== this.key.keyId) return value.newKeyId;
+            return null;
+        } catch (error) {
+            if ((error as { code?: string })?.code === 'SHARED_DRIVE_DECRYPT_FAILED' || /형식이 올바르지/.test(String((error as Error)?.message))) return null;
+            throw error;
+        }
     }
 
     /** 첫 PC: 키 확인 표식을 만든다(이미 있으면 그대로 둔다). */
@@ -343,7 +371,7 @@ export class SyncEngine {
             const meta = await this.state.getMeta();
             if (!meta.pageToken) await this.state.setMeta({ pageToken: await this.drive.getStartPageToken() });
             const remote = await this.listAllRemote();
-            const result: InitialSyncResult = { uploaded: 0, downloaded: 0, linked: 0, conflicts: 0, skippedUnreadable: [], duplicates: [], quarantined: [] };
+            const result: InitialSyncResult = { uploaded: 0, downloaded: 0, deleted: 0, linked: 0, conflicts: 0, skippedUnreadable: [], duplicates: [], quarantined: [] };
             const uploads: Array<{ store: SyncedStore; record: Record<string, unknown> & { id: string }; base: number }> = [];
             const localKeys = new Set<string>();
 
@@ -396,6 +424,7 @@ export class SyncEngine {
                         // 이 PC는 마지막으로 맞춘 그대로이고 드라이브만 바뀌었다(끊겼다 이어서 하는 경우·키 교체 뒤) → 받는다.
                         if (opened.deleted) {
                             await this.local.deleteFromSync(store, record.id);
+                            result.deleted += 1;
                             await this.state.putRecord({ rid, fileId: file.id, baseVersion: opened.version, baseHash: '', deleted: true });
                         } else {
                             await this.local.putFromSync(store, opened.record!);
@@ -406,6 +435,13 @@ export class SyncEngine {
                     }
                     if (known && !opened.deleted && opened.hash === known.baseHash) {
                         // 드라이브는 그대로이고 이 PC만 고쳤다(동기화를 끈 사이 등) → 연결하고 올릴 목록에 넣는다.
+                        await this.state.putRecord({ rid, fileId: file.id, baseVersion: opened.version, baseHash: opened.hash });
+                        await this.state.enqueue(rid);
+                        result.linked += 1;
+                        continue;
+                    }
+                    if (known && !known.deleted && !opened.deleted && opened.rotated && opened.version === known.baseVersion + 1) {
+                        // 키 교체로 다시 봉인한 것(내용은 이 PC가 마지막으로 맞춘 버전 그대로). 그 위에 이 PC의 수정을 올린다.
                         await this.state.putRecord({ rid, fileId: file.id, baseVersion: opened.version, baseHash: opened.hash });
                         await this.state.enqueue(rid);
                         result.linked += 1;
@@ -434,7 +470,8 @@ export class SyncEngine {
             let downloaded = 0;
             await pool(downloads, this.concurrency, async file => {
                 const applied = await this.applyRemote(file, { initial: true });
-                if (applied === 'applied') result.downloaded += 1;
+                if (applied === 'applied' || applied === 'deleted') result.downloaded += 1;
+                if (applied === 'deleted') result.deleted += 1;
                 if (applied === 'quarantined' || applied === 'unknown-key') result.quarantined.push(String(file.appProperties.rid));
                 this.progress('downloading', ++downloaded, downloads.length);
             });
@@ -484,7 +521,7 @@ export class SyncEngine {
     /** 바뀐 파일만 받는다(변경 토큰). */
     pull(): Promise<PullResult> {
         return this.exclusive(async () => {
-            const result: PullResult = { applied: 0, conflicts: 0, needsNewKey: false, ignoredRemovals: 0, quarantined: 0 };
+            const result: PullResult = { applied: 0, deleted: 0, conflicts: 0, needsNewKey: false, ignoredRemovals: 0, quarantined: 0 };
             let { pageToken } = await this.state.getMeta();
             if (!pageToken) {
                 pageToken = await this.drive.getStartPageToken();
@@ -517,7 +554,8 @@ export class SyncEngine {
             await pool(files, this.concurrency, async file => {
                 this.noteEditing(String(file.appProperties.rid), file);
                 const outcome = await this.applyRemote(file, { initial: false });
-                if (outcome === 'applied') result.applied += 1;
+                if (outcome === 'applied' || outcome === 'deleted') result.applied += 1;
+                if (outcome === 'deleted') result.deleted += 1;
                 if (outcome === 'conflict') result.conflicts += 1;
                 if (outcome === 'unknown-key') unknownKey.push(String(file.appProperties.rid));
                 if (outcome === 'quarantined') quarantined.push(String(file.appProperties.rid));
@@ -554,9 +592,16 @@ export class SyncEngine {
                     outcome = await this.pushOne(entry.rid, entry.queuedAt);
                 } catch (error) {
                     // 드라이브 쪽 파일을 믿을 수 없으면 덮어쓰지 않고 남겨 둔다(관리자 확인).
-                    if (!(error instanceof QuarantineError)) throw error;
-                    quarantined.push(entry.rid);
-                    return;
+                    if (error instanceof QuarantineError) {
+                        quarantined.push(entry.rid);
+                        return;
+                    }
+                    // 이 기록만 올릴 수 없는 경우(이름·속성 형식·크기)는 나머지 올리기를 막지 않고 격리 목록에 남긴다.
+                    if (UNSYNCABLE_CODES.has(String((error as { code?: string })?.code))) {
+                        quarantined.push(entry.rid);
+                        return;
+                    }
+                    throw error;
                 }
                 if (outcome === 'uploaded') result.uploaded += 1;
                 if (outcome === 'conflict') result.conflicts += 1;
@@ -708,8 +753,14 @@ export class SyncEngine {
             const files = [...remote.values()];
             const skipped: string[] = [];
             let done = 0;
-            await pool(files, Math.max(1, Math.floor(this.concurrency / 2)), async file => {
-                const rid = String(file.appProperties.rid);
+            await pool(files, Math.max(1, Math.floor(this.concurrency / 2)), async listed => {
+                const rid = String(listed.appProperties.rid);
+                // 목록을 받은 뒤 다른 PC가 올렸을 수 있다(속성이 묵으면 봉투 버전과 달라 격리된다). 파일마다 최신 속성을 다시 받는다.
+                const file = await this.drive.getFile(listed.id);
+                if (!file) {
+                    this.progress('rotating', ++done, files.length);
+                    return;
+                }
                 const minVersion = (await this.state.getRecord(rid))?.baseVersion ?? 0;
                 // 끊겼다가 다시 하는 경우: 이미 새 키로 바뀐 파일은 확인만 하고 넘어간다.
                 if (file.appProperties.keyId === newKey.keyId) {
@@ -746,7 +797,8 @@ export class SyncEngine {
                     keyId: newKey.keyId,
                     hash: record ? await contentHash(newKey, record) : '',
                 };
-                await this.drive.upload({ fileId: file.id, folder: 'meta', name: file.name, appProperties: { ...props }, content: await this.sealEnvelope(newKey, rid, version + 1, record) });
+                // 봉투에 "키 교체로 다시 봉인함"을 남긴다. 옛 키로 그 사이 고친 PC는 이 표시로 자기 수정을 충돌이 아니라 이어서 올릴 수 있다.
+                await this.drive.upload({ fileId: file.id, folder: 'meta', name: file.name, appProperties: { ...props }, content: await this.sealEnvelope(newKey, rid, version + 1, record, true) });
                 await this.state.putRecord({ rid, fileId: file.id, baseVersion: version + 1, baseHash: props.hash, deleted });
                 this.progress('rotating', ++done, files.length);
             });
@@ -765,6 +817,12 @@ export class SyncEngine {
         // 확인이 끝나기 전에는 지금 키를 바꾸지 않는다(틀린 코드를 넣어도 기존 키로 계속 쓸 수 있게).
         const ok = await this.verifyOrgKey(newKey);
         if (ok !== true) throw new Error('입력한 기관 키 코드가 공유 저장소의 키와 맞지 않습니다.');
+        // 지금 키로 봉인한 교체 증명이 있으면(기관 키를 가진 사람이 실제로 바꿈) 그 증명이 가리키는 새 키만 받는다.
+        // 키 확인 표식은 드라이브 구성원 누구나 바꿀 수 있지만 증명은 옛 키 없이는 만들 수 없다.
+        const expected = await this.rotationTarget();
+        if (expected && expected !== newKey.keyId) {
+            throw new Error('입력한 코드는 지금 진행된 기관 키 교체의 새 키가 아닙니다. 관리자가 만든 새 기관 키 코드인지 확인해 주세요.');
+        }
         await this.exclusive(async () => {
             // 내용 지문은 키에 묶여 있다. 마지막으로 맞춘 뒤 바뀌지 않은 기록은 새 키 지문으로 바꿔 둔다
             // (안 그러면 모든 기록이 "이 PC에서 고친 것"으로 보여 충돌이 된다). 바뀐 기록은 그대로 두어 올라가게 한다.
@@ -821,12 +879,13 @@ export class SyncEngine {
     // ─── 내부 ───
 
     /** 드라이브에 올릴 암호문: 버전·삭제 여부를 레코드와 함께 기관 키로 봉인한다. */
-    private sealEnvelope(key: OrgKey, rid: string, version: number, record: Record<string, unknown> | null): Promise<Uint8Array> {
+    private sealEnvelope(key: OrgKey, rid: string, version: number, record: Record<string, unknown> | null, rotated = false): Promise<Uint8Array> {
         const envelope: RecordEnvelope = {
             format: 'jjss-record-v1',
             version,
             deleted: record === null,
             record: record as RecordEnvelope['record'],
+            ...(rotated ? { rotated: true } : {}),
         };
         return encryptRecord(key, rid, envelope);
     }
@@ -847,9 +906,12 @@ export class SyncEngine {
         try {
             envelope = await decryptRecord<RecordEnvelope>(key, rid, await this.drive.download(file.id));
         } catch (error) {
-            if ((error as { code?: string })?.code === 'SHARED_DRIVE_DECRYPT_FAILED' || /형식이 올바르지/.test(String((error as Error)?.message))) {
+            const code = (error as { code?: string })?.code;
+            if (code === 'SHARED_DRIVE_DECRYPT_FAILED' || /형식이 올바르지/.test(String((error as Error)?.message))) {
                 throw new QuarantineError(rid, '기관 키로 열 수 없는 파일입니다.');
             }
+            // 레코드 상한보다 큰 파일은 내려받지 않는다(구성원이 파일을 바꿔치기한 것) → 격리.
+            if (code === 'DRIVE_TOO_LARGE') throw new QuarantineError(rid, '레코드 파일이 너무 큽니다.');
             throw error;
         }
         if (!envelope || envelope.format !== 'jjss-record-v1' || typeof envelope.version !== 'number' || typeof envelope.deleted !== 'boolean') {
@@ -860,11 +922,11 @@ export class SyncEngine {
         }
         if (envelope.deleted) {
             if (envelope.record !== null) throw new QuarantineError(rid, '삭제 표시와 내용이 맞지 않습니다.');
-            return { version: envelope.version, deleted: true, record: null, hash: '' };
+            return { version: envelope.version, deleted: true, record: null, hash: '', rotated: envelope.rotated === true };
         }
         const record = envelope.record;
         if (!record || typeof record !== 'object' || record.id !== parsed.id) throw new QuarantineError(rid, '파일 안의 레코드 id가 맞지 않습니다.');
-        return { version: envelope.version, deleted: false, record, hash: await contentHash(key, record) };
+        return { version: envelope.version, deleted: false, record, hash: await contentHash(key, record), rotated: envelope.rotated === true };
     }
 
     /** 격리한 레코드 id를 남긴다(설정 화면에서 관리자가 확인). 오래된 것부터 잘라 최대 500개. */
@@ -955,9 +1017,21 @@ export class SyncEngine {
             // 버전이 다르거나, 같은 버전인데 지문이 다르면(두 PC가 같은 버전 위에 동시에 올린 경우) 봉투를 열어 실제 내용으로 판단한다
             // (열리지 않거나 이 PC가 맞춘 버전보다 낮으면 격리).
             if (remoteVersion !== known.baseVersion || (!known.deleted && remote.appProperties.hash !== known.baseHash)) {
-                const opened = await this.openRemote(remote, this.key, known.baseVersion);
+                let opened: OpenedRemote;
+                try {
+                    opened = await this.openRemote(remote, this.key, known.baseVersion);
+                } catch (error) {
+                    // 다른 PC가 기관 키를 바꾸는 중이면(새 키로 봉인된 파일) 격리하지 않고 새 키를 넣을 때까지 남겨 둔다.
+                    if (error instanceof QuarantineError && remote.appProperties.keyId !== this.key.keyId && (await this.keyStatus()) === 'rotated') return 'skipped';
+                    throw error;
+                }
                 if (opened.version === known.baseVersion && opened.hash === known.baseHash && opened.deleted === Boolean(known.deleted)) {
                     // 속성만 달랐다(위조·손상 표시). 내용은 내가 맞춘 그대로이므로 그 위에 올린다.
+                } else if (opened.rotated && !opened.deleted && !known.deleted && opened.version === known.baseVersion + 1) {
+                    // 키 교체로 다시 봉인한 것(내용은 내가 맞춘 버전 그대로). 그 위에 이 PC의 수정을 올린다.
+                    await this.state.putRecord({ rid, fileId: known.fileId, baseVersion: opened.version, baseHash: opened.hash });
+                    await this.uploadRecord(store, id, local, opened.version, known.fileId, queuedAt);
+                    return 'uploaded';
                 } else if (local && !opened.deleted && opened.hash === hash) {
                     await this.state.putRecord({ rid, fileId: known.fileId, baseVersion: opened.version, baseHash: hash });
                     await this.state.dequeue(rid, queuedAt);
@@ -974,7 +1048,7 @@ export class SyncEngine {
         return 'uploaded';
     }
 
-    private async applyRemote(file: RemoteFile, { initial }: { initial: boolean }): Promise<'applied' | 'conflict' | 'skipped' | 'unknown-key' | 'quarantined'> {
+    private async applyRemote(file: RemoteFile, { initial }: { initial: boolean }): Promise<'applied' | 'deleted' | 'conflict' | 'skipped' | 'unknown-key' | 'quarantined'> {
         const rid = String(file.appProperties.rid);
         const parsed = parseRecordKey(rid);
         if (!parsed) return 'skipped';
@@ -1013,13 +1087,20 @@ export class SyncEngine {
                 await this.state.dequeue(rid, entry?.queuedAt);
                 return 'skipped';
             }
+            if (local && known && !known.deleted && !opened.deleted && opened.rotated && opened.version === known.baseVersion + 1) {
+                // 키 교체로 다시 봉인한 것(내용은 마지막으로 맞춘 그대로). 이 PC의 수정은 그 위에 올린다.
+                await this.state.putRecord({ rid, fileId: file.id, baseVersion: opened.version, baseHash: opened.hash });
+                await this.state.enqueue(rid);
+                return 'skipped';
+            }
             await this.recordConflict(rid, local, file, opened);
             return 'conflict';
         }
         if (opened.deleted) {
-            if (await this.local.get(parsed.store, parsed.id)) await this.local.deleteFromSync(parsed.store, parsed.id);
+            const existed = Boolean(await this.local.get(parsed.store, parsed.id));
+            if (existed) await this.local.deleteFromSync(parsed.store, parsed.id);
             await this.state.putRecord({ rid, fileId: file.id, baseVersion: opened.version, baseHash: '', deleted: true });
-            return 'applied';
+            return existed ? 'deleted' : 'applied';
         }
         await this.local.putFromSync(parsed.store, opened.record!);
         await this.state.putRecord({ rid, fileId: file.id, baseVersion: opened.version, baseHash: opened.hash });

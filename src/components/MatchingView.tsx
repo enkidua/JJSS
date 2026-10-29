@@ -5,6 +5,7 @@ import {
     ChevronRight, Sparkles, Loader2
 } from 'lucide-react';
 import { useDataStore } from '../store/dataStore';
+import SharedDriveEditingBanner from './SharedDriveEditingBanner';
 import { verifyEncryptedField } from '../config/localDB';
 import { matchCandidates } from '../services/matching';
 import { JobOpening, MatchResult } from '../types/matching';
@@ -293,6 +294,8 @@ function MatchItem({ itemKey, result, rank, onDirtyChange }: MatchItemProps) {
     const [baselineText, setBaselineText] = useState(() => buildMatchingProfile(result, rank));
     const [isRefining, setIsRefining] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
+    /** DB에 저장된 매칭 의견 문서 id(공유 저장소 편집 표시용). 아직 저장한 적이 없으면 undefined */
+    const [savedDocId, setSavedDocId] = useState<string | undefined>(undefined);
     const [savedAt, setSavedAt] = useState('');
     const [savedSource, setSavedSource] = useState<'db' | 'local' | ''>('');
     const scoreColor = result.totalScore >= 1.5 ? 'text-emerald-400' : result.totalScore >= 1.0 ? 'text-yellow-400' : 'text-orange-400';
@@ -333,6 +336,7 @@ function MatchItem({ itemKey, result, rank, onDirtyChange }: MatchItemProps) {
                 if (dbDoc) {
                     // DB에 이미 저장되어 있으면 예전 평문 사본은 필요 없으므로 정리합니다.
                     removeLegacyProfile(storageKey);
+                    if (!cancelled) setSavedDocId(dbDoc.id);
                     applyLoaded(dbDoc.content || fallback, readTimestamp(dbDoc.updatedAt || dbDoc.createdAt), 'db');
                     return;
                 }
@@ -402,6 +406,7 @@ function MatchItem({ itemKey, result, rank, onDirtyChange }: MatchItemProps) {
             });
             // 평문 사본은 더 이상 남기지 않고, 예전 사본이 있으면 정리합니다.
             removeLegacyProfile(storageKey);
+            if (saved.id) setSavedDocId(saved.id);
             setBaselineText(contentToSave);
             setSavedAt(readTimestamp(saved.updatedAt || saved.createdAt) || new Date().toISOString());
             setSavedSource('db');
@@ -499,6 +504,8 @@ function MatchItem({ itemKey, result, rank, onDirtyChange }: MatchItemProps) {
                             </div>
                             <div className="space-y-6">
                                 <h5 className="text-[11px] font-black text-white/40 uppercase tracking-[0.2em]">AI Recommendation & Profile</h5>
+                                {/* 공유 저장소: 저장된 의견을 열어 두는 동안 다른 PC의 수정은 충돌로 남긴다 */}
+                                <SharedDriveEditingBanner store="caseDocuments" id={savedDocId} />
                                 <textarea
                                     aria-label={`${result.seeker.name} 매칭 의견`}
                                     value={profileText}

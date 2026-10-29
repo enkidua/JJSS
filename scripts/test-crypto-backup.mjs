@@ -249,6 +249,7 @@ assert.equal(JSON.parse(backupText).seekers[0].name, '홍가람', '백업 JSON �
 const backupEnvelope = await noKey.encryptBackupPayload(backupText, '안전한비밀번호2026');
 assert.equal(backupEnvelope.includes('홍가람'), false);
 await backupDb.importAllData(backupText);
+assert.ok(globalThis.localStorage.getItem(backupDb.SHARED_DRIVE_RESTORE_PAUSE_KEY), '복원이 끝나면 공유 저장소 멈춤 표지가 남는다');
 const settingsAfterRestore = fakeDb.rawRecords('JJSS_LOCAL_DB', 'settings')[0];
 assert.equal(settingsAfterRestore.llmConfigs[0].apiKeyEncrypted, apiKeyCipher, '복원해도 현재 PC의 API 키는 유지');
 assert.equal(settingsAfterRestore.visionApiKeyEncrypted, apiKeyCipher);
@@ -288,8 +289,25 @@ assert.equal(concurrentRestores[0].status, 'fulfilled');
 assert.equal(concurrentRestores[1].status, 'rejected');
 assert.match(concurrentRestores[1].reason.message, /복원이 이미 진행 중/);
 await simulateReload();
+globalThis.localStorage.removeItem(backupDb.SHARED_DRIVE_RESTORE_PAUSE_KEY);
 await assert.rejects(backupDb.importAllData('{broken'), /JSON/);
 assert.equal(backupDb.isSealedUntilReload(), false, '실패한 복원은 봉인하지 않는다(기존 데이터 그대로)');
+assert.equal(globalThis.localStorage.getItem(backupDb.SHARED_DRIVE_RESTORE_PAUSE_KEY), null, '기존 자료 그대로면 멈춤 표지도 치운다');
+{
+    // 표지를 남길 수 없으면 복원을 시작하지 않는다(표지 없이 복원본이 들어가면 다음 실행이 옛 내용을 드라이브에 올린다).
+    const writesBefore = fakeDb.writeCount();
+    const realSetItem = localStorageStub.setItem;
+    localStorageStub.setItem = () => { throw new Error('QuotaExceededError'); };
+    try {
+        await assert.rejects(backupDb.importAllData(backupText), /복원 표지를 남기지 못해/);
+    } finally {
+        localStorageStub.setItem = realSetItem;
+    }
+    assert.equal(fakeDb.writeCount(), writesBefore, '저장소를 건드리지 않음');
+    assert.equal(backupDb.isSealedUntilReload(), false);
+    await assert.doesNotReject(backupDb.importAllData(backupText), '표지를 남길 수 있으면 복원은 정상');
+    await simulateReload();
+}
 await backupDb.importAllData(backupText);
 await simulateReload();
 assert.equal((await backupDb.getById('seekers', 'seeker-b')).name, '홍가람');

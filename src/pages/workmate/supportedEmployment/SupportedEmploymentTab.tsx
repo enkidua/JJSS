@@ -306,6 +306,13 @@ export function SupportedEmploymentTab({ seekers, jobs, request, onDirtyChange }
         }
         if (!target.id) { showToast('회차를 먼저 저장한 뒤 지출 초안을 만들어 주세요.', 'info'); return; }
         const plan = planExpenseDrafts(target, project, await loadLatestExpenses());
+        // 연결된 지출이 있는데 이 PC의 예산 관리에 하나도 없으면 다른 PC(공유 저장소)에서 만든 것이다.
+        // 여기서 다시 만들면 중복이 되고, 연결을 지우면 그 PC의 연결까지 끊긴다(회차는 공유되고 지출은 PC마다 따로다).
+        const linkedCount = target.expenseIds?.length ?? 0;
+        if (linkedCount > 0 && plan.staleLinkedIds.length === linkedCount) {
+            showToast(`이 회차의 지출 ${linkedCount}건은 다른 PC의 예산 관리에 있습니다(예산은 PC마다 따로 둡니다). 이 PC에서는 초안을 만들지 않고 연결도 그대로 두었습니다.`, 'info');
+            return;
+        }
         if (!plan.payableCount) { showToast('지급액이 0원이라 만들 지출이 없습니다.', 'info'); return; }
         if (!plan.toCreate.length) {
             // 이미 모두 있음: 연결 ID만 빠졌다면 채워 둔다.

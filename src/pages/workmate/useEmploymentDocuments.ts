@@ -348,6 +348,9 @@ ${afterClear}`,
 
     return {
         jobs,
+        /** 공유 저장소 편집 표시용: 불러온(저장된) 문서 id. 새 문서면 undefined */
+        interviewDocId: interviewDoc?.id,
+        jobAnalysisDocId: jobAnalysisDoc?.id,
         // 면접일지
         employmentSeekerId,
         employmentSeekerOptions,

@@ -34,6 +34,7 @@ import type { Seeker } from '../types/matching';
 import { getSeekerKey, isSameSeeker } from '../utils/seeker';
 import { runLegacyMigration } from '../services/legacyMigration';
 import { WorkbenchTab } from './evaluation/WorkbenchTab';
+import SharedDriveEditingBanner from '../components/SharedDriveEditingBanner';
 import { EvaluationSaveStatusProvider, useEvaluationSaveStatus } from './evaluation/EvaluationSaveStatus';
 
 const HISTORY_DOC_TYPE = 'vocational_evaluation' as const;
@@ -1199,6 +1200,8 @@ function VocationalEvaluationContent() {
                   const isSelected = selectedHistoryId === doc.id;
                   return (
                   <div key={doc.id} id={`evaluation-history-${doc.id}`} className="rounded-2xl border border-white/10 bg-white/3 p-5 scroll-mt-6">
+                    {/* 공유 저장소: 수정 중인 문서는 다른 PC의 수정이 덮어쓰지 않게 하고, 다른 직원이 편집 중이면 알린다 */}
+                    {isSelected && <SharedDriveEditingBanner store="caseDocuments" id={doc.id} />}
                     <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-3">
                       <div>
                         <p className="text-xs font-black text-blue-300 uppercase">{doc.type === 'analysis' ? '결과분석기' : '종합소견서'}</p>

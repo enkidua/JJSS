@@ -3,6 +3,7 @@ import type { Seeker } from '../../types/matching';
 import { getSeekerKey } from '../../utils/seeker';
 import { useRehabWorkflowRecord, type RehabWorkflowRecord } from './useRehabWorkflowRecord';
 import { WorkflowRecordStatus, WorkflowSeekerSelect } from './WorkflowRecordStatus';
+import SharedDriveEditingBanner from '../../components/SharedDriveEditingBanner';
 
 interface Props {
     id: string;
@@ -31,6 +32,8 @@ export function WorkflowSeekerSection({ id, label, seekers, seekerKey, onSeekerC
             ? <p className="text-sm text-white/55">{seekerKey ? '선택한 이용자를 찾을 수 없습니다. 목록에서 다시 선택해 주세요.' : '이용자를 선택하면 저장된 기록을 불러옵니다.'}</p>
             : <>
                 <WorkflowRecordStatus record={record} />
+                {/* 공유 저장소: 현황 기록을 열어 두는 동안 다른 PC의 수정은 충돌로 남긴다 */}
+                <SharedDriveEditingBanner store="caseDocuments" id={!record.loading && !record.loadFailed ? record.documentId ?? undefined : undefined} />
                 {!record.loading && !record.loadFailed && <div key={seekerKey}>{children(seeker, record)}</div>}
             </>}
     </div>;

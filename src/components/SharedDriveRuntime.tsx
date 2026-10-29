@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { CloudOff, RefreshCw, Cloud, AlertTriangle } from 'lucide-react';
 import { getSharedDriveController, SHARED_DRIVE_APPLIED_EVENT, useSharedDriveStore } from '../features/sharedDrive/controller';
 import { useDataStore } from '../store/dataStore';
+import { useAppToast } from './Toast';
 
 /**
  * 공유 저장소 실행부: 앱 시작 때 한 번 start(꺼져 있으면 상태 확인만), 다른 PC 변경을 받으면 화면의 목록을 다시 읽는다.
@@ -14,17 +15,23 @@ export default function SharedDriveRuntime() {
     const conflicts = useSharedDriveStore(state => state.conflicts);
     const offline = useSharedDriveStore(state => state.offline);
 
+    const showToast = useAppToast();
     useEffect(() => {
         const controller = getSharedDriveController();
         if (!controller) return;
         void controller.start().catch(() => undefined);
-        const onApplied = () => { void useDataStore.getState().refreshAfterSync(); };
+        const onApplied = (event: Event) => {
+            void useDataStore.getState().refreshAfterSync();
+            // 다른 PC의 삭제가 이 PC에 반영되면 알린다(열어 둔 화면에서 기록이 사라진 이유를 알 수 있게).
+            const deleted = Number((event as CustomEvent<{ deleted?: number }>).detail?.deleted) || 0;
+            if (deleted > 0) showToast(`다른 PC에서 지운 기록 ${deleted}건을 이 PC에서도 지웠습니다. 열어 둔 화면에서 그 기록은 더 이상 보이지 않습니다.`, 'info');
+        };
         window.addEventListener(SHARED_DRIVE_APPLIED_EVENT, onApplied);
         return () => {
             window.removeEventListener(SHARED_DRIVE_APPLIED_EVENT, onApplied);
             controller.stop();
         };
-    }, []);
+    }, [showToast]);
 
     if (phase === 'off' || phase === 'unavailable') return null;
     const attention = phase === 'blocked' || phase === 'needs-key' || phase === 'paused-restore' || phase === 'error' || conflicts > 0;

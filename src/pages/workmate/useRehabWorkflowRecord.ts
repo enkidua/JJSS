@@ -20,6 +20,8 @@ export interface RehabWorkflowRecord {
     notice: string;
     /** 입력 폼을 잠가야 하는 상태(이용자 없음·불러오는 중·저장 중·손상·불러오기 실패) */
     unavailable: boolean;
+    /** 저장된 현황 기록 문서 id(공유 저장소 편집 표시용). 아직 저장한 적이 없으면 null */
+    documentId: string | null;
     save: SaveWorkflow;
     reload: () => void;
     clearNotice: () => void;
@@ -117,6 +119,7 @@ export function useRehabWorkflowRecord(seeker: Seeker | null | undefined): Rehab
     return {
         workflow, documents, loading, saving, corrupt, loadFailed, error, notice,
         unavailable: !seeker || loading || saving || corrupt || loadFailed,
+        documentId: workflowDocId,
         save,
         reload: useCallback(() => setReloadKey(current => current + 1), []),
         clearNotice: useCallback(() => setNotice(''), []),

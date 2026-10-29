@@ -76,7 +76,12 @@ export class IndexedDbSyncState implements SyncStateStore {
                     }
                 };
                 request.onsuccess = () => resolve(request.result);
-                request.onerror = () => reject(request.error);
+                request.onerror = () => {
+                    const error = request.error;
+                    // 더 새로운 버전의 JJSS가 만든 동기화 상태 저장소는 옛 버전이 열 수 없다.
+                    if (error?.name === 'VersionError') reject(new Error('이 PC의 공유 저장소 상태는 더 새로운 JJSS가 만든 것입니다. JJSS를 최신 버전으로 업데이트해 주세요.'));
+                    else reject(error);
+                };
             });
             // 열기에 실패했으면 다음 호출에서 다시 연다(실패를 영구히 기억하지 않게).
             this.dbPromise.catch(() => { this.dbPromise = null; });

@@ -3,6 +3,7 @@ import { ChevronDown, ListChecks } from 'lucide-react';
 import type { Seeker } from '../../types/matching';
 import { useRehabWorkflowRecord } from './useRehabWorkflowRecord';
 import { WorkflowRecordStatus } from './WorkflowRecordStatus';
+import SharedDriveEditingBanner from '../../components/SharedDriveEditingBanner';
 import { FollowUpTasks } from './FollowUpTasks';
 import { GoalTracking } from './GoalTracking';
 import { ParticipantPlanSection } from './ParticipantPlanSection';
@@ -61,6 +62,8 @@ export function WorkflowPanel({ seeker, open, onToggle, onDirtyChange }: Props) 
         <div id="workflow-panel-body" hidden={!open} className="mt-6 space-y-8">
             <p className="text-sm text-white/55">직업재활 현황판에 표시되는 후속 일정·목표 변화·당사자 확인 기록을 여기서 작성합니다.</p>
             <WorkflowRecordStatus record={record} />
+            {/* 공유 저장소: 현황 기록을 열어 두는 동안 다른 PC의 수정은 충돌로 남긴다 */}
+            <SharedDriveEditingBanner store="caseDocuments" id={open && ready ? record.documentId ?? undefined : undefined} />
             {ready && <>
                 <FollowUpTasks record={record} onDirtyChange={reportDirty.tasks} />
                 <div className="border-t border-white/10" />

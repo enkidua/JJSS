@@ -14,7 +14,8 @@ const moduleUrl = code => `data:text/javascript;base64,${Buffer.from(code).toStr
 // 컨트롤러 테스트용 대역: 렌더러 전용 모듈(zustand·localDB·데이터 키 암호화) 대신 globalThis의 값으로 바꾼다.
 const STUBS = {
     'config/localDB.ts': moduleUrl(`export const SHARED_DRIVE_RESTORE_PAUSE_KEY = 'jjss:shared-drive-restore-pause';
-export const onLocalMutation = (...args) => globalThis.__syncStubs.onLocalMutation(...args);`),
+export const onLocalMutation = (...args) => globalThis.__syncStubs.onLocalMutation(...args);
+export const setSharedDriveActive = () => {};`),
     'features/sharedDrive/localAdapter.ts': moduleUrl(`export const localDbAdapter = {}; export const conflictCodec = {};`),
     zustand: moduleUrl(`export function create(init) {
     let state; const listeners = new Set();
@@ -738,6 +739,92 @@ await test('동기화 제어: 복원 뒤에는 멈추고, "드라이브 기준"�
     assert.ok(fake.rawFiles().some(file => file.appProperties.rid === 'seekers:s7'), '드라이브에 없던 복원본 기록은 지우지 않고 올림');
     assert.equal(storage.has('jjss:shared-drive-restore-pause'), false);
     assert.equal(useSharedDriveStore.getState().phase, 'idle');
+});
+
+await test('내려받기 상한·올릴 수 없는 기록·삭제 반영 수: 큰 파일은 격리, 한 기록의 올리기 실패가 나머지를 막지 않음, 깨진 날짜는 올해 폴더', async () => {
+    const fake = createFakeSharedDrive();
+    const P = await makePc(fake, secret, `p@${DOMAIN}`);
+    const Q = await makePc(fake, secret, `q@${DOMAIN}`);
+    await P.local.appPut('seekers', seeker('s1', '가'));
+    await P.local.appPut('seekers', seeker('s2', '나'));
+    await P.local.appPut('caseDocuments', { ...doc('d1', 's1', '깨진 날짜'), createdAt: { seconds: 9e12 } });
+    await P.engine.ensureKeyCheck();
+    await P.engine.initialSync();
+    assert.equal(fake.rawFiles().find(file => file.appProperties.rid === 'caseDocuments:d1').folder, `documents/${new Date().getUTCFullYear()}`, '네 자리 연도 폴더');
+    await Q.engine.initialSync();
+    // 1) 드라이브 구성원이 레코드 파일을 큰 파일로 바꿔치기: 내려받지 않고(main이 DRIVE_TOO_LARGE) 격리, 나머지는 받는다
+    await P.local.appPut('seekers', { ...P.local.stores.seekers.get('s1'), phone: '010-1111-1111' });
+    await P.local.appPut('seekers', { ...P.local.stores.seekers.get('s2'), phone: '010-2222-2222' });
+    await P.engine.push();
+    const s1File = fake.rawFiles().find(file => file.appProperties.rid === 'seekers:s1');
+    const realDownload = fake.api.download;
+    fake.api.download = async fileId => { if (fileId === s1File.id) throw Object.assign(new Error('too large'), { code: 'DRIVE_TOO_LARGE' }); return realDownload(fileId); };
+    const big = await Q.engine.pull();
+    assert.equal(big.quarantined, 1);
+    assert.equal(big.applied, 1, '다른 변경은 계속 받는다');
+    assert.equal(Q.local.stores.seekers.get('s2').phone, '010-2222-2222');
+    assert.equal(Q.local.stores.seekers.get('s1').phone, '010-0000-0000', '큰 파일은 적용하지 않음');
+    assert.ok((await Q.engine.quarantined()).includes('seekers:s1'));
+    fake.api.download = realDownload;
+    // 2) 한 기록만 올릴 수 없음(속성 형식): 나머지는 올라가고 그 기록은 격리 목록에, push는 실패로 끝나지 않는다
+    await Q.local.appPut('caseDocuments', doc('d2', 's2', '정상 기록'));
+    await Q.local.appPut('caseDocuments', doc('d-bad', 's2', '올릴 수 없는 기록'));
+    const realUpload = fake.api.upload;
+    fake.api.upload = async input => { if (input.name.includes('d-bad')) throw Object.assign(new Error('bad property'), { code: 'DRIVE_BAD_PROPERTY' }); return realUpload(input); };
+    const partial = await Q.engine.push();
+    assert.equal(partial.uploaded, 1);
+    assert.equal(partial.remaining, 1, '올리지 못한 기록은 목록에 남는다');
+    assert.ok((await Q.engine.quarantined()).includes('caseDocuments:d-bad'));
+    fake.api.upload = realUpload;
+    // 3) 다른 PC의 삭제를 받으면 deleted 수로 알 수 있다(화면 알림용)
+    await P.engine.pull();
+    await P.local.appDelete('caseDocuments', 'd2');
+    await P.engine.push();
+    const removed = await Q.engine.pull();
+    assert.equal(removed.deleted, 1);
+    assert.equal(Q.local.stores.caseDocuments.has('d2'), false);
+});
+
+await test('기관 키 바꾸기와 다른 PC의 수정: 교체 중 올리기는 격리되지 않고, 새 키를 넣으면 충돌 없이 이어서 올라간다. 증명과 다른 새 키는 거부', async () => {
+    const fake = createFakeSharedDrive();
+    const A2 = await makePc(fake, secret, `a2@${DOMAIN}`);
+    const B2 = await makePc(fake, secret, `b2@${DOMAIN}`);
+    await A2.local.appPut('seekers', seeker('s1', '가'));
+    await A2.local.appPut('seekers', seeker('s2', '나'));
+    await A2.engine.ensureKeyCheck();
+    await A2.engine.initialSync();
+    await B2.engine.initialSync();
+    // B2가 s1을 고친 뒤(아직 안 올림) A2가 키를 바꾼다
+    await B2.local.appPut('seekers', { ...B2.local.stores.seekers.get('s1'), phone: '010-5555-5555' });
+    const newSecret = orgKey.generateOrgSecret();
+    const newKey = await orgKey.deriveOrgKey(newSecret);
+    await A2.engine.rotateKey(newKey);
+    const during = await B2.engine.push();
+    assert.equal(during.uploaded, 0);
+    assert.equal(during.remaining, 1, '새 키로 봉인된 파일 위에는 올리지 않고 남겨 둔다');
+    assert.deepEqual(await B2.engine.quarantined(), [], '교체 중에는 격리하지 않는다');
+    assert.equal((await B2.engine.pull()).needsNewKey, true);
+    // 증명이 가리키는 새 키가 아닌 키(구성원이 표식만 바꿔치기한 경우)는 받지 않는다
+    const K3 = await orgKey.deriveOrgKey(orgKey.generateOrgSecret());
+    const marker = fake.rawFiles().find(file => file.folder === 'meta' && file.name === KEY_CHECK_META_NAME);
+    const realMarker = marker.content;
+    marker.content = await orgKey.createKeyCheck(K3);
+    await assert.rejects(B2.engine.adoptKey(K3), /교체의 새 키가 아닙니다/);
+    assert.equal(B2.engine.keyId, B2.key.keyId, '거부되면 지금 키 그대로');
+    marker.content = realMarker;
+    // 진짜 새 키를 넣으면: 전체 다시 맞추기에서 B2의 수정은 충돌이 아니라 올릴 목록에 남고, 올리면 A2가 받는다
+    await B2.engine.adoptKey(newKey);
+    const resync = await B2.engine.initialSync();
+    assert.equal(resync.conflicts, 0, '키 교체로 다시 봉인한 파일은 수정의 바탕으로 인정');
+    const after = await B2.engine.push();
+    assert.equal(after.uploaded, 1);
+    await A2.engine.pull();
+    assert.equal(A2.local.stores.seekers.get('s1').phone, '010-5555-5555');
+    // 교체 뒤 평소 동기화도 정상
+    await A2.local.appPut('seekers', { ...A2.local.stores.seekers.get('s2'), phone: '010-6666-6666' });
+    await A2.engine.push();
+    await B2.engine.pull();
+    assert.equal(B2.local.stores.seekers.get('s2').phone, '010-6666-6666');
 });
 
 console.log(`shared drive tests passed (${passed}) — fake drive only, no network, synthetic data.`);

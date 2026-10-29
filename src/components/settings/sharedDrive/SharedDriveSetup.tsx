@@ -91,10 +91,18 @@ export default function SharedDriveSetup({ status, onStatus, onFinished }: Props
 
     const makeEngine = async (orgSecret: Uint8Array) => {
         const key = await deriveOrgKey(orgSecret);
+        const state = new IndexedDbSyncState(conflictCodec);
+        // 백업을 복원한 뒤(동기화 멈춤 표지)나 다른 드라이브·다른 키의 상태가 남아 있으면 비우고 처음부터 맞춘다.
+        // 옛 상태를 그대로 쓰면 복원본(옛 내용)이 "마지막으로 맞춘 뒤 고친 것"으로 보여 드라이브의 최신 내용을 충돌 없이 덮는다.
+        let pausedAfterRestore = false;
+        try { pausedAfterRestore = Boolean(window.localStorage.getItem(SHARED_DRIVE_RESTORE_PAUSE_KEY)); } catch { /* 표지를 못 읽으면 남은 상태로 진행 */ }
+        const meta = await state.getMeta();
+        if (pausedAfterRestore || (meta.driveId && meta.driveId !== status?.driveId) || (meta.keyId && meta.keyId !== key.keyId)) await state.clearAll();
+        await state.setMeta({ driveId: status?.driveId, keyId: key.keyId });
         return new SyncEngine({
             drive: createDriveClient(bridge),
             local: localDbAdapter,
-            state: new IndexedDbSyncState(conflictCodec),
+            state,
             key,
             accountEmail: status?.accountEmail || '',
             onProgress: setProgress,

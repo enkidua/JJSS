@@ -36,6 +36,45 @@ function describeRecord(rid: string, value: unknown): string {
     return `${text}${content ? ` — ${content}${String(record.content).length > 160 ? '…' : ''}` : ''}`;
 }
 
+/** 충돌 기록의 전체 내용(사람이 읽을 수 있는 줄 단위). 회차·에피소드처럼 JSON이 든 content도 펼쳐 보여 준다. */
+function fullRecordText(value: unknown): string {
+    if (!value || typeof value !== 'object') return '삭제됨';
+    const lines: string[] = [];
+    const render = (label: string, item: unknown, depth: number) => {
+        const indent = '  '.repeat(depth);
+        if (item === null || item === undefined || item === '') return;
+        if (typeof item === 'string') {
+            let text = item;
+            if (/^\s*[[{]/.test(text)) {
+                try { render(label, JSON.parse(text), depth); return; } catch { /* JSON이 아니면 글로 */ }
+            }
+            text = text.replace(/\r\n/g, '\n');
+            const [first, ...rest] = text.split('\n');
+            lines.push(`${indent}${label}: ${first}`);
+            for (const line of rest) lines.push(`${indent}${' '.repeat(label.length + 2)}${line}`);
+            return;
+        }
+        if (typeof item === 'number' || typeof item === 'boolean') { lines.push(`${indent}${label}: ${String(item)}`); return; }
+        if (Array.isArray(item)) {
+            if (!item.length) return;
+            lines.push(`${indent}${label}:`);
+            item.forEach((entry, index) => render(`[${index + 1}]`, entry, depth + 1));
+            return;
+        }
+        if (typeof item === 'object') {
+            const record = item as Record<string, unknown>;
+            if (typeof record.seconds === 'number' && Object.keys(record).length <= 2) { lines.push(`${indent}${label}: ${formatTime(new Date(record.seconds * 1000).toISOString())}`); return; }
+            lines.push(`${indent}${label}:`);
+            for (const [key, entry] of Object.entries(record)) render(key, entry, depth + 1);
+        }
+    };
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+        if (key === 'id') continue;
+        render(key, item, 0);
+    }
+    return lines.join('\n') || '(내용 없음)';
+}
+
 export default function SharedDriveStatus({ status, onStatus }: { status: JjssDriveStatus; onStatus: (status: JjssDriveStatus) => void }) {
     const view = useSharedDriveStore();
     const controller = getSharedDriveController();
@@ -188,6 +227,14 @@ export default function SharedDriveStatus({ status, onStatus }: { status: JjssDr
                                         <div><p className="text-white/45">이 PC</p><p className="text-white/85 break-all">{describeRecord(conflict.rid, conflict.local)}</p></div>
                                         <div><p className="text-white/45">드라이브({conflict.remoteUpdatedBy || '알 수 없음'}, {formatTime(conflict.remoteUpdatedAt)})</p><p className="text-white/85 break-all">{describeRecord(conflict.rid, conflict.remote)}</p></div>
                                     </div>
+                                    <details className="mt-2">
+                                        <summary className="cursor-pointer text-white/60">전체 내용 나란히 보기</summary>
+                                        <p className="mt-1 text-white/45">고르기 전에 두 쪽을 끝까지 비교하세요. 필요한 문장은 여기서 복사해 두었다가 고른 뒤 다시 붙여 넣을 수 있습니다.</p>
+                                        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                                            <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-lg border border-white/10 bg-black/30 p-2 font-sans text-[11px] leading-relaxed text-white/80" data-testid="shared-drive-conflict-local">{fullRecordText(conflict.local)}</pre>
+                                            <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-lg border border-white/10 bg-black/30 p-2 font-sans text-[11px] leading-relaxed text-white/80" data-testid="shared-drive-conflict-remote">{fullRecordText(conflict.remote)}</pre>
+                                        </div>
+                                    </details>
                                 </details>
                             )}
                             {!conflict.undecodable && (

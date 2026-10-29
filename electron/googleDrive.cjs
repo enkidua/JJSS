@@ -119,8 +119,15 @@ function createDriveService(deps) {
         fs.renameSync(temp, target);
     }
 
+    /** 운영체제 보안 저장소를 쓸 수 있는가(Linux에서 키링이 없으면 평문과 같은 basic_text라 쓰지 않는다 — dataKey.cjs와 같은 기준) */
+    function secureStorageAvailable() {
+        if (!safeStorage?.isEncryptionAvailable?.()) return false;
+        if (process.platform === 'linux' && safeStorage.getSelectedStorageBackend?.() === 'basic_text') return false;
+        return true;
+    }
+
     function seal(text) {
-        if (!safeStorage?.isEncryptionAvailable?.()) {
+        if (!secureStorageAvailable()) {
             throw new DriveError('이 PC의 운영체제 보안 저장소를 쓸 수 없어 공유 저장소 정보를 저장하지 않았습니다.', 'DRIVE_SECURE_STORE_UNAVAILABLE');
         }
         return safeStorage.encryptString(String(text)).toString('base64');
@@ -147,7 +154,7 @@ function createDriveService(deps) {
             driveName: current.driveName || '',
             enabled: Boolean(current.enabled),
             hasOrgKey: Boolean(current.orgKey),
-            secureStorage: Boolean(safeStorage?.isEncryptionAvailable?.()),
+            secureStorage: secureStorageAvailable(),
         };
     }
 
@@ -448,6 +455,8 @@ function createDriveService(deps) {
     }
 
     const FILE_FIELDS = 'id,name,modifiedTime,trashed,driveId,appProperties';
+    /** 레코드 파일 한 개의 상한(올리기·내려받기 모두) */
+    const MAX_FILE_BYTES = 20 * 1024 * 1024;
 
     function toRemote(file) {
         if (file?.id) verifiedFileIds.add(file.id);
@@ -514,16 +523,49 @@ function createDriveService(deps) {
         }
     }
 
+    /**
+     * 파일 내려받기. 올리기 상한(MAX_FILE_BYTES)보다 큰 파일은 읽지 않는다 — 드라이브 구성원이 레코드 파일을 큰 파일로
+     * 바꿔치기해도 main 프로세스 메모리를 다 쓰지 않게(모든 PC가 같은 파일을 받다 멈추는 것을 막는다).
+     */
     async function download(fileId) {
         await assertInDrive(fileId);
         const response = await driveFetch(`${DRIVE_URL}/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`, {}, { raw: true });
-        return new Uint8Array(await response.arrayBuffer());
+        const declared = Number(response.headers?.get?.('content-length'));
+        if (Number.isFinite(declared) && declared > MAX_FILE_BYTES) {
+            try { await response.body?.cancel?.(); } catch { /* 연결만 끊는다 */ }
+            throw new DriveError('공유 저장소 파일이 너무 큽니다(20MB).', 'DRIVE_TOO_LARGE');
+        }
+        if (!response.body?.getReader) {
+            const bytes = new Uint8Array(await response.arrayBuffer());
+            if (bytes.length > MAX_FILE_BYTES) throw new DriveError('공유 저장소 파일이 너무 큽니다(20MB).', 'DRIVE_TOO_LARGE');
+            return bytes;
+        }
+        const reader = response.body.getReader();
+        const chunks = [];
+        let total = 0;
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            total += value.byteLength;
+            if (total > MAX_FILE_BYTES) {
+                try { await reader.cancel(); } catch { /* 연결만 끊는다 */ }
+                throw new DriveError('공유 저장소 파일이 너무 큽니다(20MB).', 'DRIVE_TOO_LARGE');
+            }
+            chunks.push(value);
+        }
+        const out = new Uint8Array(total);
+        let offset = 0;
+        for (const chunk of chunks) {
+            out.set(chunk, offset);
+            offset += chunk.byteLength;
+        }
+        return out;
     }
 
     async function upload({ fileId, folder, name, appProperties, content } = {}) {
         if (typeof name !== 'string' || !/^[A-Za-z0-9._-]{1,120}$/.test(name)) throw new DriveError('파일 이름이 올바르지 않습니다.', 'DRIVE_BAD_NAME');
         const bytes = content instanceof Uint8Array ? content : new Uint8Array(content || []);
-        if (bytes.length > 20 * 1024 * 1024) throw new DriveError('파일이 너무 큽니다(20MB).', 'DRIVE_TOO_LARGE');
+        if (bytes.length > MAX_FILE_BYTES) throw new DriveError('파일이 너무 큽니다(20MB).', 'DRIVE_TOO_LARGE');
         const allowed = folder === 'meta' ? new Set(['jjssKind', 'keyId', 'updatedAt', 'updatedBy', ...RECORD_PROPERTY_KEYS]) : RECORD_PROPERTY_KEYS;
         const properties = sanitizeProperties(appProperties, allowed);
         const boundary = `jjss-${crypto.randomBytes(12).toString('hex')}`;

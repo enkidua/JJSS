@@ -1,10 +1,11 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import type React from 'react';
 import { motion } from 'framer-motion';
 import { ClipboardCheck, Clock, FileText, Loader2, Plus, Save, Sparkles, Trash2, X } from 'lucide-react';
 import type { CaseDocument } from '../../types/caseDocument';
 import { useConfirm } from '../../components/common/ConfirmProvider';
 import { CopyButton } from '../../components/common/CopyButton';
+import SharedDriveEditingBanner from '../../components/SharedDriveEditingBanner';
 import type { CaseDocumentAction, FollowUpMode } from './types';
 
 // ──────────────────────────────────────────────
@@ -57,6 +58,8 @@ export function FollowUpStage({
     const savingRef = useRef(false);
     const isSaving = savingDocumentType !== null;
     const locked = isSaving || isBusy;
+    /** 공유 저장소 편집 표시: 타임라인 항목은 모두 바로 고칠 수 있으므로 마지막으로 커서를 둔(저장된) 항목만 등록한다 */
+    const [activeHistoryId, setActiveHistoryId] = useState<string | undefined>(undefined);
     const saveDraft = async () => {
         if (savingRef.current || locked) return;
         savingRef.current = true;
@@ -138,9 +141,11 @@ export function FollowUpStage({
                                                     {h.id && <button type="button" disabled={locked} onClick={() => onDeleteHistory(h.id!, historyType)} className="p-2 rounded-lg text-red-300/70 hover:text-red-200 hover:bg-red-400/10 focus:outline-hidden focus:ring-2 focus:ring-red-300/40 transition-colors disabled:opacity-40" title="삭제" aria-label="삭제"><Trash2 className="w-4 h-4" /></button>}
                                                 </div>
                                             </div>
+                                            {activeHistoryId && activeHistoryId === h.id && <SharedDriveEditingBanner store="caseDocuments" id={h.id} />}
                                             <textarea
                                                 value={h.content}
                                                 readOnly={isSaving}
+                                                onFocus={() => { if (h.id) setActiveHistoryId(h.id); }}
                                                 onChange={e => {
                                                     const newContent = e.target.value;
                                                     setHistory(prev => prev.map(p => (p.id === h.id || (!p.id && p === h)) ? { ...p, content: newContent } : p));

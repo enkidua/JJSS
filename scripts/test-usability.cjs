@@ -898,7 +898,8 @@ async function main() {
             await driveSection.getByTestId('shared-drive-phase').waitFor();
             await drivePage.waitForFunction(() => document.querySelector('[data-testid="shared-drive-phase"]')?.getAttribute('data-phase') === 'idle');
             await drivePage.getByTestId('shared-drive-chip').waitFor();
-            assert.match(await drivePage.getByTestId('shared-drive-chip').textContent(), /공유 저장소 최신/);
+            // 켠 직후 첫 동기화("동기화 중")가 끝나면 "최신"이 된다.
+            await drivePage.waitForFunction(() => /공유 저장소 최신/.test(document.querySelector('[data-testid="shared-drive-chip"]')?.textContent || ''), undefined, { timeout: 15000 });
             // 켠 뒤 화면에서 저장하면 몇 초 뒤 자동으로 올라간다.
             const before = await drivePage.evaluate(() => window.uxDriveCalls.filter(name => name === 'upload').length);
             await drivePage.evaluate(async () => {
@@ -906,8 +907,26 @@ async function main() {
                 await db.addDoc('seekers', { name: '합성공유이용자2', seekerId: 'UX-SHARED-2', organization: '검증용' });
             });
             await drivePage.waitForFunction(count => window.uxDriveCalls.filter(name => name === 'upload').length > count, before, { timeout: 15000 });
+            // 다른 PC가 같은 이용자를 편집 중이라고 표시해 두면, 이용자 수정 창(직업평가·지원고용 회차 밖의 편집기)에도 안내가 뜨고 편집 중으로 등록된다.
+            const sharedSeekerFileId = await drivePage.evaluate(async () => {
+                const file = [...window.uxDriveFiles.values()].find(item => item.appProperties.jjssKind === 'record' && item.appProperties.store === 'seekers' && item.name.includes('seekers-'));
+                await window.jjssDrive.setProperties(file.id, { editingBy: 'park@example-org.org', editingSince: new Date().toISOString() });
+                return file.id;
+            });
+            await driveSection.getByRole('button', { name: '지금 동기화' }).click();
+            await drivePage.waitForFunction(() => document.querySelector('[data-testid="shared-drive-phase"]')?.getAttribute('data-phase') === 'idle');
+            await drivePage.evaluate(() => { location.hash = '/manage'; });
+            await drivePage.getByRole('heading', { name: '이용자 및 사업체 관리' }).waitFor();
+            // 이 시나리오는 이용자를 화면이 아니라 저장소에 직접 넣었으므로, 받은 변경 알림으로 화면 목록을 다시 읽게 한다.
+            await drivePage.evaluate(() => window.dispatchEvent(new CustomEvent('jjss:shared-drive-applied', { detail: { count: 1, deleted: 0 } })));
+            await drivePage.getByRole('button', { name: '합성공유이용자 정보 수정', exact: true }).click();
+            await drivePage.getByRole('heading', { name: '이용자 정보 수정', exact: true }).waitFor();
+            await drivePage.getByTestId('shared-drive-editing').waitFor({ timeout: 10000 });
+            assert.match(await drivePage.getByTestId('shared-drive-editing').textContent(), /park@example-org\.org 님이 다른 PC에서 이 기록을 편집 중/);
+            // 이 PC도 "편집 중"을 드라이브에 찍는다(열어 둔 사이 도착한 수정은 덮어쓰지 않고 충돌로 남기는 근거).
+            await drivePage.waitForFunction(id => window.uxDriveFiles.get(id)?.appProperties.editingBy === 'kim@example-org.org', sharedSeekerFileId, { timeout: 10000 });
             assert.deepEqual(errors, [], 'no uncaught runtime errors in shared drive flow');
-            console.log('PASS shared drive: hidden in browser build, zero requests while off, guided setup with security check, org key confirmation, backup-then-encrypted upload, live sync after enabling');
+            console.log('PASS shared drive: hidden in browser build, zero requests while off, guided setup with security check, org key confirmation, backup-then-encrypted upload, live sync after enabling, editing notice in seeker edit modal');
         } finally {
             await driveContext.close();
         }

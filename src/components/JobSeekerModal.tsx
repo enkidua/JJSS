@@ -9,6 +9,7 @@ import { getAiDocumentValidationError } from '../utils/fileValidation';
 import { useDialogFocus } from '../hooks/useDialogFocus';
 import { useBeforeUnloadGuard } from '../hooks/useBeforeUnloadGuard';
 import { useToast } from './Toast';
+import SharedDriveEditingBanner from './SharedDriveEditingBanner';
 import { useConfirm } from './common/ConfirmProvider';
 import { FileDropZone } from './common/FileDropZone';
 import { useReportDirty } from './tools/useReportDirty';
@@ -498,7 +499,11 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
                                     </div>
                                 </div>
                             ) : (
-                                <SeekerFormFields value={seekerData} onChange={updateSeekerData} />
+                                <>
+                                    {/* 공유 저장소: 기존 이용자를 열어 두는 동안 다른 PC의 수정이 덮어쓰지 않게 하고, 다른 직원이 편집 중이면 알린다 */}
+                                    <SharedDriveEditingBanner store="seekers" id={isEditMode ? editItem?.id : undefined} />
+                                    <SeekerFormFields value={seekerData} onChange={updateSeekerData} />
+                                </>
                             )}
 
                             <button type="submit" disabled={busy} className="btn-primary w-full mt-4 flex items-center justify-center gap-2">
