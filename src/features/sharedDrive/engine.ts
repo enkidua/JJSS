@@ -817,10 +817,14 @@ export class SyncEngine {
         // 확인이 끝나기 전에는 지금 키를 바꾸지 않는다(틀린 코드를 넣어도 기존 키로 계속 쓸 수 있게).
         const ok = await this.verifyOrgKey(newKey);
         if (ok !== true) throw new Error('입력한 기관 키 코드가 공유 저장소의 키와 맞지 않습니다.');
-        // 지금 키로 봉인한 교체 증명이 있으면(기관 키를 가진 사람이 실제로 바꿈) 그 증명이 가리키는 새 키만 받는다.
+        if (newKey.keyId === this.key.keyId) return;
+        // 새 키는 "옛 키로 봉인한 교체 증명"이 열리고(기관 키를 가진 사람이 실제로 바꿈) 그 증명이 가리키는 키일 때만 받는다(fail-closed).
         // 키 확인 표식은 드라이브 구성원 누구나 바꿀 수 있지만 증명은 옛 키 없이는 만들 수 없다.
+        const status = await this.keyStatus();
+        if (status === 'current') throw new Error('지금 기관 키가 아직 유효합니다. 키를 바꾸려면 "기관 키 바꾸기"를 쓰고, 다른 PC가 바꾸는 중이면 끝난 뒤 다시 시도해 주세요.');
+        if (status !== 'rotated') throw new Error('키 확인 표식이 바뀌었지만 옛 기관 키로 봉인한 교체 증명이 없습니다. 드라이브 구성원이 표식을 바꿨을 수 있으니 관리자에게 확인해 주세요. 지금 키는 그대로 둡니다.');
         const expected = await this.rotationTarget();
-        if (expected && expected !== newKey.keyId) {
+        if (expected !== newKey.keyId) {
             throw new Error('입력한 코드는 지금 진행된 기관 키 교체의 새 키가 아닙니다. 관리자가 만든 새 기관 키 코드인지 확인해 주세요.');
         }
         await this.exclusive(async () => {

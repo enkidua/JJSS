@@ -431,6 +431,12 @@ await test('위조 방어: 기관 키 없이 파일 속성만 고친 삭제·버
     const before = Y.engine.keyId;
     await assert.rejects(Y.engine.adoptKey(await orgKey.deriveOrgKey(orgKey.generateOrgSecret())), /맞지 않습니다/);
     assert.equal(Y.engine.keyId, before);
+    // 10) 표식을 공격자 키로 바꿔치기(교체 증명 없음): 그 키 코드를 넣어도 받지 않는다(fail-closed)
+    const forgedKey = await orgKey.deriveOrgKey(orgKey.generateOrgSecret());
+    marker.content = await orgKey.createKeyCheck(forgedKey);
+    await assert.rejects(Y.engine.adoptKey(forgedKey), /교체 증명이 없습니다/);
+    assert.equal(Y.engine.keyId, before);
+    assert.equal(await Y.engine.keyStatus(), 'tampered');
 });
 
 await test('덮어쓰기 방어: 열어 둔 기록·대기 표지 없는 수정·같은 버전 동시 올리기·상태 없는 기록은 충돌로 남기고, 드라이브에서 지운 파일은 새로 만든다', async () => {
