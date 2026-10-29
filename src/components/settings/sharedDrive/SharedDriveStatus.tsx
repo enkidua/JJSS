@@ -139,7 +139,7 @@ export default function SharedDriveStatus({ status, onStatus }: { status: JjssDr
             <dl className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
                 <div className="rounded-xl bg-white/5 p-2"><dt className="text-white/45">상태</dt><dd data-testid="shared-drive-phase" data-phase={view.phase} className="text-white">{PHASE_TEXT[view.phase]}{view.offline ? ' (인터넷 연결 없음 — 다시 연결되면 이어서 올립니다)' : ''}</dd></div>
                 {isFolder
-                    ? <div className="rounded-xl bg-white/5 p-2"><dt className="text-white/45">PC 폴더 방식 · 직원 메일</dt><dd className="break-all text-white" data-testid="shared-drive-folder">{status.folderPath} · {status.accountEmail}</dd></div>
+                    ? <div className="rounded-xl bg-white/5 p-2"><dt className="text-white/45">PC 폴더 방식 · 직원 메일</dt><dd className="break-all text-white" data-testid="shared-drive-folder">{status.folderPath} · {status.accountEmail}{status.folderSecurityAckAt ? ` · 관리자 확인 ${formatTime(status.folderSecurityAckAt)}` : ''}</dd></div>
                     : <div className="rounded-xl bg-white/5 p-2"><dt className="text-white/45">계정 · 공유 드라이브</dt><dd className="text-white">{status.accountEmail} · {status.driveName}</dd></div>}
                 <div className="rounded-xl bg-white/5 p-2"><dt className="text-white/45">마지막 받기</dt><dd className="text-white">{formatTime(view.lastSyncAt)}</dd></div>
                 <div className="rounded-xl bg-white/5 p-2"><dt className="text-white/45">올릴 변경 · 충돌 · 격리</dt><dd className="text-white">{view.pending} · {view.conflicts} · {view.quarantined}</dd></div>

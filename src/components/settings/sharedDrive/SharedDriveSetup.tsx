@@ -68,7 +68,7 @@ export default function SharedDriveSetup({ status, onStatus, onFinished }: Props
     const [consented, setConsented] = useState(false);
     const [method, setMethod] = useState<Method>(modeOf(status));
     const [folderForm, setFolderForm] = useState({ domain: status?.domain || '', email: status?.mode === 'folder' ? status.accountEmail : '' });
-    const [adminChecked, setAdminChecked] = useState(false);
+    const [adminChecked, setAdminChecked] = useState(Boolean(status?.folderSecurityAckAt));
     const [step, setStep] = useState<Step>('guide');
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
@@ -96,11 +96,15 @@ export default function SharedDriveSetup({ status, onStatus, onFinished }: Props
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [status?.configured, status?.signedIn, status?.driveId, status?.mode, status?.folderPath]);
 
-    // 폴더를 바꾸면 이전 폴더의 점검 결과와 관리자 확인 체크는 쓰지 않는다.
+    // 폴더를 바꾸면 이전 폴더의 점검 결과는 쓰지 않는다.
     useEffect(() => {
         setSecurity(null);
-        setAdminChecked(false);
     }, [status?.folderPath]);
+
+    // 관리자 확인은 이 PC에 남아 있으면 이어서 쓴다(폴더를 바꾸면 main 프로세스가 지운다).
+    useEffect(() => {
+        setAdminChecked(Boolean(status?.folderSecurityAckAt));
+    }, [status?.folderSecurityAckAt]);
 
     const STEPS = method === 'folder' ? FOLDER_STEPS : API_STEPS;
     const isFolder = method === 'folder';
@@ -339,12 +343,19 @@ export default function SharedDriveSetup({ status, onStatus, onFinished }: Props
                         })} className="btn-secondary px-3! py-2! text-xs inline-flex items-center gap-1.5">
                             <ShieldCheck className="h-3.5 w-3.5" /> {security ? '다시 점검' : '보안 점검'}
                         </button>
-                        <button type="button" disabled={busy} onClick={() => { setSecurity(null); setDrives(null); setAdminChecked(false); setStep(isFolder ? 'folder' : 'drive'); }} className="text-xs text-white/50 underline">{isFolder ? '다른 폴더 고르기' : '다른 드라이브 고르기'}</button>
+                        <button type="button" disabled={busy} onClick={() => { setSecurity(null); setDrives(null); setStep(isFolder ? 'folder' : 'drive'); }} className="text-xs text-white/50 underline">{isFolder ? '다른 폴더 고르기' : '다른 드라이브 고르기'}</button>
                     </div>
                     {security && <SecurityReportView report={security} />}
                     {security && !security.blocked && isFolder && (
                         <label className="flex items-start gap-2 rounded-xl border border-amber-300/30 bg-amber-500/10 p-3 text-xs text-amber-50">
-                            <input type="checkbox" checked={adminChecked} onChange={event => setAdminChecked(event.target.checked)} className="mt-0.5" />
+                            <input type="checkbox" checked={adminChecked} onChange={event => {
+                                const next = event.target.checked;
+                                setAdminChecked(next);
+                                // 앱이 볼 수 없는 항목을 사람이 확인했다는 표시이므로 이 PC에 언제·누가 확인했는지 남긴다.
+                                if (typeof bridge.ackFolderSecurity === 'function') {
+                                    void run(async () => onStatus(await unwrap(bridge.ackFolderSecurity(next))));
+                                }
+                            }} className="mt-0.5" />
                             관리자가 이 공유 드라이브의 구성원(사례관리 담당자만)과 공유 설정(링크 공유·외부 공유 꺼짐)을 확인했습니다. PC 폴더 방식에서는 앱이 이 설정을 확인할 수 없습니다.
                         </label>
                     )}

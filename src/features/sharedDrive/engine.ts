@@ -538,7 +538,9 @@ export class SyncEngine {
                     }
                     const rid = change.file.appProperties.rid;
                     if (change.file.appProperties.jjssKind !== 'record' || !rid) continue;
-                    changed.set(rid, change.file);
+                    // 같은 기록의 파일이 둘 바뀌었으면(충돌 사본 등) 버전이 높은 쪽을 본다.
+                    const seen = changed.get(rid);
+                    if (!seen || parseVersion(change.file.appProperties.version) >= parseVersion(seen.appProperties.version)) changed.set(rid, change.file);
                 }
                 if (page.nextPageToken) {
                     pageToken = page.nextPageToken;
@@ -550,11 +552,15 @@ export class SyncEngine {
             const files = [...changed.values()];
             const unknownKey: string[] = [];
             const quarantined: string[] = [];
+            const recovered: string[] = [];
             let done = 0;
             await pool(files, this.concurrency, async file => {
                 this.noteEditing(String(file.appProperties.rid), file);
                 const outcome = await this.applyRemote(file, { initial: false });
-                if (outcome === 'applied' || outcome === 'deleted') result.applied += 1;
+                if (outcome === 'applied' || outcome === 'deleted') {
+                    result.applied += 1;
+                    recovered.push(String(file.appProperties.rid));
+                }
                 if (outcome === 'deleted') result.deleted += 1;
                 if (outcome === 'conflict') result.conflicts += 1;
                 if (outcome === 'unknown-key') unknownKey.push(String(file.appProperties.rid));
@@ -573,6 +579,7 @@ export class SyncEngine {
                 }
             }
             if (quarantined.length) await this.noteQuarantined(quarantined);
+            await this.clearQuarantined(recovered.filter(rid => !quarantined.includes(rid)));
             result.quarantined = quarantined.length;
             if (!result.needsNewKey) await this.state.setMeta({ pageToken, lastPullAt: this.now().toISOString() });
             return result;
@@ -931,6 +938,19 @@ export class SyncEngine {
         const record = envelope.record;
         if (!record || typeof record !== 'object' || record.id !== parsed.id) throw new QuarantineError(rid, '파일 안의 레코드 id가 맞지 않습니다.');
         return { version: envelope.version, deleted: false, record, hash: await contentHash(key, record), rotated: envelope.rotated === true };
+    }
+
+    /**
+     * 다시 정상으로 받은 기록은 격리 목록에서 뺀다(반쯤 내려온 파일처럼 잠깐 열지 못한 것이 경고로 남지 않게).
+     */
+    private async clearQuarantined(rids: string[]): Promise<void> {
+        if (!rids.length) return;
+        const meta = await this.state.getMeta();
+        const current = meta.quarantined ?? [];
+        if (!current.length) return;
+        const remove = new Set(rids);
+        const next = current.filter(rid => !remove.has(rid));
+        if (next.length !== current.length) await this.state.setMeta({ quarantined: next });
     }
 
     /** 격리한 레코드 id를 남긴다(설정 화면에서 관리자가 확인). 오래된 것부터 잘라 최대 500개. */

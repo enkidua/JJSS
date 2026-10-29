@@ -182,7 +182,9 @@ export class SharedDriveController {
             await this.syncNow();
         } catch (error) {
             if (generation !== this.generation) return;
-            this.set({ phase: 'error', message: messageOf(error), offline: isOffline(error), progress: null });
+            // 연결이 없거나 잠시 응답하지 않는 것은 오류 화면으로 세우지 않는다(주기 받기가 이미 걸려 있어 저절로 이어서 한다).
+            const transient = isOffline(error) || isBusy(error);
+            this.set({ phase: transient ? 'idle' : 'error', message: messageOf(error), offline: isOffline(error), progress: null });
         }
     }
 

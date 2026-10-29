@@ -6,6 +6,8 @@ interface JjssDriveStatus {
     mode: 'api' | 'folder';
     /** 폴더 방식에서 고른 폴더(그 밖에는 빈 값) */
     folderPath: string;
+    /** 폴더 방식: 관리자가 구성원·공유 설정을 확인했다고 표시한 시각(없으면 빈 값) */
+    folderSecurityAckAt: string;
     configured: boolean;
     domain: string;
     clientIdHint: string;
@@ -25,6 +27,7 @@ interface JjssDriveBridge {
     configureFolder(input: { domain: string; email: string }): Promise<JjssDriveResult<JjssDriveStatus>>;
     chooseFolder(): Promise<JjssDriveResult<JjssDriveStatus>>;
     inspectFolder(): Promise<JjssDriveResult<{ folderPath: string; isSharedDrive: boolean; isMyDrive: boolean; isGoogleDrive: boolean; driveName: string; accountEmail: string } | null>>;
+    ackFolderSecurity(acknowledged: boolean): Promise<JjssDriveResult<JjssDriveStatus>>;
     signIn(): Promise<JjssDriveResult<JjssDriveStatus>>;
     signOut(): Promise<JjssDriveResult<JjssDriveStatus>>;
     listSharedDrives(): Promise<JjssDriveResult<Array<{ id: string; name: string }>>>;

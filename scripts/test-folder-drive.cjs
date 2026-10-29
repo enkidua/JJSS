@@ -69,26 +69,36 @@ async function folderPc(tree, email = `kim@${DOMAIN}`) {
     return pc;
 }
 
+/** 다른 PC(구글 드라이브)가 같은 경로에 새 버전을 내려놓은 상황을 만든다. */
+async function pcRaw(tree, target, properties, body) {
+    const { MAGIC: magic } = require('../electron/folderDrive.cjs');
+    const bytes = Buffer.concat([magic, Buffer.from(`${JSON.stringify(properties)}\n`, 'utf8'), body]);
+    const temp = `${target}.other`;
+    fs.writeFileSync(temp, bytes);
+    fs.renameSync(temp, target);
+    return true;
+}
+
 const props = (rid, version, extra = {}) => ({ jjssKind: 'record', store: rid.split(':')[0], rid, version: String(version), updatedAt: new Date().toISOString(), updatedBy: `kim@${DOMAIN}`, deleted: '0', keyId: 'aaaaaaaaaaaaaaaa', hash: 'h'.repeat(32), ...extra });
 
 (async () => {
-    await test('경로 판별: 구글 드라이브 공유 드라이브 폴더만 "공유 드라이브", 내 드라이브·일반 폴더는 아님, macOS 경로에서 계정 읽기', () => {
+    await test('경로 판별: 구글 드라이브 공유 드라이브 폴더만 "공유 드라이브", 내 드라이브·일반 폴더는 아님, macOS 경로에서 계정 읽기', async () => {
         const tree = makeGoogleDriveTree();
-        const shared = inspectFolderPath({ fs, path }, tree.shared);
+        const shared = await inspectFolderPath({ fs, path }, tree.shared);
         assert.equal(shared.isGoogleDrive, true, '같은 뿌리에 "내 드라이브"가 있음');
         assert.equal(shared.isSharedDrive, true);
         assert.equal(shared.driveName, '사례관리');
-        const mine = inspectFolderPath({ fs, path }, tree.myDrive);
+        const mine = await inspectFolderPath({ fs, path }, tree.myDrive);
         assert.equal(mine.isMyDrive, true);
         assert.equal(mine.isSharedDrive, false);
-        const plain = inspectFolderPath({ fs, path }, os.tmpdir());
+        const plain = await inspectFolderPath({ fs, path }, os.tmpdir());
         assert.equal(plain.isGoogleDrive, false);
         assert.equal(plain.isSharedDrive, false);
         // "공유 드라이브" 이름만 흉내 낸 일반 폴더(옆에 내 드라이브 없음)는 구글 드라이브가 아니다.
         const fakeBase = fs.mkdtempSync(path.join(os.tmpdir(), 'jjss-fake-'));
         fs.mkdirSync(path.join(fakeBase, '공유 드라이브', 'x'), { recursive: true });
-        assert.equal(inspectFolderPath({ fs, path }, path.join(fakeBase, '공유 드라이브', 'x')).isGoogleDrive, false);
-        const mac = inspectFolderPath({ fs, path: path.posix }, `/Users/a/Library/CloudStorage/GoogleDrive-Kim@${DOMAIN}/Shared drives/Case/sub`);
+        assert.equal((await inspectFolderPath({ fs, path }, path.join(fakeBase, '공유 드라이브', 'x'))).isGoogleDrive, false);
+        const mac = await inspectFolderPath({ fs, path: path.posix }, `/Users/a/Library/CloudStorage/GoogleDrive-Kim@${DOMAIN}/Shared drives/Case/sub`);
         assert.equal(mac.isGoogleDrive, true);
         assert.equal(mac.isSharedDrive, true);
         assert.equal(mac.driveName, 'Case');
@@ -243,11 +253,52 @@ const props = (rid, version, extra = {}) => ({ jjssKind: 'record', store: rid.sp
         assert.equal((await pc.call('jjss-drive:upload', { folder: 'seekers', name: 'seekers-huge.jjss', appProperties: props('seekers:huge', 1), content: Buffer.alloc(21 * 1024 * 1024) })).error.code, 'DRIVE_TOO_LARGE');
         // 구글 드라이브(데스크톱)를 끄면 G:\ 아래가 사라진다
         fs.rmSync(tree.g, { recursive: true, force: true });
-        for (const channel of ['jjss-drive:list-records', 'jjss-drive:get-start-token']) {
+        for (const channel of ['jjss-drive:list-records', 'jjss-drive:get-start-token', 'jjss-drive:security-facts']) {
             const result = await pc.call(channel);
             assert.equal(result.error.code, 'DRIVE_FOLDER_UNAVAILABLE', channel);
             assert.match(result.error.message, /구글 드라이브\(데스크톱\)가 실행 중/);
         }
+    });
+
+    await test('편집 표시: 읽고 쓰는 사이 구글 드라이브가 새 버전을 내려놓으면 되돌리지 않고, 관리자 확인은 폴더마다 기록된다', async () => {
+        const tree = makeGoogleDriveTree();
+        const pc = await folderPc(tree);
+        const created = await pc.value('jjss-drive:upload', { folder: 'seekers', name: 'seekers-s1.jjss', appProperties: props('seekers:s1', 1), content: Buffer.from('v1') });
+        const target = path.join(tree.shared, FOLDER_ROOT_NAME, 'seekers', 'seekers-s1.jjss');
+        // 다른 PC의 v2가 내려온 상황을 흉내 낸다: setProperties가 읽은 직후 파일을 바꿔 둔다.
+        const realReadFile = fs.promises.readFile;
+        let swapped = false;
+        fs.promises.readFile = async (...args) => {
+            const bytes = await realReadFile(...args);
+            if (!swapped && String(args[0]) === target) {
+                swapped = true;
+                const v2 = await pcRaw(tree, target, props('seekers:s1', 2), Buffer.from('v2'));
+                assert.ok(v2);
+            }
+            return bytes;
+        };
+        let failed = null;
+        try {
+            await pc.value('jjss-drive:set-properties', created.id, { editingBy: `lee@${DOMAIN}` });
+        } catch (error) {
+            failed = error;
+        } finally {
+            fs.promises.readFile = realReadFile;
+        }
+        const after = await pc.value('jjss-drive:get-file', created.id);
+        assert.equal(after.appProperties.version, '2', '다른 PC의 새 버전을 옛 버전으로 되돌리지 않는다');
+        assert.equal(Buffer.from(await pc.value('jjss-drive:download', created.id)).toString(), 'v2');
+        if (failed) assert.equal(failed.code, 'DRIVE_BUSY', '계속 바뀌면 다음 주기에 다시 하도록 알린다');
+        else assert.equal(after.appProperties.editingBy, `lee@${DOMAIN}`, '다시 읽어 새 버전 위에 편집 표시를 남긴다');
+        // 관리자 확인 기록
+        let status = await pc.value('jjss-drive:ack-folder-security', true);
+        assert.match(status.folderSecurityAckAt, /^\d{4}-/);
+        status = await pc.value('jjss-drive:choose-folder');
+        assert.notEqual(status.folderSecurityAckAt, '', '같은 폴더를 다시 고르면 확인 기록은 그대로');
+        pc.dialogState.next = path.join(tree.g, '공유 드라이브', '다른 드라이브');
+        fs.mkdirSync(pc.dialogState.next, { recursive: true });
+        status = await pc.value('jjss-drive:choose-folder');
+        assert.equal(status.folderSecurityAckAt, '', '다른 폴더를 고르면 확인 기록을 지운다');
     });
 
     await test('보안 정보: 폴더 방식 표시, 구글 드라이브 공유 드라이브·쓰기 가능 여부, 구성원 목록은 볼 수 없음', async () => {

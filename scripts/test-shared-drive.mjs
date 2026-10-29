@@ -961,4 +961,53 @@ await test('PC 폴더 방식: 두 PC가 같은 공유 드라이브 폴더로 올
     assert.equal(readOnly.blocked, true);
 });
 
+await test('잠깐 열지 못한 파일은 다시 받으면 격리 목록에서 빠지고, 같은 기록의 파일이 둘 바뀌면 버전이 높은 쪽을 본다', async () => {
+    const fake = createFakeSharedDrive();
+    const A = await makePc(fake, secret, `kim@${DOMAIN}`);
+    const B = await makePc(fake, secret, `lee@${DOMAIN}`);
+    await A.local.appPut('seekers', seeker('s1', '가'));
+    await A.engine.ensureKeyCheck();
+    await A.engine.initialSync();
+    await B.engine.initialSync();
+    await A.local.appPut('seekers', { ...A.local.stores.seekers.get('s1'), phone: '010-1111-0000' });
+    await A.engine.push();
+    // 반쯤 내려온 파일을 흉내 낸다: 한 번만 내용을 깨뜨린다.
+    const file = fake.rawFiles().find(item => item.appProperties.rid === 'seekers:s1');
+    const whole = file.content;
+    file.content = whole.slice(0, 20);
+    assert.equal((await B.engine.pull()).quarantined, 1);
+    assert.deepEqual(await B.engine.quarantined(), ['seekers:s1']);
+    // 파일이 완성되면 다음 주기에 받고 격리 목록에서도 빠진다.
+    file.content = whole;
+    file.modifiedTime = new Date(Date.now() + 1000).toISOString();
+    fake.api.setProperties(file.id, {});
+    const recovered = await B.engine.pull();
+    assert.equal(recovered.applied, 1);
+    assert.equal(B.local.stores.seekers.get('s1').phone, '010-1111-0000');
+    assert.deepEqual(await B.engine.quarantined(), [], '다시 받은 기록은 경고로 남지 않는다');
+});
+
+await test('동기화 제어: 저장소에 닿지 못하면(구글 드라이브 꺼짐) 보안 차단이 아니라 오프라인으로 두고 저절로 이어서 한다', async () => {
+    const fake = createFakeSharedDrive();
+    const local = createFakeLocal({ current: null });
+    const offline = Object.assign(new Error('공유 드라이브 폴더를 쓸 수 없습니다. 이 PC의 구글 드라이브(데스크톱)가 실행 중이고 기관 계정으로 로그인돼 있는지 확인해 주세요.'), { code: 'DRIVE_FOLDER_UNAVAILABLE' });
+    const { bridge } = makeBridge(fake, { orgKeyBase64: keyBase64 });
+    let folderGone = true;
+    const realFacts = bridge.securityFacts;
+    bridge.securityFacts = async (...args) => (folderGone ? { ok: false, error: { message: offline.message, code: offline.code } } : realFacts(...args));
+    const ctx = makeController(bridge, local);
+    await ctx.controller.start();
+    const stopped = useSharedDriveStore.getState();
+    assert.equal(stopped.phase, 'idle', '보안 차단·오류가 아니다');
+    assert.equal(stopped.offline, true);
+    assert.match(stopped.message, /구글 드라이브\(데스크톱\)가 실행 중/);
+    // 구글 드라이브가 돌아오면 다음 주기에 저절로 이어서 한다(사용자가 다시 점검하지 않아도 된다).
+    folderGone = false;
+    await ctx.controller.syncNow();
+    const back = useSharedDriveStore.getState();
+    assert.equal(back.phase, 'idle');
+    assert.equal(back.offline, false);
+    ctx.controller.stop();
+});
+
 console.log(`shared drive tests passed (${passed}) — fake drive only, no network, synthetic data.`);

@@ -41,6 +41,7 @@ contextBridge.exposeInMainWorld('jjssDrive', Object.freeze({
     configureFolder: driveCall('jjss-drive:configure-folder'),
     chooseFolder: driveCall('jjss-drive:choose-folder'),
     inspectFolder: driveCall('jjss-drive:inspect-folder'),
+    ackFolderSecurity: driveCall('jjss-drive:ack-folder-security'),
     signIn: driveCall('jjss-drive:sign-in'),
     signOut: driveCall('jjss-drive:sign-out'),
     listSharedDrives: driveCall('jjss-drive:list-shared-drives'),

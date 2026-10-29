@@ -181,6 +181,7 @@ function createDriveService(deps) {
                 driveId: folderDriveId(current.folderPath),
                 driveName: current.folderPath ? path.basename(current.folderPath) : '',
                 folderPath: current.folderPath || '',
+                folderSecurityAckAt: current.folderSecurityAck?.at || '',
             };
         }
         return {
@@ -192,6 +193,7 @@ function createDriveService(deps) {
             driveId: current.driveId || '',
             driveName: current.driveName || '',
             folderPath: '',
+            folderSecurityAckAt: '',
         };
     }
 
@@ -247,10 +249,26 @@ function createDriveService(deps) {
     }
 
     /** 폴더 방식에서 쓸 수 있는가(설정 마법사 안내용): 고른 경로를 다시 살펴본 결과 */
-    function inspectFolder() {
+    async function inspectFolder() {
         const current = readConfig();
         if (!current.folderPath) return null;
         return inspectFolderPath({ fs, path }, current.folderPath);
+    }
+
+    /**
+     * 폴더 방식: "관리자가 구성원·공유 설정을 확인했습니다" 기록. 앱이 볼 수 없는 항목을 사람이 확인했다는 표시이므로
+     * 누가·언제·어느 폴더인지 남긴다. 폴더를 바꾸면 지운다(chooseFolder).
+     */
+    function ackFolderSecurity(acknowledged) {
+        if (modeOf() !== 'folder') throw new DriveError('PC 폴더 방식을 먼저 골라 주세요.', 'DRIVE_BAD_MODE');
+        const current = readConfig();
+        if (!acknowledged) {
+            writeConfig({ folderSecurityAck: undefined });
+            return status();
+        }
+        if (!current.folderPath) throw new DriveError('공유 드라이브 폴더를 먼저 골라 주세요.', 'DRIVE_NOT_SELECTED');
+        writeConfig({ folderSecurityAck: { at: new Date().toISOString(), by: current.folderAccountEmail || '', folderPath: current.folderPath } });
+        return status();
     }
 
     const folderBackend = createFolderBackend({
@@ -280,6 +298,7 @@ function createDriveService(deps) {
         const current = readConfig();
         const changed = current.clientId !== id || current.domain !== orgDomain;
         writeConfig({
+            mode: 'api',
             clientId: id,
             clientSecret: seal(secret),
             domain: orgDomain,
@@ -398,7 +417,17 @@ function createDriveService(deps) {
         const current = readConfig();
         if (modeOf(current) === 'folder') {
             // 폴더 방식 "연결 해제": 폴더·메일·기관 키를 지우고 끈다(이 PC 자료와 드라이브 폴더의 파일은 그대로).
-            writeConfig({ folderPath: undefined, folderAccountEmail: undefined, folderSecurityAck: undefined, orgKey: undefined, pendingOrgKey: undefined, enabled: false });
+            // 전에 구글 로그인 방식을 쓴 적이 있으면 남아 있는 갱신 토큰도 함께 폐기한다(문서의 "로그아웃" 약속대로).
+            const leftover = unseal(current.refreshToken);
+            if (leftover) await fetchFn(`${REVOKE_URL}?token=${encodeURIComponent(leftover)}`, { method: 'POST' }).catch(() => undefined);
+            accessToken = null;
+            accessTokenExpiresAt = 0;
+            verifiedFileIds.clear();
+            writeConfig({
+                folderPath: undefined, folderAccountEmail: undefined, folderSecurityAck: undefined,
+                refreshToken: undefined, accountEmail: undefined, driveId: undefined, driveName: undefined, folders: undefined,
+                orgKey: undefined, pendingOrgKey: undefined, enabled: false,
+            });
             return status();
         }
         const refresh = unseal(current.refreshToken);
@@ -809,10 +838,11 @@ function createDriveService(deps) {
     const handlers = {
         'jjss-drive:get-status': async () => status(),
         'jjss-drive:set-mode': async mode => setMode(mode),
-        'jjss-drive:configure': async input => { setMode('api'); return configure(input); },
+        'jjss-drive:configure': async input => configure(input),
         'jjss-drive:configure-folder': async input => configureFolder(input),
         'jjss-drive:choose-folder': folderOnly(() => chooseFolder()),
-        'jjss-drive:inspect-folder': folderOnly(async () => inspectFolder()),
+        'jjss-drive:inspect-folder': folderOnly(() => inspectFolder()),
+        'jjss-drive:ack-folder-security': folderOnly(async acknowledged => ackFolderSecurity(acknowledged !== false)),
         'jjss-drive:sign-in': apiOnly(() => signIn()),
         'jjss-drive:sign-out': async () => signOut(),
         'jjss-drive:list-shared-drives': apiOnly(() => listSharedDrives()),

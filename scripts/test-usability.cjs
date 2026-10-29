@@ -805,7 +805,7 @@ async function main() {
             const files = new Map();
             const log = [];
             let nextId = 1;
-            const status = { mode: 'api', folderPath: '', configured: false, domain: '', clientIdHint: '', accountEmail: '', signedIn: false, driveId: '', driveName: '', enabled: false, hasOrgKey: false, secureStorage: true };
+            const status = { mode: 'api', folderPath: '', folderSecurityAckAt: '', configured: false, domain: '', clientIdHint: '', accountEmail: '', signedIn: false, driveId: '', driveName: '', enabled: false, hasOrgKey: false, secureStorage: true };
             const FOLDER = 'G:\\공유 드라이브\\합성 사례관리';
             let orgKey = null;
             const ok = value => Promise.resolve({ ok: true, value });
@@ -818,7 +818,8 @@ async function main() {
                 getStatus: track('getStatus', () => ok({ ...status })),
                 setMode: track('setMode', mode => { if (status.mode !== mode) Object.assign(status, { mode, enabled: false, configured: false, signedIn: false, accountEmail: '', driveId: '', driveName: '', folderPath: '' }); return ok({ ...status }); }),
                 configureFolder: track('configureFolder', input => { Object.assign(status, { mode: 'folder', configured: true, signedIn: true, domain: input.domain.toLowerCase(), accountEmail: input.email.toLowerCase() }); return ok({ ...status }); }),
-                chooseFolder: track('chooseFolder', () => { Object.assign(status, { folderPath: FOLDER, driveId: 'folder-0123456789abcdef0123', driveName: '합성 사례관리' }); return ok({ ...status }); }),
+                chooseFolder: track('chooseFolder', () => { Object.assign(status, { folderPath: FOLDER, folderSecurityAckAt: '', driveId: 'folder-0123456789abcdef0123', driveName: '합성 사례관리' }); return ok({ ...status }); }),
+                ackFolderSecurity: track('ackFolderSecurity', acknowledged => { status.folderSecurityAckAt = acknowledged ? new Date().toISOString() : ''; return ok({ ...status }); }),
                 configure: track('configure', input => { Object.assign(status, { configured: true, domain: input.domain.toLowerCase(), clientIdHint: 'test…' }); return ok({ ...status }); }),
                 signIn: track('signIn', () => { Object.assign(status, { signedIn: true, accountEmail: `kim@${status.domain}` }); return ok({ ...status }); }),
                 signOut: track('signOut', () => { Object.assign(status, { signedIn: false, enabled: false, driveId: '', hasOrgKey: false }); orgKey = null; return ok({ ...status }); }),
@@ -967,6 +968,8 @@ async function main() {
             const folderNext = folderSection.getByRole('button', { name: '다음', exact: true });
             assert.equal(await folderNext.isDisabled(), true, '관리자 확인 체크 전에는 진행 불가');
             await folderSection.getByLabel(/관리자가 이 공유 드라이브의 구성원/).check();
+            // 관리자 확인은 이 PC에 기록으로 남는다(운영 중 상태 화면에서도 보인다).
+            await folderPage.waitForFunction(() => window.uxDriveCalls.includes('ackFolderSecurity'));
             await folderNext.click();
             await folderSection.getByRole('button', { name: '새 기관 키 만들기' }).click();
             const folderCode = (await folderSection.getByTestId('org-key-code').textContent()).trim();
@@ -976,7 +979,7 @@ async function main() {
             await folderSection.getByTestId('initial-sync-result').getByText(/확인 완료/).waitFor();
             await folderSection.getByRole('button', { name: '공유 저장소 켜기' }).click();
             await folderPage.waitForFunction(() => document.querySelector('[data-testid="shared-drive-phase"]')?.getAttribute('data-phase') === 'idle');
-            assert.match(await folderSection.getByTestId('shared-drive-folder').textContent(), /공유 드라이브.*합성 사례관리.*kim@example-org\.org/);
+            assert.match(await folderSection.getByTestId('shared-drive-folder').textContent(), /공유 드라이브.*합성 사례관리.*kim@example-org\.org.*관리자 확인/);
             assert.equal(await folderSection.getByRole('button', { name: '연결 해제' }).count(), 1);
             assert.equal(await folderSection.getByRole('button', { name: '로그아웃' }).count(), 0);
             const folderCalls = await folderPage.evaluate(() => window.uxDriveCalls);

@@ -39,7 +39,7 @@ export function evaluateFolderSecurity(facts: DriveSecurityFacts, orgDomain: str
         '구글 드라이브(데스크톱) 폴더',
         folder?.isGoogleDrive
             ? '구글 드라이브(데스크톱)가 PC에 붙인 폴더입니다.'
-            : '구글 드라이브(데스크톱) 폴더로 보이지 않습니다. 탐색기의 "Google Drive(G:)" → "공유 드라이브" 아래 폴더를 골라 주세요(다른 동기화 폴더·USB·네트워크 폴더는 쓸 수 없습니다).');
+            : '구글 드라이브(데스크톱) 폴더로 보이지 않습니다. 탐색기의 "Google Drive(G:)" → "공유 드라이브" 아래 폴더를 골라 주세요(다른 동기화 폴더·USB·네트워크 폴더에는 두지 마세요). 폴더 경로 모양으로 보는 판단이므로, 실제로 기관 공유 드라이브인지는 관리자가 확인해 주세요.');
 
     add('shared-drive', folder?.isSharedDrive && !folder?.isMyDrive ? 'pass' : 'block',
         '공유 드라이브 사용',
