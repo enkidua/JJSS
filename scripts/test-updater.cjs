@@ -31,10 +31,29 @@ function makeHarness({ packaged = true, platform = 'win32', env = {}, userData, 
         },
         quitAndInstall(...args) { this.installCalls.push(args); },
     });
-    const window = { isDestroyed: () => false, webContents: { send: (channel, payload) => sent.push({ channel, payload }) } };
+    // 창 닫기 흉내: closeBehavior가 'cancel'이면(저장하지 않은 내용 확인창에서 취소) 창이 살아남는다.
+    const window = {
+        destroyed: false,
+        closeBehavior: 'close',
+        closeCalls: 0,
+        listeners: new Map(),
+        isDestroyed() { return this.destroyed; },
+        once(event, fn) { this.listeners.set(event, fn); },
+        close() {
+            this.closeCalls += 1;
+            if (this.closeBehavior === 'cancel') return;
+            this.destroyed = true;
+            this.listeners.get('closed')?.();
+        },
+        webContents: { send: (channel, payload) => sent.push({ channel, payload }) },
+    };
+    const appEvents = new Map();
+    const quits = [];
     const service = createUpdateService({
         app: {
             isPackaged: packaged,
+            on: (event, fn) => appEvents.set(event, fn),
+            quit: () => quits.push(Date.now()),
             getVersion: () => '3.1.0',
             getPath: name => { assert.equal(name, 'userData'); return userData || os.tmpdir(); },
         },
@@ -51,11 +70,12 @@ function makeHarness({ packaged = true, platform = 'win32', env = {}, userData, 
         logMainEvent: (...args) => logs.push(['event', ...args]),
         logMainError: (...args) => logs.push(['error', ...args]),
         readUpdateConfig: () => { if (updateYml === null) throw new Error('ENOENT'); return updateYml; },
-        setTimeoutFn: (fn, ms) => timers.push({ fn, ms, kind: 'timeout' }),
+        // 긴 예약(첫 확인 10초)은 기록만 하고, 짧은 예약(창 닫기 확인 유예)은 실제로 돌린다.
+        setTimeoutFn: (fn, ms) => { timers.push({ fn, ms, kind: 'timeout' }); if (ms < 5000) setTimeout(fn, ms); },
         setIntervalFn: (fn, ms) => timers.push({ fn, ms, kind: 'interval' }),
     });
     const invoke = (channel, trusted = true) => handlers.get(channel)({ trusted });
-    return { service, handlers, sent, timers, opened, logs, updater, invoke, loads: () => loads };
+    return { service, handlers, sent, timers, opened, logs, updater, invoke, loads: () => loads, window, appEvents, quits };
 }
 
 let passed = 0;
@@ -138,10 +158,21 @@ const ALLOWED_STATUS_KEYS = ['availableVersion', 'currentVersion', 'lastCheckedA
             assert.equal(downloaded.phase, 'downloaded');
             assert.ok(h.sent.some(entry => entry.payload.phase === 'downloading' && entry.payload.percent === 42), '진행률 정수로');
             assert.equal(h.updater.installCalls.length, 0, '받기만 하고 설치는 하지 않음');
+            // 저장하지 않은 내용이 있어 창 닫기를 취소하면 설치파일을 실행하지 않고 "받아 둠"으로 되돌린다.
+            h.window.closeBehavior = 'cancel';
+            const deferred = await h.invoke('jjss-update:install');
+            await new Promise(resolve => setTimeout(resolve, 2200));
+            assert.equal(h.updater.installCalls.length, 0, '창이 닫히기 전에는 설치파일을 실행하지 않음');
+            const latest = h.sent.at(-1).payload;
+            assert.equal(latest.phase, 'downloaded');
+            assert.match(latest.message, /설치를 미뤘습니다/);
+            assert.equal(deferred.phase === 'installing', false);
+            h.window.closeBehavior = 'close';
             await h.invoke('jjss-update:install');
             assert.deepEqual(h.updater.installCalls, [[false, true]]);
+            assert.equal(h.window.closeCalls, 2);
             const copies = fs.readdirSync(path.join(userData, 'update-backups'));
-            assert.equal(copies.length, 1);
+            assert.equal(copies.length, 1, '사본은 한 번만(취소했던 시도와 합쳐서)');
             const copied = path.join(userData, 'update-backups', copies[0], 'IndexedDB', 'file__0.indexeddb.leveldb');
             assert.equal(fs.readFileSync(path.join(copied, '000003.log'), 'utf8'), 'synthetic-encrypted-record');
             assert.equal(fs.existsSync(path.join(copied, 'LOCK')), false, '잠긴 LOCK 파일은 복사하지 않음');
@@ -151,22 +182,68 @@ const ALLOWED_STATUS_KEYS = ['availableVersion', 'currentVersion', 'lastCheckedA
         }
     });
 
-    await test('저장소 사본은 최근 2개만 남긴다', async () => {
+    await test('저장소 사본은 만든 시각 기준으로 최근 2개만 남기고(이름 정렬 아님), 반쯤 복사된 사본은 지운다', async () => {
         const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'jjss-updater-keep-'));
         try {
             fs.mkdirSync(path.join(userData, 'IndexedDB'), { recursive: true });
             fs.writeFileSync(path.join(userData, 'IndexedDB', 'x.log'), 'x');
-            for (const day of [1, 2, 3]) {
-                await copyLocalDataForUpdate({ fs, path, userDataPath: userData, version: '3.1.0', now: new Date(Date.UTC(2026, 9, day)) });
+            // 3.2.0 → 3.9.0 → 3.10.0 순서로 만든다. 이름으로 정렬하면 "3.10.0"이 맨 앞이라 방금 만든 사본이 지워진다.
+            for (const [version, day] of [['3.2.0', 1], ['3.9.0', 2], ['3.10.0', 3]]) {
+                await copyLocalDataForUpdate({ fs, path, userDataPath: userData, version, now: new Date(Date.UTC(2026, 9, day)) });
+                await new Promise(resolve => setTimeout(resolve, 20));
             }
             const copies = fs.readdirSync(path.join(userData, 'update-backups')).sort();
             assert.equal(copies.length, 2);
-            assert.match(copies[0], /2026-10-02/);
-            assert.match(copies[1], /2026-10-03/);
+            assert.ok(copies.some(name => name.startsWith('3.10.0-')), '가장 최근 사본(3.10.0)이 남는다');
+            assert.ok(copies.some(name => name.startsWith('3.9.0-')));
             assert.equal(await copyLocalDataForUpdate({ fs, path, userDataPath: path.join(userData, 'none'), version: '3.1.0' }), null, '저장소가 없으면 건너뜀');
+            // 복사 중 실패하면 반쯤 된 폴더를 남기지 않는다.
+            const failingFs = { ...fs, promises: { ...fs.promises, cp: async () => { throw new Error('synthetic ENOENT'); } } };
+            await assert.rejects(copyLocalDataForUpdate({ fs: failingFs, path, userDataPath: userData, version: '3.11.0', now: new Date(Date.UTC(2026, 9, 4)) }), /synthetic/);
+            assert.equal(fs.readdirSync(path.join(userData, 'update-backups')).some(name => name.startsWith('3.11.0-')), false);
         } finally {
             fs.rmSync(userData, { recursive: true, force: true });
         }
+    });
+
+    await test('앱을 끌 때 설치되는 경로에서도 설치 직전 사본을 만든다(종료를 잠깐 멈췄다 이어감)', async () => {
+        const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'jjss-updater-quit-'));
+        try {
+            fs.mkdirSync(path.join(userData, 'IndexedDB'), { recursive: true });
+            fs.writeFileSync(path.join(userData, 'IndexedDB', 'x.log'), 'x');
+            const h = makeHarness({ userData });
+            h.service.register();
+            const beforeQuit = h.appEvents.get('before-quit');
+            assert.equal(typeof beforeQuit, 'function');
+            let prevented = 0;
+            beforeQuit({ preventDefault: () => { prevented += 1; } });
+            assert.equal(prevented, 0, '받아 둔 업데이트가 없으면 종료를 막지 않음');
+            h.updater.nextCheck = updater => { updater.emit('update-available', { version: '3.2.0' }); return {}; };
+            await h.invoke('jjss-update:check');
+            await h.invoke('jjss-update:download');
+            beforeQuit({ preventDefault: () => { prevented += 1; } });
+            assert.equal(prevented, 1, '사본을 만드는 동안 종료를 멈춤');
+            await new Promise(resolve => setTimeout(resolve, 100));
+            assert.equal(h.quits.length, 1, '사본을 만든 뒤 다시 종료');
+            assert.equal(fs.readdirSync(path.join(userData, 'update-backups')).length, 1);
+            beforeQuit({ preventDefault: () => { prevented += 1; } });
+            assert.equal(prevented, 1, '다시 들어온 종료는 막지 않음');
+        } finally {
+            fs.rmSync(userData, { recursive: true, force: true });
+        }
+    });
+
+    await test('이미 알고 있는 새 버전은 자동 재확인이 실패해도 그대로 보여 준다', async () => {
+        const h = makeHarness();
+        h.service.register();
+        h.updater.nextCheck = updater => { updater.emit('update-available', { version: '3.2.0' }); return {}; };
+        await h.invoke('jjss-update:check');
+        assert.equal(h.sent.at(-1).payload.phase, 'available');
+        h.updater.nextCheck = () => { throw new Error('net::ERR_INTERNET_DISCONNECTED'); };
+        h.timers[1].fn();
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(h.sent.at(-1).payload.phase, 'available');
+        assert.equal(h.sent.at(-1).payload.availableVersion, '3.2.0');
     });
 
     await test('macOS(서명·공증 전)는 알림과 내려받기 페이지만, 자동 설치는 하지 않는다', async () => {

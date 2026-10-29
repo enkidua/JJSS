@@ -299,10 +299,11 @@ export default function ApiKeySection({ onSaved }: SettingsSectionProps) {
         const key = normalizeApiKeyInput(draftFor(from)).value;
         if (!key || savingRef.current.has(from) || savingRef.current.has(to)) return;
         const existing = savedKeyFor(to);
-        if (existing && existing !== key) {
+        const targetDraft = normalizeApiKeyInput(draftFor(to)).value;
+        if ((existing && existing !== key) || (targetDraft && targetDraft !== key && targetDraft !== existing)) {
             const ok = await confirm({
                 title: 'API 키 옮기기',
-                message: `${SLOT_LABELS[to]} 칸에 이미 저장된 키가 있습니다. 옮기는 키로 바꿀까요?`,
+                message: `${SLOT_LABELS[to]} 칸에 이미 ${existing && existing !== key ? '저장된' : '입력 중인'} 키가 있습니다. 옮기는 키로 바꿀까요?`,
                 confirmLabel: '바꾸기',
                 cancelLabel: '취소',
                 tone: 'danger',
@@ -361,9 +362,8 @@ export default function ApiKeySection({ onSaved }: SettingsSectionProps) {
             // 키 오류인데 형식도 이 칸과 맞지 않으면(잘림·일부 복사 등) 그 사실을 함께 알린다.
             if ((error as { reason?: string })?.reason === 'invalid-key' && verdict.status === 'unknown') message = `${message} ${verdict.message}`;
             setChecks(current => ({ ...current, [slot]: { busy: false, message, error: true } }));
-            // 네트워크·시간 초과는 키 문제가 아니므로 "실패"로 남기지 않는다.
-            const reason = (error as { reason?: string })?.reason;
-            if (reason !== 'network' && reason !== 'timeout') void recordApiKeyStatus(slot, key, 'failed', message, source);
+            // 키 자체가 틀렸을 때만 "실패"로 남긴다. 네트워크·시간 초과·한도·권한·모델·서비스 오류는 키 문제가 아니다.
+            if ((error as { reason?: string })?.reason === 'invalid-key') void recordApiKeyStatus(slot, key, 'failed', message, source);
         } finally {
             if (checkControllersRef.current.get(slot) === controller) checkControllersRef.current.delete(slot);
         }

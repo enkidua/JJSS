@@ -27,6 +27,8 @@ function hasPinnedPublisher(updateYmlText) {
 const FIRST_CHECK_DELAY_MS = 10_000;
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const KEEP_DATA_COPIES = 2;
+/** 창 닫기 뒤 "저장하지 않은 내용" 확인창(동기)이 끝나고 창이 살아 있는지 보기까지 기다리는 시간 */
+const CLOSE_CONFIRM_GRACE_MS = 1500;
 
 /** 렌더러에 보내는 상태(개인정보·경로 없음) */
 function publicState(state) {
@@ -63,18 +65,28 @@ async function copyLocalDataForUpdate({ fs, path, userDataPath, version, now = n
     if (!/^[a-z-]+$/.test(folderName)) throw new Error('사본 폴더 이름이 올바르지 않습니다.');
     const stamp = now.toISOString().replace(/[:.]/g, '-');
     const root = path.join(userDataPath, folderName);
-    const target = path.join(root, `${String(version).replace(/[^0-9A-Za-z.-]/g, '_')}-${stamp}`, 'IndexedDB');
+    const folderName_ = `${String(version).replace(/[^0-9A-Za-z.-]/g, '_')}-${stamp}`;
+    const target = path.join(root, folderName_, 'IndexedDB');
     await fs.promises.mkdir(path.dirname(target), { recursive: true });
-    await fs.promises.cp(source, target, {
-        recursive: true,
-        filter: item => path.basename(item) !== 'LOCK',
-    });
-    // 오래된 사본 정리(최근 KEEP_DATA_COPIES개만)
-    const entries = (await fs.promises.readdir(root, { withFileTypes: true }))
-        .filter(entry => entry.isDirectory())
-        .map(entry => entry.name)
-        .sort();
-    for (const name of entries.slice(0, Math.max(0, entries.length - KEEP_DATA_COPIES))) {
+    try {
+        await fs.promises.cp(source, target, {
+            recursive: true,
+            filter: item => path.basename(item) !== 'LOCK',
+        });
+    } catch (error) {
+        // 반쯤 복사된 사본은 남기지 않는다(멀쩡한 사본을 밀어내지 않게).
+        await fs.promises.rm(path.dirname(target), { recursive: true, force: true }).catch(() => undefined);
+        throw error;
+    }
+    // 오래된 사본 정리(최근 KEEP_DATA_COPIES개만). 이름이 아니라 만든 시각으로 고른다("3.10"이 "3.2"보다 앞에 오지 않게).
+    const entries = [];
+    for (const entry of await fs.promises.readdir(root, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const stat = await fs.promises.stat(path.join(root, entry.name)).catch(() => null);
+        entries.push({ name: entry.name, time: entry.name === folderName_ ? Number.POSITIVE_INFINITY : (stat?.mtimeMs ?? 0) });
+    }
+    entries.sort((a, b) => a.time - b.time || a.name.localeCompare(b.name));
+    for (const { name } of entries.slice(0, Math.max(0, entries.length - KEEP_DATA_COPIES))) {
         await fs.promises.rm(path.join(root, name), { recursive: true, force: true });
     }
     return target;
@@ -117,6 +129,19 @@ function createUpdateService(deps) {
     let updater = null;
     let checking = null;
     let installing = false;
+    /** 설치 직전 사본을 이미 만들었다(설치 버튼 경로·종료 경로 중 한 번만) */
+    let dataCopied = false;
+
+    async function copyDataOnce() {
+        if (dataCopied) return;
+        dataCopied = true;
+        try {
+            const copy = await copyLocalDataForUpdate({ fs, path, userDataPath: app.getPath('userData'), version: state.currentVersion });
+            logMainEvent('info', 'update-data-copied', { copied: Boolean(copy) });
+        } catch (error) {
+            logMainError('update-data-copy-failed', error);
+        }
+    }
 
     const send = () => {
         const window = getWindow();
@@ -142,8 +167,9 @@ function createUpdateService(deps) {
         updater.on('update-downloaded', info => setState({ phase: 'downloaded', availableVersion: String(info?.version || state.availableVersion), percent: 100, message: '' }));
         updater.on('error', error => {
             logMainError('update-error', error);
-            // 자동 확인의 실패는 조용히 둔다(사용자가 누른 확인·내려받기에서만 안내).
-            setState({ phase: state.phase === 'downloading' ? 'available' : 'error', percent: null, message: userMessageFor(error) });
+            // 내려받기 실패는 "새 버전 있음"으로 되돌린다. 확인 중 실패는 check()가 처리한다(알려진 새 버전을 지우지 않게).
+            if (state.phase === 'downloading') setState({ phase: 'available', percent: null, message: userMessageFor(error) });
+            else if (state.phase !== 'checking') setState({ phase: 'error', percent: null, message: userMessageFor(error) });
         });
         return updater;
     }
@@ -153,6 +179,8 @@ function createUpdateService(deps) {
         if (checking) return checking;
         if (state.phase === 'downloading' || state.phase === 'downloaded' || installing) return publicState(state);
         checking = (async () => {
+            // 이미 알고 있는 새 버전은 확인이 실패해도 그대로 보여 준다.
+            const knownAvailable = state.phase === 'available' ? state.availableVersion : '';
             setState({ phase: 'checking', message: '' });
             try {
                 await ensureUpdater().checkForUpdates();
@@ -162,7 +190,8 @@ function createUpdateService(deps) {
             } catch (error) {
                 logMainError('update-check-failed', error);
                 state.lastCheckedAt = new Date().toISOString();
-                setState({ phase: userInitiated ? 'error' : 'idle', message: userInitiated ? userMessageFor(error) : '' });
+                if (knownAvailable) setState({ phase: 'available', availableVersion: knownAvailable, message: userInitiated ? userMessageFor(error) : '' });
+                else setState({ phase: userInitiated ? 'error' : 'idle', message: userInitiated ? userMessageFor(error) : '' });
             } finally {
                 checking = null;
             }
@@ -184,21 +213,56 @@ function createUpdateService(deps) {
         return publicState(state);
     }
 
+    /**
+     * 창을 먼저 닫아 본다(저장하지 않은 내용이 있으면 확인창이 뜬다). 실제로 닫혔을 때만 true.
+     * 설치파일은 닫힌 뒤에 실행한다 — 먼저 실행하면 확인창을 취소해도 설치파일이 "앱 실행 중" 상태로 떠 있게 된다.
+     */
+    function closeWindowForInstall() {
+        const window = getWindow();
+        if (!window || window.isDestroyed()) return Promise.resolve(true);
+        return new Promise(resolve => {
+            let done = false;
+            const finish = closed => {
+                if (done) return;
+                done = true;
+                resolve(closed);
+            };
+            window.once('closed', () => finish(true));
+            window.close();
+            // 확인창(동기)이 끝난 뒤에도 창이 살아 있으면 취소한 것이다.
+            setTimeoutFn(() => finish(window.isDestroyed()), CLOSE_CONFIRM_GRACE_MS);
+        });
+    }
+
     async function install() {
         if (disabled || manualOnly || installing) return publicState(state);
         if (state.phase !== 'downloaded') return publicState(state);
         installing = true;
         try {
-            const copy = await copyLocalDataForUpdate({ fs, path, userDataPath: app.getPath('userData'), version: state.currentVersion });
-            logMainEvent('info', 'update-data-copied', { copied: Boolean(copy) });
-        } catch (error) {
-            logMainError('update-data-copy-failed', error);
+            await copyDataOnce();
+            setState({ phase: 'installing', message: '' });
+            const closed = await closeWindowForInstall();
+            if (!closed) {
+                // 저장하지 않은 내용이 있어 사용자가 닫기를 취소했다. 받아 둔 것은 그대로이고, 다음에 앱을 끌 때 설치된다.
+                setState({ phase: 'downloaded', message: '저장하지 않은 내용이 있어 설치를 미뤘습니다. 저장한 뒤 다시 누르거나, 앱을 끌 때 설치됩니다.' });
+                return publicState(state);
+            }
+            ensureUpdater().quitAndInstall(false, true);
+        } finally {
+            installing = false;
         }
-        setState({ phase: 'installing', message: '' });
-        // 창 닫기 → 미저장 보호 확인 → 설치. 사용자가 닫기를 취소하면 다음에 앱을 끌 때 설치된다.
-        ensureUpdater().quitAndInstall(false, true);
-        installing = false;
         return publicState(state);
+    }
+
+    // 앱을 끌 때 설치되는 경로(autoInstallOnAppQuit)에서도 설치 직전 사본을 만든다. 종료를 잠깐 멈추고 복사한 뒤 다시 끈다.
+    let quitResumed = false;
+    function onBeforeQuit(event) {
+        if (manualOnly || disabled || quitResumed || state.phase !== 'downloaded' || dataCopied) return;
+        event.preventDefault();
+        copyDataOnce().finally(() => {
+            quitResumed = true;
+            app.quit();
+        });
     }
 
     function openDownloadPage() {
@@ -216,6 +280,7 @@ function createUpdateService(deps) {
         handle('jjss-update:install', async () => install());
         handle('jjss-update:open-download-page', async () => { await openDownloadPage(); return true; });
         if (disabled) return;
+        if (typeof app.on === 'function') app.on('before-quit', onBeforeQuit);
         setTimeoutFn(() => { void check(); }, FIRST_CHECK_DELAY_MS);
         setIntervalFn(() => { void check(); }, CHECK_INTERVAL_MS);
     }

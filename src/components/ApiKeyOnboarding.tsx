@@ -66,12 +66,15 @@ export default function ApiKeyOnboarding() {
 
     /** 다른 제공업체 형식의 키를 알맞은 카드로 옮긴다. */
     const moveKey = (from: AIProvider, to: AIProvider) => {
+        if (keys[to].trim() && keys[to].trim() !== keys[from].trim() && !window.confirm('옮길 칸에 이미 입력한 키가 있습니다. 옮기는 키로 바꿀까요?')) return;
         setKeys(current => ({ ...current, [to]: current[from], [from]: '' }));
         setCheckResults(current => ({ ...current, [from]: undefined, [to]: undefined }));
     };
 
     useEffect(() => {
         if (!loaded) return;
+        // 저장 직후 연결 확인 결과를 보여 주는 동안은 창을 닫지 않는다(키가 저장되면 "보여 줄 필요 없음"으로 판정되므로).
+        if (saving || Object.keys(checkResults).length > 0) return;
         let onboardingFlag: string | null = null;
         try {
             onboardingFlag = localStorage.getItem(API_KEY_ONBOARDING_STORAGE_KEY);
@@ -83,7 +86,7 @@ export default function ApiKeyOnboarding() {
             onboardingFlag,
             Boolean(error),
         ));
-    }, [error, loaded, settings.llmConfigs]);
+    }, [error, loaded, settings.llmConfigs, saving, checkResults]);
 
     const rememberChoice = (choice: 'completed' | 'later') => {
         try {
@@ -137,8 +140,8 @@ export default function ApiKeyOnboarding() {
                 return [provider, { ok: true, message }] as const;
             } catch (error) {
                 const message = error instanceof Error && error.message ? error.message : '연결을 확인하지 못했습니다.';
-                const reason = (error as { reason?: string })?.reason;
-                if (reason !== 'network' && reason !== 'timeout') void recordApiKeyStatus(provider, key, 'failed', message, 'auto-check');
+                // 키 자체가 틀렸을 때만 "실패"로 남긴다(한도·권한·모델·서비스 오류는 키 문제가 아니다).
+                if ((error as { reason?: string })?.reason === 'invalid-key') void recordApiKeyStatus(provider, key, 'failed', message, 'auto-check');
                 return [provider, { ok: false, message }] as const;
             }
         }));
