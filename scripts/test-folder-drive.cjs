@@ -239,6 +239,7 @@ const props = (rid, version, extra = {}) => ({ jjssKind: 'record', store: rid.sp
         const headerEnd = header.indexOf(0x0a, MAGIC.length) + 1;
         fs.writeFileSync(target, Buffer.concat([header.subarray(0, headerEnd), Buffer.alloc(21 * 1024 * 1024)]));
         assert.equal((await pc.call('jjss-drive:download', 'seekers/seekers-big.jjss')).error.code, 'DRIVE_TOO_LARGE');
+        assert.equal((await pc.call('jjss-drive:set-properties', 'seekers/seekers-big.jjss', { editingBy: `kim@${DOMAIN}` })).error.code, 'DRIVE_TOO_LARGE', '편집 표시를 바꿀 때도 큰 파일은 읽지 않음');
         assert.equal((await pc.call('jjss-drive:upload', { folder: 'seekers', name: 'seekers-huge.jjss', appProperties: props('seekers:huge', 1), content: Buffer.alloc(21 * 1024 * 1024) })).error.code, 'DRIVE_TOO_LARGE');
         // 구글 드라이브(데스크톱)를 끄면 G:\ 아래가 사라진다
         fs.rmSync(tree.g, { recursive: true, force: true });

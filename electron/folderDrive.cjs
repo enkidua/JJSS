@@ -374,7 +374,12 @@ function createFolderBackend(deps) {
         const target = resolveId(fileId);
         const patch = sanitizeProperties(appProperties, editingPropertyKeys, true);
         let bytes;
-        try { bytes = fs.readFileSync(target); } catch (error) {
+        try {
+            // 받기와 같은 상한: 구성원이 파일을 아주 크게 바꿔 두어도 편집 표시를 바꾸려고 통째로 읽지 않는다.
+            if (fs.statSync(target).size > maxFileBytes + HEADER_LIMIT) throw new DriveError('공유 저장소 파일이 너무 큽니다(20MB).', 'DRIVE_TOO_LARGE');
+            bytes = fs.readFileSync(target);
+        } catch (error) {
+            if (error instanceof DriveError) throw error;
             if (error?.code === 'ENOENT') throw new DriveError('공유 드라이브나 파일을 찾지 못했습니다. 권한이 바뀌었는지 확인해 주세요.', 'DRIVE_NOT_FOUND', 404);
             throw unavailable(error);
         }
