@@ -1,7 +1,7 @@
 {
     "name": "jjss",
     "private": true,
-    "version": "3.2.0",
+    "version": "3.3.0",
     "description": "직업재활업무시스템(JJSS) 데스크톱 앱",
     "author": "Antigravity",
     "type": "module",
