@@ -1,7 +1,7 @@
 {
     "name": "jjss",
     "private": true,
-    "version": "3.3.0",
+    "version": "3.4.0",
     "description": "직업재활업무시스템(JJSS) 데스크톱 앱",
     "author": "Antigravity",
     "type": "module",
@@ -29,7 +29,7 @@
         "test:at-rest-migration": "node scripts/test-at-rest-migration.mjs",
         "test:data-at-rest": "node scripts/test-data-at-rest.cjs",
         "test:electron-pdfjs": "electron scripts/test-electron-pdfjs.cjs",
-        "test:all": "npm run typecheck && npm run test:rehab-plan-mapper && npm run test:rehab-workflow && npm run test:file-service && npm run test:updater && npm run test:google-drive && npm run test:folder-drive && npm run test:shared-drive && npm run test:runtime-safety && npm run test:ai-settings && npm run test:api-key-format && npm run test:ai-safety && npm run test:ai-api && npm run test:anonymizer && npm run test:privacy-outbound && npm run test:crypto && npm run test:local-tools && npm run test:data-store && npm run test:workmate-prompts && npm run test:matching && npm run test:budget-calc && npm run test:training-photo && npm run test:supported-employment && npm run test:ve-workbench && npm run test:ve-storage && npm run test:secure-key && npm run test:at-rest-migration && npm run check:release",
+        "test:all": "npm run typecheck && npm run test:rehab-plan-mapper && npm run test:rehab-workflow && npm run test:file-service && npm run test:updater && npm run test:google-drive && npm run test:folder-drive && npm run test:shared-drive && npm run test:runtime-safety && npm run test:ai-settings && npm run test:api-key-format && npm run test:ai-safety && npm run test:ai-api && npm run test:anonymizer && npm run test:privacy-outbound && npm run test:crypto && npm run test:local-tools && npm run test:gemini-sdk-errors && npm run test:data-store && npm run test:workmate-prompts && npm run test:matching && npm run test:budget-calc && npm run test:training-photo && npm run test:supported-employment && npm run test:ve-workbench && npm run test:ve-storage && npm run test:secure-key && npm run test:at-rest-migration && npm run check:release",
         "electron:dev": "vite build && electron .",
         "electron:build": "vite build && electron-builder --publish never --win --x64",
         "electron:build:win:signed": "node scripts/check-release-readiness.cjs && node scripts/check-win-signing.cjs && vite build && electron-builder --publish never --win --x64",
@@ -49,6 +49,7 @@
         "test:shared-drive": "node scripts/test-shared-drive.mjs",
         "test:folder-drive": "node scripts/test-folder-drive.cjs",
         "test:local-tools": "node scripts/test-local-tools.mjs",
+        "test:gemini-sdk-errors": "node scripts/test-gemini-sdk-errors.mjs",
         "test:workmate-prompts": "node scripts/test-workmate-prompts.mjs",
         "test:matching": "node scripts/test-matching.mjs",
         "test:data-store": "node scripts/test-data-store-order.mjs"
