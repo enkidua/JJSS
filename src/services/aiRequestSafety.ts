@@ -251,7 +251,8 @@ export function beginAIRequestJob(options: BeginAIRequestJobOptions): AIRequestJ
             if (finished) return;
             finished = true;
             release();
-            recentRequests.set(recentKey, Date.now());
+            // 연달아 누른 같은 요청(완료 직후 3초)만 막는다. 실패·취소한 요청은 원인을 고쳐 바로 다시 할 수 있어야 한다.
+            if (status === 'completed') recentRequests.set(recentKey, Date.now());
             if (import.meta.env?.DEV) {
                 console.info(`[AI JOB] ${status}`, { feature: featureKey, jobId: id, totalAttempts: attempts.length, durationMs: Date.now() - now, timedOut });
             }

@@ -2,7 +2,7 @@ import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { useSettingsStore } from '../store/settingsStore';
 import { safeErrorMetadata } from '../utils/safeError';
 import { fileToBase64 } from '../utils/file';
-import { AI_MODEL_LABELS, normalizeAIModel, type AIProvider } from '../config/aiModels';
+import { AI_MODEL_LABELS, normalizeAIModel, type AIModelTier, type AIProvider } from '../config/aiModels';
 import { apiKeyRequiredMessage, notifyApiKeyRequired } from '../utils/apiKeyPrompt';
 import {
   buildAIRequestPlan,
@@ -21,11 +21,13 @@ import {
   isAIRequestTimeout,
 } from './aiRequestSafety';
 import { attachProviderMessage, classifyAIFailoverReason, shouldCountTowardFailureBlock } from './aiErrorClassification';
-import { lockAttachmentRequestPlan, supportsAttachments } from './aiProviderCapabilities';
+import { lockAttachmentRequestPlan } from './aiProviderCapabilities';
+import { resolveAIProviderRoute, type AIProviderRoute } from '../config/aiProviderRoute';
 import { readAnthropicText, readGeminiText, readOpenAIText } from './aiTextResponse';
 import { isKnownNamesReady, KNOWN_NAMES_NOT_READY_MESSAGE } from './knownNames';
 import { apiKeyRejectionMessage, isApiKeyRejection, reportApiKeyRejection } from './apiKeyRejection';
-import { assertKeyUsableForSlot, isKeyUsableForSlot } from '../config/apiKeyFormat';
+import { fingerprintApiKey, recordApiKeyStatus, useApiKeyStatusStore } from './apiKeyStatus';
+import { API_KEY_SLOT_LABELS, assertKeyUsableForSlot, checkKeyFormatForSlot, isKeyUsableForSlot } from '../config/apiKeyFormat';
 import {
   assertAttachmentApproved,
   BASE64_ATTACHMENT_ACCESSOR,
@@ -1127,6 +1129,8 @@ async function callAnthropic(apiKey: string, model: string, systemPrompt: string
   }
   
   messages.push({ role: 'user', content: userInput });
+  // Claude는 첫 글이 user여야 한다. 대화 기록이 길이 제한으로 잘려 assistant 글로 시작하면 그 글은 뺀다.
+  while (messages.length > 1 && messages[0].role === 'assistant') messages.shift();
 
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -1243,6 +1247,37 @@ export function assertKnownNamesReady(type: PromptType): void {
   throw new Error(KNOWN_NAMES_NOT_READY_MESSAGE);
 }
 
+/** 실제 요청이 성공한 키에 남아 있던 "실패" 기록을 "정상"으로 바꾼다(다른 기록은 건드리지 않는다). */
+function clearFailedKeyStatus(provider: AIProvider, apiKey: string): void {
+  if (!apiKey) return;
+  void (async () => {
+    try {
+      const record = useApiKeyStatusStore.getState().statuses?.[provider];
+      if (record?.state !== 'failed') return;
+      if (record.fingerprint !== await fingerprintApiKey(apiKey)) return;
+      await recordApiKeyStatus(provider, apiKey, 'ok', '실제 요청이 정상 처리되었습니다.', 'request');
+    } catch { /* 상태 기록 실패는 요청 결과에 영향을 주지 않는다 */ }
+  })();
+}
+
+const shownRouteNotices = new Set<string>();
+/** 안내문에 쓰는 이름(사용자가 부르는 이름을 함께 적는다) */
+const ROUTE_NOTICE_NAMES: Record<AIProvider, string> = { gemini: 'Gemini', openai: 'ChatGPT(OpenAI)', anthropic: 'Claude' };
+
+/** 기본 AI가 아닌 제공업체로 처리했을 때의 안내(같은 내용은 앱을 켠 동안 한 번만 띄운다). */
+function notifyProviderRoute(route: AIProviderRoute, selectedProvider: AIProvider, tier: AIModelTier): void {
+  const noticeKey = `${route.reason}:${selectedProvider}:${route.provider}`;
+  if (shownRouteNotices.has(noticeKey)) return;
+  shownRouteNotices.add(noticeKey);
+  notifyAIUsage({
+    provider: route.provider,
+    tier,
+    message: route.reason === 'attachments'
+      ? '이미지·스캔 문서 분석은 Gemini만 지원해 Gemini로 처리했습니다.'
+      : `기본 AI로 고른 ${ROUTE_NOTICE_NAMES[selectedProvider]}에 등록된 API 키가 없어, 키가 등록된 ${ROUTE_NOTICE_NAMES[route.provider]}(으)로 처리했습니다. 설정 → 기본 AI 모델에서 바꿀 수 있습니다.`,
+  });
+}
+
 export async function generateText(
   type: PromptType,
   userInput: string,
@@ -1252,40 +1287,71 @@ export async function generateText(
   // 이름 사전이 준비되기 전에 개인정보가 섞인 글이 나가지 않게 먼저 막는다.
   assertKnownNamesReady(type);
   const { settings } = useSettingsStore.getState();
-  const activeConfig = settings.llmConfigs.find(c => c.provider === settings.selectedProvider) || settings.llmConfigs[0];
+  const selectedConfig = settings.llmConfigs.find(c => c.provider === settings.selectedProvider) || settings.llmConfigs[0];
   const savedFailover = normalizeAIFailover(settings.aiFailover);
-  // 개인정보 점검(masking) 요청은 설정과 관계없이 선택한 제공업체 밖으로 보내지 않는다.
-  const lockToSelectedProvider = type === 'masking' || options?.disableCrossProviderFailover === true;
-  const failover = lockToSelectedProvider ? { ...savedFailover, allowCrossProvider: false } : savedFailover;
   const attachedFiles = Array.isArray(fileData) ? fileData : (fileData ? [fileData] : []);
-  // 첨부가 있었던 요청은 PDF 글만 보내게 되더라도 선택한 제공업체에서만 처리한다(자동 전환 금지 유지).
   const hasAttachments = attachedFiles.length > 0;
-  if (hasAttachments && !supportsAttachments(activeConfig.provider)) {
-    throw new Error('첨부파일 분석은 현재 Gemini에서만 지원합니다. 설정에서 Gemini를 선택한 뒤 다시 시도해 주세요. 다른 AI 제공업체로 자동 전환하지 않았습니다.');
+  // 개인정보 점검(masking)과 첨부가 있었던 요청은 설정과 관계없이 한 제공업체에서만 처리한다(실패해도 다른 곳으로 자동 전환하지 않음).
+  const lockToSelectedProvider = type === 'masking' || options?.disableCrossProviderFailover === true || hasAttachments;
+  const failover = lockToSelectedProvider ? { ...savedFailover, allowCrossProvider: false } : savedFailover;
+  // 다른 제공업체 형식의 키가 든 칸은 "키 없음"으로 본다(그 서비스로 보내지 않는다).
+  const usableProviders = settings.llmConfigs.filter(config => isKeyUsableForSlot(config.provider, config.apiKey)).map(config => config.provider);
+  if (!usableProviders.length) {
+    // 키는 넣었는데 다른 서비스의 칸에 넣은 경우(예: ChatGPT 칸에 Gemini 키): "키가 없다"가 아니라 옮기라고 알린다.
+    const misplaced = settings.llmConfigs
+      .map(config => ({ config, verdict: checkKeyFormatForSlot(config.provider, config.apiKey) }))
+      .find(item => item.verdict.status === 'mismatch');
+    if (misplaced && misplaced.verdict.status === 'mismatch') {
+      const message = `${API_KEY_SLOT_LABELS[misplaced.config.provider]} 칸에 다른 서비스의 키가 들어 있어 AI 기능을 쓸 수 없습니다. ${misplaced.verdict.message}\n\n설정 → API 키에서 ${API_KEY_SLOT_LABELS[misplaced.verdict.suggestedSlot]} 칸으로 옮겨 주세요("옮기기" 버튼).`;
+      notifyApiKeyRequired(selectedConfig.provider, { message });
+      throw new Error(message);
+    }
+    notifyApiKeyRequired(selectedConfig.provider);
+    throw new Error(apiKeyRequiredMessage(selectedConfig.provider));
   }
-  const requestPlan = lockAttachmentRequestPlan(buildAIRequestPlan({
-    selectedProvider: activeConfig.provider,
-    selectedModels: Object.fromEntries(settings.llmConfigs.map(config => [config.provider, config.model])),
-    // 다른 제공업체 형식의 키가 든 칸은 "키 없음"으로 본다(전환해도 그 서비스로 보내지 않는다).
-    providersWithKeys: settings.llmConfigs.filter(config => isKeyUsableForSlot(config.provider, config.apiKey)).map(config => config.provider),
-    failover,
-  }), activeConfig.provider, hasAttachments);
 
-  if (!requestPlan.length) {
-    notifyApiKeyRequired(activeConfig.provider);
-    throw new Error(apiKeyRequiredMessage(activeConfig.provider));
-  }
-
-  const featureScope = options?.featureKey || activeConfig.provider || 'tools';
+  const featureScope = options?.featureKey || selectedConfig.provider || 'tools';
   const documentScope = options?.documentType || options?.requestLabel || type;
   const featureKey = buildRequestKey(['text', featureScope, documentScope]);
   assertFeatureAvailable(featureKey);
 
   // 첨부: 텍스트 PDF는 PC 안에서 글만 추출하고, 이미지·스캔 PDF는 원본 전송 확인(동의 C)을 받은 것만 보낸다.
   // 확인창은 작업 시간 제한이 시작되기 전에 띄우며, 취소하면 여기서 요청을 끝낸다(실패 횟수에 넣지 않음).
+  // 원본 파일은 Gemini만 받을 수 있으므로 Gemini 키가 없으면 확인창을 띄우기 전에 알린다.
   const attachments = hasAttachments
-    ? await prepareAttachmentsForAI(attachedFiles, 'gemini', BASE64_ATTACHMENT_ACCESSOR)
+    ? await prepareAttachmentsForAI(attachedFiles, 'gemini', BASE64_ATTACHMENT_ACCESSOR, {
+      assertRawSendable: () => {
+        if (usableProviders.includes('gemini')) return;
+        notifyApiKeyRequired('gemini', { purpose: 'gemini-only' });
+        throw new Error('이미지·스캔 문서처럼 글을 바로 뽑을 수 없는 첨부파일은 Google Gemini로만 분석할 수 있습니다. 설정에서 Gemini API 키를 등록한 뒤 다시 시도해 주세요. (글자가 들어 있는 PDF는 지금 등록된 AI로도 분석할 수 있습니다.)');
+      },
+    })
     : { documentTexts: [], rawFiles: [] as AIFileData[] };
+  const requiresRawFiles = attachments.rawFiles.length > 0;
+
+  // 실제로 보낼 제공업체: 기본 AI에 쓸 수 있는 키가 없으면 키가 등록된 다른 제공업체로, 원본 파일은 Gemini로 보낸다.
+  const route: AIProviderRoute | null = resolveAIProviderRoute({
+    selectedProvider: selectedConfig.provider,
+    usableProviders,
+    providerOrder: savedFailover.providerOrder,
+    requiresRawFiles,
+  });
+  if (!route) {
+    notifyApiKeyRequired(requiresRawFiles ? 'gemini' : selectedConfig.provider, requiresRawFiles ? { purpose: 'gemini-only' } : {});
+    throw new Error(apiKeyRequiredMessage(requiresRawFiles ? 'gemini' : selectedConfig.provider, requiresRawFiles ? 'gemini-only' : undefined));
+  }
+  const activeConfig = settings.llmConfigs.find(config => config.provider === route.provider) || selectedConfig;
+  const requestPlan = lockAttachmentRequestPlan(buildAIRequestPlan({
+    selectedProvider: activeConfig.provider,
+    selectedModels: Object.fromEntries(settings.llmConfigs.map(config => [config.provider, config.model])),
+    providersWithKeys: usableProviders,
+    failover,
+  }), activeConfig.provider, requiresRawFiles);
+
+  if (!requestPlan.length) {
+    notifyApiKeyRequired(activeConfig.provider);
+    throw new Error(apiKeyRequiredMessage(activeConfig.provider));
+  }
   // 외부로는 형식과 내용만 보낸다(파일 이름 제외).
   const fileList = attachments.rawFiles.map(file => markAttachmentApproved({ mimeType: file.mimeType, data: file.data }));
 
@@ -1367,6 +1433,11 @@ export async function generateText(
     });
 
     const { candidate, attempts, value: rawText } = execution;
+    // 실제 요청이 성공했으면 이 키의 "실패" 기록을 지운다(연결 확인을 다시 누르지 않아도 경고가 사라지게).
+    clearFailedKeyStatus(candidate.provider, settings.llmConfigs.find(config => config.provider === candidate.provider)?.apiKey || '');
+    if (candidate.tier === 'premium' && route.reason !== 'selected' && candidate.provider === route.provider) {
+      notifyProviderRoute(route, selectedConfig.provider, candidate.tier);
+    }
     if (candidate.tier === 'premium') {
       notifyAIUsage({
         provider: candidate.provider,
@@ -1379,6 +1450,9 @@ export async function generateText(
         tier: candidate.tier,
         message: `${PROVIDER_DISPLAY_NAMES[activeConfig.provider]} 요청을 완료하지 못해 ${PROVIDER_DISPLAY_NAMES[candidate.provider]} ${candidate.tier === 'economy' ? '저비용' : '균형형'} 모델로 전환했습니다.`,
       });
+    } else if (route.reason !== 'selected') {
+      // 기본 AI가 아닌 곳에서 처리했음을 알린다(같은 안내는 앱을 켠 동안 한 번만).
+      notifyProviderRoute(route, selectedConfig.provider, candidate.tier);
     } else if (candidate.model !== activeConfig.model) {
       notifyAIUsage({
         provider: candidate.provider,
@@ -1404,8 +1478,8 @@ export async function generateText(
       ? error
       : isApiKeyRejection(error)
         ? Object.assign(new Error(apiKeyRejectionMessage(failedProvider, failedKey)), { code: 'AI_API_KEY_REJECTED', reason: 'api-key' })
-        : hasAttachments
-          ? new Error(`${normalizeGeminiError(error, 'file').message}\n첨부파일이 포함된 작업은 선택한 Gemini에서만 처리하며 다른 AI 제공업체로 자동 전환하지 않습니다.`)
+        : requiresRawFiles
+          ? new Error(`${normalizeGeminiError(error, 'file').message}\n이미지·스캔 문서 등 원본 파일이 포함된 작업은 Gemini에서만 처리하며 다른 AI 제공업체로 자동 전환하지 않습니다.`)
           : providerUserFacingError(failedProvider, error);
     recordFeatureFailure(featureKey, error, userError.message);
     throw userError;
@@ -1426,8 +1500,8 @@ export async function generateImage(
   const apiKey = geminiConfig?.apiKey;
 
   if (!apiKey) {
-    notifyApiKeyRequired('gemini');
-    throw new Error(apiKeyRequiredMessage('gemini'));
+    notifyApiKeyRequired('gemini', { purpose: 'gemini-only' });
+    throw new Error(apiKeyRequiredMessage('gemini', 'gemini-only'));
   }
 
   const styleMap: Record<string, string> = {
@@ -1641,8 +1715,8 @@ export async function analyzeTestResults(files: File[] = [], directInput: string
   const { settings } = useSettingsStore.getState();
   const geminiConfig = settings.llmConfigs.find(c => c.provider === 'gemini');
   if (!geminiConfig || !geminiConfig.apiKey) {
-    notifyApiKeyRequired('gemini');
-    throw new Error(apiKeyRequiredMessage('gemini'));
+    notifyApiKeyRequired('gemini', { purpose: 'gemini-only' });
+    throw new Error(apiKeyRequiredMessage('gemini', 'gemini-only'));
   }
 
   const targetModel = getGeminiModelConfig(geminiConfig.model).textModel;
@@ -1664,6 +1738,8 @@ export async function analyzeTestResults(files: File[] = [], directInput: string
   const maskedInput = outbound.text;
   const inputMapping = outbound.mapping;
 
+  // 작업 잠금을 걸기 전에 만든다: 키 형식이 맞지 않아 여기서 멈춰도 "처리 중" 잠금이 남지 않는다.
+  const ai = createGoogleAIClient(geminiConfig.apiKey);
   const job = beginAIRequestJob({
     featureKey,
     requestFingerprint: createAIRequestFingerprint({
@@ -1676,7 +1752,6 @@ export async function analyzeTestResults(files: File[] = [], directInput: string
     timeoutMs: files.length ? AI_FILE_TIMEOUT_MS : AI_TEXT_TIMEOUT_MS,
   });
 
-  const ai = createGoogleAIClient(geminiConfig.apiKey);
   const uploadedFileNames: string[] = [];
 
   try {
@@ -1807,8 +1882,8 @@ export async function generateReport(referenceContent: string, files: File[] = [
   const { settings } = useSettingsStore.getState();
   const geminiConfig = settings.llmConfigs.find(c => c.provider === 'gemini');
   if (!geminiConfig || !geminiConfig.apiKey) {
-    notifyApiKeyRequired('gemini');
-    throw new Error(apiKeyRequiredMessage('gemini'));
+    notifyApiKeyRequired('gemini', { purpose: 'gemini-only' });
+    throw new Error(apiKeyRequiredMessage('gemini', 'gemini-only'));
   }
 
   const targetModel = getGeminiModelConfig(geminiConfig.model).textModel;
@@ -1825,6 +1900,8 @@ export async function generateReport(referenceContent: string, files: File[] = [
   const maskedReference = outbound.text;
   const referenceMapping = outbound.mapping;
 
+  // 작업 잠금을 걸기 전에 만든다: 키 형식이 맞지 않아 여기서 멈춰도 "처리 중" 잠금이 남지 않는다.
+  const ai = createGoogleAIClient(geminiConfig.apiKey);
   const job = beginAIRequestJob({
     featureKey,
     requestFingerprint: createAIRequestFingerprint({
@@ -1837,7 +1914,6 @@ export async function generateReport(referenceContent: string, files: File[] = [
     timeoutMs: files.length ? AI_FILE_TIMEOUT_MS : AI_TEXT_TIMEOUT_MS,
   });
 
-  const ai = createGoogleAIClient(geminiConfig.apiKey);
   const uploadedFileNames: string[] = [];
 
   try {

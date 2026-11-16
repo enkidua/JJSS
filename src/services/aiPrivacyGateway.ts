@@ -187,10 +187,19 @@ export async function extractLocalDocumentText<T>(file: T, index: number, access
  * - 이미지·스캔 PDF → 원본 전송 확인(동의 C). 승인하면 rawFiles, 취소하면 오류(요청 전체 중단).
  * 확인창은 네트워크 요청·작업 시간 제한이 시작되기 전에 띄운다.
  */
+export interface PrepareAttachmentsOptions {
+    /**
+     * 원본 파일을 보내야 할 때(글을 PC 안에서 뽑지 못한 파일이 있을 때) 확인창을 띄우기 전에 부른다.
+     * 보낼 수 없는 상황(예: Gemini 키 없음)이면 여기서 오류를 던져 쓸모없는 확인창을 띄우지 않는다.
+     */
+    assertRawSendable?: (rawFileCount: number) => void;
+}
+
 export async function prepareAttachmentsForAI<T>(
     files: T[],
     provider: AttachmentUploadProvider,
     accessor: AttachmentAccessor<T>,
+    options: PrepareAttachmentsOptions = {},
 ): Promise<PreparedAttachments<T>> {
     const documentTexts: ExtractedAttachmentText[] = [];
     const rawFiles: T[] = [];
@@ -205,6 +214,7 @@ export async function prepareAttachmentsForAI<T>(
         }
     }
     if (rawFiles.length) {
+        options.assertRawSendable?.(rawFiles.length);
         const approved = await requestAttachmentSendConsent({ provider, fileNames: rawNames });
         if (!approved) throw createAttachmentConsentDeniedError();
         rawFiles.forEach(markAttachmentApproved);

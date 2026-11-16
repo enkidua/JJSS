@@ -94,7 +94,7 @@ globalThis.__privacyCaseDocuments = () => caseDocuments;
 globalThis.__privacyInitialized = () => storeInitialized;
 stubs.set(src('store/settingsStore.ts'), toUrl(`export const useSettingsStore = { getState: () => ({ settings: globalThis.__privacySettings() }) };`));
 // 키 상태 기록(이 PC의 localStorage)은 외부 전송과 무관하다. 기록 호출만 받아 둔다.
-stubs.set(src('services/apiKeyStatus.ts'), toUrl(`export const recordApiKeyStatus = async () => {}; export const useApiKeyStatusStore = { getState: () => ({ statuses: {} }) };`));
+stubs.set(src('services/apiKeyStatus.ts'), toUrl(`export const recordApiKeyStatus = async () => {}; export const fingerprintApiKey = async () => ''; export const useApiKeyStatusStore = { getState: () => ({ statuses: {} }) };`));
 stubs.set(src('store/dataStore.ts'), toUrl(`export const useDataStore = { getState: () => ({ seekers: globalThis.__privacySeekers(), jobs: globalThis.__privacyJobs(), caseDocuments: globalThis.__privacyCaseDocuments(), initialized: globalThis.__privacyInitialized() }) };`));
 globalThis.__privacySettings = () => settings;
 globalThis.__privacySeekers = () => seekers;
@@ -542,6 +542,111 @@ await test('첨부 문서 글에 실제 파일 이름이 들어가지 않는다'
     assert.equal(segment.includes('.pdf'), false);
     assert.ok(segment.includes('첨부문서 1'));
     assert.ok(segment.includes('검사 결과 본문'));
+});
+
+// ── 기본 AI에 키가 없을 때의 경로(예: Gemini 키만 넣고 ChatGPT를 고른 경우) ─────────────────────────
+const apiKeyPrompt = await import(await loadModule(src('utils/apiKeyPrompt.ts')));
+const usagePrompt = await import(await loadModule(src('utils/aiUsagePrompt.ts')));
+const usageNotices = [];
+const keyRequired = [];
+windowTarget.addEventListener(usagePrompt.AI_USAGE_NOTICE_EVENT, event => usageNotices.push(event.detail));
+windowTarget.addEventListener(apiKeyPrompt.API_KEY_REQUIRED_EVENT, event => keyRequired.push(event.detail?.provider));
+const onlyKeys = (selectedProvider, keys) => {
+    const value = baseSettings(selectedProvider);
+    value.llmConfigs = value.llmConfigs.map(config => ({ ...config, apiKey: keys[config.provider] ?? '' }));
+    return value;
+};
+const openAIReply = (_provider, payload) => ({ status: 200, body: { choices: [{ finish_reason: 'stop', message: { content: `${firstToken([{ payload }]) || '이용자'} 님 결과` } }] } });
+
+await test('Gemini 키만 넣고 ChatGPT를 기본 AI로 골라도 동작한다: 키가 등록된 Gemini로 처리하고 한 번 안내', async () => {
+    usageNotices.length = 0;
+    keyRequired.length = 0;
+    settings = onlyKeys('openai', { gemini: 'synthetic-gemini-key' });
+    const result = await gemini.generateText('counseling', SAMPLE, undefined, { featureKey: 'route-test', documentType: 'gemini-only-1' });
+    assert.deepEqual(outbound.map(entry => entry.provider), ['gemini'], 'OpenAI로는 아무것도 보내지 않는다');
+    assertClean(outbound, 'route gemini', HEALTH);
+    assert.ok(result.includes('홍가람'));
+    assert.equal(keyRequired.length, 0, '"API 키 필요" 창을 띄우지 않는다');
+    assert.equal(usageNotices.length, 1);
+    assert.match(usageNotices[0].message, /ChatGPT\(OpenAI\)에 등록된 API 키가 없어, 키가 등록된 Gemini\(으\)로 처리했습니다/);
+    safety.__resetAIRequestSafetyForTests();
+    await gemini.generateText('counseling', SAMPLE, undefined, { featureKey: 'route-test', documentType: 'gemini-only-2' });
+    assert.equal(usageNotices.length, 1, '같은 안내는 앱을 켠 동안 한 번만');
+    // 다른 제공업체 형식의 키가 기본 AI 칸에 들어 있어도(예: ChatGPT 칸에 Gemini 키) 그 키를 OpenAI로 보내지 않고 Gemini로 처리한다.
+    outbound.length = 0;
+    safety.__resetAIRequestSafetyForTests();
+    settings = onlyKeys('openai', { gemini: 'synthetic-gemini-key', openai: `AIza${'a'.repeat(35)}` });
+    await gemini.generateText('counseling', SAMPLE, undefined, { featureKey: 'route-test', documentType: 'wrong-slot' });
+    assert.deepEqual(outbound.map(entry => entry.provider), ['gemini']);
+});
+
+await test('ChatGPT 키만 있어도 동작한다: 기본 AI가 Gemini(처음 값)여도 OpenAI로, 글자 PDF 첨부도 글만 뽑아 OpenAI로', async () => {
+    usageNotices.length = 0;
+    keyRequired.length = 0;
+    settings = onlyKeys('gemini', { openai: 'synthetic-openai-key' });
+    fetchResponder = openAIReply;
+    await gemini.generateText('counseling', SAMPLE, undefined, { featureKey: 'route-test', documentType: 'openai-only' });
+    assert.deepEqual(outbound.map(entry => entry.provider), ['openai']);
+    assertClean(outbound, 'route openai', HEALTH);
+    assert.equal(keyRequired.length, 0);
+    // 글자가 들어 있는 PDF: PC 안에서 글만 뽑으므로 Gemini가 없어도 된다(전에는 "Gemini에서만 지원"으로 멈췄다).
+    outbound.length = 0;
+    safety.__resetAIRequestSafetyForTests();
+    settings = onlyKeys('openai', { openai: 'synthetic-openai-key' });
+    const answer = await gemini.generateText('summary', '홍가람 님 목표를 요약해 줘', [{ mimeType: 'application/pdf', data: textPdfBase64, name: '홍가람_계획서.pdf' }], { featureKey: 'route-test', documentType: 'openai-pdf' });
+    assert.deepEqual(outbound.map(entry => entry.provider), ['openai']);
+    assert.equal(consentLog.length, 0, '원본을 보내지 않으므로 확인창 없음');
+    assertClean(outbound, 'route openai pdf', HEALTH);
+    assert.match(serialize(outbound[0].payload), /첨부 문서에서 PC 안에서 추출한 글/);
+    assert.ok(answer.includes('홍가람'));
+    // 이미지·스캔 문서는 Gemini만 받을 수 있다: 확인창을 띄우기 전에 Gemini 키가 필요하다고 알리고 아무것도 보내지 않는다.
+    outbound.length = 0;
+    safety.__resetAIRequestSafetyForTests();
+    consentDecision = true;
+    await assert.rejects(
+        gemini.generateText('summary', '사진 설명', [{ mimeType: 'image/png', data: imageBase64 }], { featureKey: 'route-test', documentType: 'openai-image' }),
+        /Google Gemini로만 분석할 수 있습니다. 설정에서 Gemini API 키를 등록/,
+    );
+    assert.equal(outbound.length, 0);
+    assert.equal(consentLog.length, 0, '보낼 수 없는데 확인창부터 띄우지 않는다');
+    assert.deepEqual(keyRequired, ['gemini']);
+});
+
+await test('두 키가 다 있고 ChatGPT가 기본이면: 글은 ChatGPT로, 이미지 첨부는 확인 뒤 Gemini로(실패해도 다른 곳으로 전환 없음)', async () => {
+    usageNotices.length = 0;
+    settings = baseSettings('openai', CROSS_PROVIDER_FAILOVER);
+    fetchResponder = openAIReply;
+    await gemini.generateText('counseling', SAMPLE, undefined, { featureKey: 'route-test', documentType: 'both-text' });
+    assert.deepEqual(outbound.map(entry => entry.provider), ['openai']);
+    assert.equal(usageNotices.length, 0, '기본 AI 그대로면 안내 없음');
+    outbound.length = 0;
+    safety.__resetAIRequestSafetyForTests();
+    consentDecision = true;
+    await gemini.generateText('summary', '사진 설명', [{ mimeType: 'image/png', data: imageBase64 }], { featureKey: 'route-test', documentType: 'both-image' });
+    assert.deepEqual(outbound.map(entry => entry.provider), ['gemini']);
+    assert.deepEqual(consentLog.map(entry => entry.provider), ['gemini'], '확인창은 실제로 보내는 곳(Gemini)을 알린다');
+    assert.equal(usageNotices.length, 1);
+    assert.match(usageNotices[0].message, /이미지·스캔 문서 분석은 Gemini만 지원해/);
+    // 원본 파일 요청은 실패해도 다른 제공업체로 넘기지 않는다.
+    outbound.length = 0;
+    safety.__resetAIRequestSafetyForTests();
+    geminiResponder = () => Object.assign(new Error('service unavailable'), { status: 503 });
+    await assert.rejects(gemini.generateText('summary', '사진 설명', [{ mimeType: 'image/png', data: imageBase64 }], { featureKey: 'route-test', documentType: 'both-image-fail' }), /Gemini에서만 처리하며/);
+    assert.deepEqual(outbound.map(entry => entry.provider), ['gemini']);
+    // 글자 PDF도 실패했다고 다른 제공업체로 넘기지 않는다(첨부가 있었던 요청은 한 곳에서만).
+    outbound.length = 0;
+    safety.__resetAIRequestSafetyForTests();
+    fetchResponder = () => ({ status: 503, body: { error: { message: 'unavailable' } } });
+    await assert.rejects(gemini.generateText('summary', '요약', [{ mimeType: 'application/pdf', data: textPdfBase64 }], { featureKey: 'route-test', documentType: 'both-pdf-fail' }));
+    assert.deepEqual(outbound.map(entry => entry.provider), ['openai']);
+});
+
+await test('등록된 키가 하나도 없으면 아무것도 보내지 않고 "API 키 필요"를 알린다', async () => {
+    keyRequired.length = 0;
+    settings = onlyKeys('openai', {});
+    await assert.rejects(gemini.generateText('counseling', SAMPLE, undefined, { featureKey: 'route-test', documentType: 'no-keys' }), /API 키가 필요합니다/);
+    assert.equal(outbound.length, 0);
+    assert.deepEqual(keyRequired, ['openai']);
 });
 
 globalThis.fetch = originalFetch;

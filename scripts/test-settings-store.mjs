@@ -53,8 +53,11 @@ const aiFailoverSource = (await transpile('../src/config/aiFailover.ts'))
     .replace(/from ['"]\.\/aiReasoning['"]/g, `from ${JSON.stringify(aiReasoningUrl)}`);
 const aiFailoverUrl = urlFor(aiFailoverSource);
 
+const apiKeyFormatUrl = await resolveConfig('apiKeyFormat');
+
 const compiled = (await transpile('../src/store/settingsStore.ts'))
     .replace(/from ['"]zustand['"]/g, `from ${JSON.stringify(import.meta.resolve('zustand'))}`)
+    .replace(/from ['"]\.\.\/config\/apiKeyFormat['"]/g, `from ${JSON.stringify(apiKeyFormatUrl)}`)
     .replace(/from ['"]\.\.\/config\/localDB['"]/g, `from ${JSON.stringify(dbUrl)}`)
     .replace(/from ['"]\.\.\/config\/crypto['"]/g, `from ${JSON.stringify(cryptoUrl)}`)
     .replace(/from ['"]\.\.\/utils\/safeError['"]/g, `from ${JSON.stringify(safeErrorUrl)}`)
@@ -124,6 +127,28 @@ try {
     await store.getState().setSelectedProvider('gemini');
     assert.equal(stored.selectedProvider, 'gemini');
     console.log('PASS 실패한 설정 저장 뒤에도 다음 변경은 정상 저장된다');
+
+    // 기본 AI에 쓸 수 있는 키가 없을 때 다른 곳의 키를 넣으면 그곳을 기본 AI로 맞춘다(ChatGPT 키만 넣은 사용자가 바로 쓸 수 있게).
+    const SYNTH_OPENAI = `sk-proj-${'a'.repeat(40)}`;
+    const SYNTH_GOOGLE = `AIza${'b'.repeat(35)}`;
+    await store.getState().updateApiKey('gemini', '');
+    await store.getState().setSelectedProvider('gemini');
+    await store.getState().updateApiKey('openai', SYNTH_OPENAI);
+    assert.equal(store.getState().settings.selectedProvider, 'openai', '기본 AI(Gemini)에 키가 없으므로 키를 넣은 OpenAI로');
+    assert.equal(stored.selectedProvider, 'openai');
+    // 기본 AI에 이미 쓸 수 있는 키가 있으면 다른 키를 넣어도 바꾸지 않는다.
+    await store.getState().updateApiKey('gemini', SYNTH_GOOGLE);
+    assert.equal(store.getState().settings.selectedProvider, 'openai');
+    // 다른 서비스 형식의 키(쓸 수 없는 키)를 넣은 칸으로는 옮기지 않는다.
+    await store.getState().updateApiKey('openai', '');
+    await store.getState().updateApiKey('gemini', '');
+    await store.getState().setSelectedProvider('anthropic');
+    await store.getState().updateApiKey('openai', SYNTH_GOOGLE);
+    assert.equal(store.getState().settings.selectedProvider, 'anthropic', 'OpenAI 칸에 Google 키를 넣었다고 OpenAI를 기본으로 하지 않는다');
+    // 키를 지우는 것으로는 기본 AI를 바꾸지 않는다.
+    await store.getState().updateApiKey('openai', '');
+    assert.equal(store.getState().settings.selectedProvider, 'anthropic');
+    console.log('PASS 기본 AI에 키가 없을 때 넣은 키의 서비스를 기본 AI로 맞추고, 이미 쓸 수 있으면 그대로 둔다');
 } finally {
     console.error = consoleError;
 }

@@ -5,7 +5,9 @@ import { useSettingsStore, type LLMProvider } from '../../store/settingsStore';
 import { AI_MODEL_LABELS, AI_MODEL_OPTIONS } from '../../config/aiModels';
 import { getAIReasoningLevels, type AIReasoningLevel } from '../../config/aiReasoning';
 import { checkProviderConnection, type ConnectionCheckProvider } from '../../services/connectionCheck';
-import { API_KEY_FORMAT_HINTS, API_KEY_SLOT_LABELS, checkKeyFormatForSlot, normalizeApiKeyInput, type KeyFormatVerdict } from '../../config/apiKeyFormat';
+import { resolveAIProviderRoute } from '../../config/aiProviderRoute';
+import { normalizeAIFailover } from '../../config/aiFailover';
+import { API_KEY_FORMAT_HINTS, API_KEY_SLOT_LABELS, checkKeyFormatForSlot, isKeyUsableForSlot, normalizeApiKeyInput, type KeyFormatVerdict } from '../../config/apiKeyFormat';
 import { fingerprintApiKey, recordApiKeyStatus, statusForKey, useApiKeyStatusStore, type KeyStatusRecord } from '../../services/apiKeyStatus';
 import { useConfirm } from '../common/ConfirmProvider';
 import { useAppToast } from '../Toast';
@@ -249,8 +251,32 @@ export default function ApiKeySection({ onSaved }: SettingsSectionProps) {
     };
 
     const saveKey = async (slot: KeySlot, key: string) => {
-        if (slot === 'vision') await updateVisionApiKey(key);
-        else await updateApiKey(slot, key);
+        if (slot === 'vision') {
+            await updateVisionApiKey(key);
+            return;
+        }
+        const before = useSettingsStore.getState().settings.selectedProvider;
+        await updateApiKey(slot, key);
+        const after = useSettingsStore.getState().settings.selectedProvider;
+        // 기본 AI에 쓸 수 있는 키가 없어 방금 키를 넣은 서비스로 기본 AI가 맞춰졌으면 알린다(조용히 바뀌지 않게).
+        if (after !== before) {
+            showToast(`기본 AI를 ${SLOT_LABELS[after]}(으)로 맞췄습니다(${SLOT_LABELS[before]}에는 쓸 수 있는 키가 없습니다). 위 "기본 AI 모델"에서 바꿀 수 있습니다.`, 'info');
+        }
+    };
+
+    /** 진행 중인 저장(입력칸을 벗어날 때 시작된 저장 등)이 끝나기를 잠깐 기다린다. */
+    const waitForSaves = async (...slots: KeySlot[]) => {
+        for (let waited = 0; waited < 5000 && slots.some(slot => savingRef.current.has(slot)); waited += 50) {
+            await new Promise(resolve => window.setTimeout(resolve, 50));
+        }
+        return !slots.some(slot => savingRef.current.has(slot));
+    };
+
+    /** 저장된 키(지금 이 순간의 설정 기준 — 방금 끝난 저장도 반영) */
+    const latestSavedKeyFor = (slot: KeySlot): string => {
+        const latest = useSettingsStore.getState().settings;
+        if (slot === 'vision') return latest.visionApiKey || '';
+        return latest.llmConfigs.find(config => config.provider === slot)?.apiKey || '';
     };
 
     const modelFor = (slot: KeySlot): string | undefined =>
@@ -297,8 +323,10 @@ export default function ApiKeySection({ onSaved }: SettingsSectionProps) {
     /** 다른 제공업체 형식의 키를 알맞은 칸으로 옮긴다. 원래 칸에 저장돼 있던 같은 키는 지운다. */
     const moveKey = async (from: KeySlot, to: KeySlot) => {
         const key = normalizeApiKeyInput(draftFor(from)).value;
-        if (!key || savingRef.current.has(from) || savingRef.current.has(to)) return;
-        const existing = savedKeyFor(to);
+        if (!key) return;
+        // "옮기기"를 누르면 입력칸을 벗어나며 잘못된 칸에 저장이 먼저 시작될 수 있다. 그 저장이 끝난 뒤 옮긴다(첫 클릭이 무시되지 않게).
+        if (!(await waitForSaves(from, to))) return;
+        const existing = latestSavedKeyFor(to);
         const targetDraft = normalizeApiKeyInput(draftFor(to)).value;
         if ((existing && existing !== key) || (targetDraft && targetDraft !== key && targetDraft !== existing)) {
             const ok = await confirm({
@@ -315,7 +343,7 @@ export default function ApiKeySection({ onSaved }: SettingsSectionProps) {
         setSavingSlots(current => ({ ...current, [from]: true, [to]: true }));
         try {
             await saveKey(to, key);
-            if (savedKeyFor(from) === key) await saveKey(from, '');
+            if (latestSavedKeyFor(from) === key) await saveKey(from, '');
             clearDraft(from);
             clearDraft(to);
             setChecks(current => ({ ...current, [from]: undefined, [to]: undefined }));
@@ -412,15 +440,36 @@ export default function ApiKeySection({ onSaved }: SettingsSectionProps) {
     const selectedKey = savedKeyFor(selectedProvider);
     const selectedFingerprint = useKeyFingerprint(selectedKey);
     const selectedStatus = statusForKey(statuses, selectedProvider, selectedFingerprint);
-    const selectedProblem = !selectedKey
-        ? `기본 AI로 선택한 ${SLOT_LABELS[selectedProvider]}의 API 키가 없습니다. AI 기능을 쓰려면 키를 입력해 주세요.`
-        : selectedStatus?.state === 'failed'
-            ? `기본 AI로 선택한 ${SLOT_LABELS[selectedProvider]}의 API 키가 마지막 확인에서 실패했습니다. ${selectedStatus.message}`
-            : '';
+    // 기본 AI에 쓸 수 있는 키가 없어도 다른 곳에 키가 있으면 그곳으로 처리한다(resolveAIProviderRoute). 그 사실을 알린다.
+    const usableProviders = settings.llmConfigs.filter(config => isKeyUsableForSlot(config.provider, config.apiKey)).map(config => config.provider);
+    const route = resolveAIProviderRoute({ selectedProvider, usableProviders, providerOrder: normalizeAIFailover(settings.aiFailover).providerOrder });
+    const fallbackProvider = route && route.reason === 'no-key' ? route.provider : null;
+    const selectedProblem = fallbackProvider
+        ? ''
+        : !selectedKey
+            ? `기본 AI로 선택한 ${SLOT_LABELS[selectedProvider]}의 API 키가 없습니다. AI 기능을 쓰려면 키를 입력해 주세요.`
+            : !route
+                ? `기본 AI로 선택한 ${SLOT_LABELS[selectedProvider]} 칸에 다른 서비스의 키가 들어 있습니다. 알맞은 칸으로 옮기거나 ${SLOT_LABELS[selectedProvider]} 키를 입력해 주세요.`
+                : selectedStatus?.state === 'failed'
+                    ? `기본 AI로 선택한 ${SLOT_LABELS[selectedProvider]}의 API 키가 마지막 확인에서 실패했습니다. ${selectedStatus.message}`
+                    : '';
 
     return (
         <>
             <section id="api-keys" tabIndex={-1} aria-label="API 키와 모델" className="space-y-4 scroll-mt-40">
+                {fallbackProvider && (
+                    <div role="status" data-testid="selected-provider-fallback-note" className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-300/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-50">
+                        <AlertTriangle className="h-4 w-4 shrink-0" />
+                        <span className="flex-1">기본 AI로 고른 {SLOT_LABELS[selectedProvider]}에 쓸 수 있는 키가 없어, 지금은 키가 등록된 {SLOT_LABELS[fallbackProvider]}(으)로 처리합니다. 위 "기본 AI 모델"에서 바꿀 수 있습니다.</span>
+                        <button
+                            type="button"
+                            onClick={() => document.getElementById(`api-key-${selectedProvider}`)?.focus()}
+                            className="rounded-lg border border-amber-200/40 px-3 py-1 text-xs font-semibold hover:bg-amber-300/20"
+                        >
+                            {SLOT_LABELS[selectedProvider]} 키 칸으로
+                        </button>
+                    </div>
+                )}
                 {selectedProblem && (
                     <div role="alert" data-testid="selected-provider-key-warning" className="flex flex-wrap items-center gap-3 rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">
                         <AlertTriangle className="h-4 w-4 shrink-0" />

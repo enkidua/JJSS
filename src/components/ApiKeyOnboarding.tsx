@@ -116,13 +116,16 @@ export default function ApiKeyOnboarding() {
         setSaving(true);
         setValidationMessage('');
         try {
-            await saveSettings({
-                ...settings,
-                llmConfigs: settings.llmConfigs.map(config => ({
-                    ...config,
-                    apiKey: normalizedKeys[config.provider] || config.apiKey,
-                })),
-            });
+            const llmConfigs = settings.llmConfigs.map(config => ({
+                ...config,
+                apiKey: normalizedKeys[config.provider] || config.apiKey,
+            }));
+            // 기본 AI로 고른 곳에 쓸 수 있는 키가 없으면, 키를 넣은 서비스를 기본 AI로 맞춘다
+            // (처음 값이 Gemini라 ChatGPT·Claude 키만 넣은 사용자는 기본 AI가 키 없는 Gemini로 남았다).
+            const usable = llmConfigs.filter(config => checkKeyFormatForSlot(config.provider, config.apiKey).status !== 'empty'
+                && checkKeyFormatForSlot(config.provider, config.apiKey).status !== 'mismatch').map(config => config.provider);
+            const selectedProvider = usable.length && !usable.includes(settings.selectedProvider) ? usable[0] : settings.selectedProvider;
+            await saveSettings({ ...settings, llmConfigs, selectedProvider });
         } catch {
             setValidationMessage('API 키를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.');
             setSaving(false);
@@ -182,7 +185,7 @@ export default function ApiKeyOnboarding() {
                         <p className="mt-2 text-xs text-amber-200/75">API 사용량에 따라 각 AI 서비스에서 비용이 발생할 수 있습니다.</p>
                         <div className="mt-3 rounded-xl border border-sky-300/20 bg-sky-500/10 px-4 py-3 text-xs leading-relaxed text-sky-50/85">
                             <p className="font-semibold text-sky-50">개인정보 전송 안내</p>
-                            <p className="mt-1">AI 기능을 실행하면 비식별화된 업무 내용이 선택한 AI 제공업체로 전송될 수 있습니다. 텍스트에 포함된 주요 직접식별정보(이름·연락처·주민등록번호·이메일·생년월일 등)를 이 컴퓨터에서 먼저 가린 뒤 전송하며, 자동 규칙이 모든 개인정보를 찾아내지는 못하므로 꼭 필요한 내용만 입력해 주세요.</p>
+                            <p className="mt-1">AI 기능을 실행하면 비식별화된 업무 내용이 키를 등록한 AI 제공업체(기본 AI 우선)로 전송될 수 있습니다. 텍스트에 포함된 주요 직접식별정보(이름·연락처·주민등록번호·이메일·생년월일 등)를 이 컴퓨터에서 먼저 가린 뒤 전송하며, 자동 규칙이 모든 개인정보를 찾아내지는 못하므로 꼭 필요한 내용만 입력해 주세요.</p>
                             <p className="mt-1">스캔한 PDF나 이미지처럼 원본 첨부파일을 그대로 보내야 하는 기능은 보내기 전에 별도로 확인을 받습니다.</p>
                             <p className="mt-1 text-sky-50/65">사용하는 외부 AI 제공업체: Google Gemini, OpenAI, Anthropic Claude, Google Cloud Vision(글자 인식). AI 기능 사용 전 소속 기관의 개인정보 처리방침, 생성형 AI 사용 지침, 정보보안 지침을 확인해 주세요.</p>
                         </div>

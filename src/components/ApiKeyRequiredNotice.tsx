@@ -11,7 +11,7 @@ import { API_KEY_REJECTED_EVENT, type ApiKeyRejectedDetail } from '../services/a
 import { useDialogFocus } from '../hooks/useDialogFocus';
 
 type NoticeState =
-    | { kind: 'required'; provider?: AIProvider }
+    | { kind: 'required'; provider?: AIProvider; message: string }
     | { kind: 'rejected'; message: string };
 
 /**
@@ -26,7 +26,7 @@ export default function ApiKeyRequiredNotice() {
     useEffect(() => {
         const handleRequiredKey = (event: Event) => {
             const detail = (event as CustomEvent<ApiKeyRequiredDetail>).detail;
-            setNotice({ kind: 'required', provider: detail?.provider });
+            setNotice({ kind: 'required', provider: detail?.provider, message: detail?.message || apiKeyRequiredMessage(detail?.provider, detail?.purpose) });
         };
         const handleRejectedKey = (event: Event) => {
             const detail = (event as CustomEvent<ApiKeyRejectedDetail>).detail;
@@ -46,7 +46,7 @@ export default function ApiKeyRequiredNotice() {
     if (!notice) return null;
 
     const title = notice.kind === 'rejected' ? 'API 키가 거부되었습니다' : 'API 키 설정이 필요합니다';
-    const message = notice.kind === 'rejected' ? notice.message : apiKeyRequiredMessage(notice.provider);
+    const message = notice.message;
 
     return (
         <div className="fixed inset-0 z-120 flex items-center justify-center bg-black/65 p-4">

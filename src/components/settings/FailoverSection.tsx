@@ -147,7 +147,7 @@ export default function FailoverSection({ onSaved }: SettingsSectionProps) {
                     />
                     <span>
                         <span className="block text-sm font-medium text-white/75">다른 AI 제공업체 자동 전환 허용</span>
-                        <span className="mt-1 block text-xs text-white/45">입력 내용이 다른 제공업체로 전송될 수 있으며, 유료 사용 허용과 별도로 동의합니다.</span>
+                        <span className="mt-1 block text-xs text-white/45">요청이 실패했을 때 입력 내용이 다른 제공업체로 전송될 수 있으며, 유료 사용 허용과 별도로 동의합니다. (기본 AI에 키가 없어 키를 등록한 AI로 처리하는 것, 사진·스캔 원본을 Gemini로 보내는 것은 이 설정과 관계없이 동작합니다.)</span>
                     </span>
                 </label>
 

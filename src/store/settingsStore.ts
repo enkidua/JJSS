@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { isKeyUsableForSlot } from '../config/apiKeyFormat';
 import * as localDB from '../config/localDB';
 import { encrypt, decryptWithStatus, isSecureStorageUnavailableError } from '../config/crypto';
 import { safeErrorMetadata } from '../utils/safeError';
@@ -388,11 +389,19 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     updateApiKey: (provider, apiKey) => enqueueMutation(async () => {
         const { settings, saveSettings } = get();
         const normalizedKey = apiKey.trim();
+        const llmConfigs = settings.llmConfigs.map(c =>
+            c.provider === provider ? { ...c, apiKey: normalizedKey } : c
+        );
+        // 기본 AI로 고른 곳에 쓸 수 있는 키가 없는데 다른 곳의 키를 넣었으면, 그곳을 기본 AI로 맞춘다
+        // (예: 처음 값이 Gemini인데 ChatGPT 키만 넣은 경우). 기본 AI에 이미 쓸 수 있는 키가 있으면 바꾸지 않는다.
+        const selectedKey = llmConfigs.find(c => c.provider === settings.selectedProvider)?.apiKey ?? '';
+        const adoptProvider = isKeyUsableForSlot(provider, normalizedKey)
+            && provider !== settings.selectedProvider
+            && !isKeyUsableForSlot(settings.selectedProvider, selectedKey);
         const updated = {
             ...settings,
-            llmConfigs: settings.llmConfigs.map(c =>
-                c.provider === provider ? { ...c, apiKey: normalizedKey } : c
-            ),
+            llmConfigs,
+            ...(adoptProvider ? { selectedProvider: provider } : {}),
         };
         // 사용자가 직접 새 키를 입력하거나 지웠으므로 읽지 못한 이전 암호문은 더 이상 보존하지 않는다.
         const hadUnreadable = unreadableKeySlots.delete(provider);

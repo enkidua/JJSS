@@ -224,7 +224,7 @@ export function MaskingView({ onBack, onDirtyChange }: MaskingViewProps) {
                                 <span>
                                     AI로 추가 점검하는 데 동의합니다.
                                     <span className="block text-xs text-white/50 mt-1">
-                                        이미 가린 결과 글만 설정에서 선택한 AI 한 곳으로 보냅니다. 원문은 보내지 않으며, 다른 AI로 자동 전환하지 않습니다.
+                                        이미 가린 결과 글만 AI 한 곳(기본 AI, 기본 AI에 키가 없으면 키를 등록한 AI)으로 보냅니다. 원문은 보내지 않으며, 실패해도 다른 AI로 자동 전환하지 않습니다.
                                     </span>
                                 </span>
                             </label>

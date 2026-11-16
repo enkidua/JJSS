@@ -56,7 +56,7 @@ const TOOLS: Tool[] = [
         gradient: 'from-rose-500 to-red-600',
         fields: [],
         category: 'planning',
-        apiNote: 'Gemini API 키 권장',
+        apiNote: '등록한 AI 키 하나 권장(없어도 기본 안내 표시)',
         fallbackNote: 'AI 실패 시 기본 위기대응 템플릿을 표시합니다.',
     },
     {
@@ -74,7 +74,7 @@ const TOOLS: Tool[] = [
             { key: 'request', label: '협조 요청사항 (선택)', placeholder: '예: 기한 내 문서 회신, 이용자 전달 요청 등', type: 'input' },
         ],
         category: 'core',
-        apiNote: 'Gemini API 키 필요',
+        apiNote: '등록한 AI 키 하나(Gemini·ChatGPT·Claude)',
         fallbackNote: '실패해도 입력한 문서 내용은 유지됩니다.',
     },
     {
@@ -89,7 +89,7 @@ const TOOLS: Tool[] = [
             { key: 'quote', label: '강조점 및 코멘트 (선택)', placeholder: '기사에 포함할 기관장 혹은 담당자의 코멘트, 강조하고 싶은 의미를 적어주세요.', type: 'input' }
         ],
         category: 'core',
-        apiNote: 'Gemini API 키 필요',
+        apiNote: '등록한 AI 키 하나(Gemini·ChatGPT·Claude)',
         fallbackNote: '실패해도 입력한 보도자료 초안은 유지됩니다.',
     },
     {
@@ -102,7 +102,7 @@ const TOOLS: Tool[] = [
         fields: [],
         isBeta: true,
         category: 'visual',
-        apiNote: 'Gemini 이미지 생성 권한 필요',
+        apiNote: 'Google Gemini 키 필요(Gemini 전용 · 이미지 생성 권한)',
         fallbackNote: '이미지 생성은 텍스트보다 사용량(비용)이 클 수 있습니다. 권한이나 사용량 문제 시 홍보 문구 작성 또는 HTML/PDF 제작으로 대체하세요.',
     },
     {
@@ -141,7 +141,7 @@ const TOOLS: Tool[] = [
         fields: [],
         isBeta: true,
         category: 'analysis',
-        apiNote: 'Gemini API 키 필요',
+        apiNote: '등록한 AI 키 하나(Gemini·ChatGPT·Claude)',
         fallbackNote: '실패해도 업로드/입력한 문서는 삭제되지 않습니다.',
     },
     {
@@ -153,7 +153,7 @@ const TOOLS: Tool[] = [
         gradient: 'from-amber-500 to-orange-600',
         fields: [],
         category: 'core',
-        apiNote: 'Gemini API 키 필요',
+        apiNote: '등록한 AI 키 하나(Gemini·ChatGPT·Claude)',
         fallbackNote: '실패해도 녹취록/메모 입력 내용은 유지됩니다.',
     },
     {
@@ -179,7 +179,7 @@ const TOOLS: Tool[] = [
             { key: 'text', label: '개선할 문장', placeholder: '교정하고 싶은 문장이나 단락을 입력하세요.', type: 'textarea' },
         ],
         category: 'core',
-        apiNote: 'Gemini API 키 필요',
+        apiNote: '등록한 AI 키 하나(Gemini·ChatGPT·Claude)',
         fallbackNote: '실패해도 원문은 유지됩니다.',
     },
     {
@@ -193,7 +193,7 @@ const TOOLS: Tool[] = [
             { key: 'text', label: '변환할 문장 및 문서 내용', placeholder: '쉬운 글로 바꾸고 싶은 어려운 안내문, 공문서, 복잡한 단락을 입력하세요.', type: 'textarea' },
         ],
         category: 'core',
-        apiNote: 'Gemini API 키 필요',
+        apiNote: '등록한 AI 키 하나(Gemini·ChatGPT·Claude)',
         fallbackNote: '실패해도 원문은 유지됩니다.',
     },
     {
@@ -211,7 +211,7 @@ const TOOLS: Tool[] = [
             { key: 'blogPurpose', label: '사용 용처', placeholder: '', type: 'select', options: [{ label: '복지관 공식 블로그', value: 'official' }, { label: '개인 블로그', value: 'personal' }] },
         ],
         category: 'core',
-        apiNote: 'Gemini API 키 필요',
+        apiNote: '등록한 AI 키 하나(Gemini·ChatGPT·Claude)',
         fallbackNote: '실패해도 입력한 주제와 메시지는 유지됩니다.',
     },
     {
@@ -227,7 +227,7 @@ const TOOLS: Tool[] = [
             { key: 'keywords', label: '연관 키워드', placeholder: '휴식, 미소, 희망 등', type: 'input' },
         ],
         category: 'planning',
-        apiNote: 'Gemini API 키 필요',
+        apiNote: '등록한 AI 키 하나(Gemini·ChatGPT·Claude)',
         fallbackNote: '실패해도 입력한 작명 조건은 유지됩니다.',
     },
     {
@@ -242,7 +242,7 @@ const TOOLS: Tool[] = [
         ],
         isBeta: true,
         category: 'core',
-        apiNote: 'Gemini API 키 필요',
+        apiNote: '등록한 AI 키 하나(Gemini·ChatGPT·Claude)',
         fallbackNote: '이미지 생성이 어려울 때 문구 작성으로 대체할 수 있습니다.',
     },
     {
@@ -255,7 +255,7 @@ const TOOLS: Tool[] = [
         fields: [],
         isBeta: true,
         category: 'analysis',
-        apiNote: 'Vision API 키 또는 Gemini API 키 필요',
+        apiNote: '글자 PDF는 키 없이, 사진·스캔은 Vision 또는 Gemini 키 필요',
         fallbackNote: '문서 OCR은 텍스트 추출용입니다. 예산 OCR은 예산 화면의 지출 등록 보조 기능입니다.',
     },
     {
@@ -268,7 +268,7 @@ const TOOLS: Tool[] = [
         fields: [],
         isBeta: true,
         category: 'visual',
-        apiNote: 'Gemini 이미지 생성 권한 필요',
+        apiNote: 'Google Gemini 키 필요(Gemini 전용 · 이미지 생성 권한)',
         fallbackNote: '이미지 생성은 텍스트보다 사용량(비용)이 클 수 있습니다. 권한이나 사용량 문제 시 텍스트 일정표로 먼저 정리하세요.',
     }
 ];

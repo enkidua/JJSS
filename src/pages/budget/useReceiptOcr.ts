@@ -192,8 +192,8 @@ export function useReceiptOcr(setForm: Dispatch<SetStateAction<Partial<Expense>>
             // OCR 결과는 마지막 단계에서만 입력칸에 반영되므로 되돌릴 것이 없습니다.
             // (폼 전체를 이전 값으로 되돌리면 OCR 중에 입력한 내용까지 사라집니다.)
             const message = error?.message || 'OCR 처리 중 오류가 발생했습니다.';
-            setOcrError(message.includes('API 키') || message.includes('키가 필요')
-                ? 'OCR 기능을 사용하려면 설정에서 Vision API 키 또는 Gemini API 키를 입력해 주세요.'
+            setOcrError(/Vision API 키 또는 Google Gemini API 키가 필요/.test(message)
+                ? '사진·스캔 영수증을 읽으려면 설정에서 Vision API 키 또는 Gemini API 키를 입력해 주세요. 작성 중인 지출 내용은 유지됩니다.'
                 : `${message} 작성 중인 지출 내용은 유지됩니다.`);
         } finally {
             if (abortRef.current === controller) {

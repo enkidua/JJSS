@@ -255,7 +255,7 @@ export function DocumentChatView({ onBack, onDirtyChange }: DocumentChatViewProp
                 <div className="mx-6 mt-4 rounded-xl border border-violet-400/20 bg-violet-500/10 px-4 py-3 text-xs leading-relaxed text-violet-100/80">
                     <strong className="text-violet-50">전송·사용량 안내:</strong> 질문할 때마다 첨부 파일 내용이 AI로 다시 전송됩니다. 글자가 들어 있는 PDF는 이 컴퓨터에서 글자만 추출해 이름·연락처 등을 가린 뒤 보내고, 스캔한 PDF나 이미지는 원본을 보내야 하므로 질문할 때마다 전송 여부를 따로 확인합니다. 파일이 크거나 많을수록 사용량(비용)이 늘어나니, 필요한 파일만 남겨 두세요.
                     {files.length > 0 && <span className="block mt-1">현재 첨부: {files.length}개, 약 {formatSize(totalFileBytes)} (질문마다 함께 전송)</span>}
-                    <span className="block mt-1 text-violet-100/60">대화 기록은 화면에 모두 남지만, AI에는 최근 5턴 또는 10,000자 이내의 대화만 함께 보냅니다. 문서 내용은 외부 AI 서비스(Google Gemini)로 전송됩니다.</span>
+                    <span className="block mt-1 text-violet-100/60">대화 기록은 화면에 모두 남지만, AI에는 최근 5턴 또는 10,000자 이내의 대화만 함께 보냅니다. 글자를 추출한 문서 내용은 기본 AI(키가 없으면 키를 등록한 AI)로, 사진·스캔 원본은 Google Gemini로 전송됩니다.</span>
                     {files.some(file => file.size > LARGE_DOCUMENT_BYTES) && (
                         <span className="block mt-1 text-amber-100">큰 파일이 첨부되어 있습니다. 부담되면 필요한 페이지만 이미지/PDF로 나누어 질문해 주세요.</span>
                     )}

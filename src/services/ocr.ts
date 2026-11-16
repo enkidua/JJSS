@@ -220,7 +220,7 @@ export async function performOCR(file: File, options?: { signal?: AbortSignal })
 
     // 두 API 키 모두 없는 경우 에러 처리
     if (!visionApiKey && !geminiApiKey) {
-        notifyApiKeyRequired();
+        notifyApiKeyRequired(undefined, { purpose: 'ocr' });
         throw new Error(
             'OCR 기능을 사용하려면 Vision API 키 또는 Google Gemini API 키가 필요합니다.\n\n' +
             '설정에서 사용할 서비스의 API 키를 입력해 주세요.'
