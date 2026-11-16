@@ -7,6 +7,31 @@ export const BUDGET_PROJECTS_KEY = 'jjss:budget-projects';
 export const EXPENSE_CATEGORIES = ['사업비', '프로그램사업비', '운영비', '인건비', '대체인력임금', '교통비', '식비', '소모품비', '기타'];
 export const PAYMENT_METHODS = ['카드', '현금', '계좌이체', '기타'];
 
+/** 지출품의서 "지출방법" 문구. 목록에 없는 결제방법(영수증 인식 결과 등)은 적힌 그대로 씁니다. */
+const PAYMENT_METHOD_PHRASES: Record<string, string> = {
+    카드: '카드 결제',
+    현금: '현금 지급',
+    계좌이체: '계좌 입금',
+    기타: '기타',
+};
+
+/**
+ * 선택한 지출의 결제방법으로 지출품의서 "지출방법" 문구를 만듭니다.
+ * 한 가지면 그 방법만("카드 결제"), 섞여 있으면 건수와 함께("카드 결제 2건, 계좌 입금 1건") 적습니다.
+ * 결제방법이 비어 있는 지출은 '결제방법 미입력'으로 세어, 문서에 없는 방법을 지어내지 않습니다.
+ */
+export function describePaymentMethods(expenses: ReadonlyArray<Pick<Expense, 'paymentMethod'>>): string {
+    const counts = new Map<string, number>();
+    for (const expense of expenses) {
+        const method = String(expense.paymentMethod || '').trim();
+        const phrase = method ? (PAYMENT_METHOD_PHRASES[method] || method) : '결제방법 미입력';
+        counts.set(phrase, (counts.get(phrase) || 0) + 1);
+    }
+    if (counts.size === 0) return '';
+    if (counts.size === 1) return [...counts.keys()][0];
+    return [...counts.entries()].map(([phrase, count]) => `${phrase} ${count}건`).join(', ');
+}
+
 export function loadBudgetProjects(): BudgetProject[] {
     try {
         const raw = localStorage.getItem(BUDGET_PROJECTS_KEY);
@@ -336,6 +361,9 @@ export interface DateRange {
 }
 
 const DATE_TOKEN = /(\d{4})[.\-/년]\s*(\d{1,2})[.\-/월]\s*(\d{1,2})일?/g;
+// 시작일 바로 뒤에 "~ 12.31." / "~ 8월 31일" / "~ 08-31"처럼 연도 없이 적은 종료일.
+// 범위 기호(~, -, 부터) 바로 다음에 올 때만 읽어, 본문 속 다른 숫자("3.5개월" 등)를 날짜로 오해하지 않습니다.
+const YEARLESS_END_TOKEN = /^[\s.]*(?:\([^)]*\)\s*)?(?:[~∼〜～\-–—]|부터)\s*(\d{1,2})\s*[.\-/월]\s*(\d{1,2})(?!\d)/;
 
 function toDateKey(year: string, month: string, day: string): string | null {
     const key = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
@@ -344,21 +372,37 @@ function toDateKey(year: string, month: string, day: string): string | null {
 
 /**
  * 사업기간 문자열을 날짜 범위로 읽습니다. '2026', '2026년', '2026-01-01 ~ 2026-12-31', '2026.3.1~2026.8.31' 형식을 지원합니다.
- * 읽을 수 없으면 null(기간 검사를 건너뜁니다).
+ * 종료일에 연도가 없으면('2026.1.1.~12.31.', '2026년 3월 1일 ~ 8월 31일') 시작 연도를 따르고,
+ * 그 결과가 시작일보다 앞서면 다음 해로 봅니다('2026.11.1~2.28' → 2027-02-28).
+ * 읽을 수 없거나 날짜를 하나만 읽었으면 null(기간 검사를 건너뜁니다. 하루짜리 기간으로 단정하면 "사업기간 밖" 경고가 쏟아집니다).
  */
 export function parseProjectPeriod(period: string | undefined): DateRange | null {
     const text = String(period || '').trim();
     if (!text) return null;
     const dates: string[] = [];
+    let firstMatch: RegExpMatchArray | null = null;
     for (const match of text.matchAll(DATE_TOKEN)) {
         const key = toDateKey(match[1], match[2], match[3]);
-        if (key) dates.push(key);
+        if (!key) continue;
+        if (dates.length === 0) firstMatch = match;
+        dates.push(key);
     }
     if (dates.length >= 2) {
         const [start, end] = [dates[0], dates[1]].sort();
         return { start, end };
     }
-    if (dates.length === 1) return { start: dates[0], end: dates[0] };
+    if (dates.length === 1 && firstMatch) {
+        const start = dates[0];
+        const rest = text.slice((firstMatch.index ?? 0) + firstMatch[0].length);
+        const endMatch = YEARLESS_END_TOKEN.exec(rest);
+        if (!endMatch) return null;
+        const startYear = Number(firstMatch[1]);
+        const sameYearEnd = toDateKey(String(startYear), endMatch[1], endMatch[2]);
+        if (sameYearEnd && sameYearEnd >= start) return { start, end: sameYearEnd };
+        // 해를 넘기는 기간(11월~다음 해 2월). 같은 해 날짜가 없는 경우(2월 29일)도 다음 해에서 다시 확인합니다.
+        const nextYearEnd = toDateKey(String(startYear + 1), endMatch[1], endMatch[2]);
+        return nextYearEnd ? { start, end: nextYearEnd } : null;
+    }
     const yearMatch = /^(\d{4})\s*년?(?:도)?$/.exec(text);
     if (yearMatch) return { start: `${yearMatch[1]}-01-01`, end: `${yearMatch[1]}-12-31` };
     return null;

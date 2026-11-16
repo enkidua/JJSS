@@ -199,7 +199,8 @@ export default function UserManagement() {
                 </div>
 
                 {/* 리스트 */}
-                {loading ? (
+                {/* 처음 불러올 때만 "로딩 중"을 보인다. 등록·수정 중에 목록을 갈아 끼우면 스크롤이 맨 위로 가고 수천 줄이 통째로 다시 그려진다. */}
+                {loading && seekers.length === 0 && jobs.length === 0 ? (
                     <div className="text-center py-12 text-white/30">로딩 중...</div>
                 ) : (
                     <div className="space-y-3">
@@ -219,7 +220,8 @@ export default function UserManagement() {
                                             initial={{ opacity: 0, y: 10 }}
                                             animate={{ opacity: 1, y: 0 }}
                                             exit={{ opacity: 0, y: -10 }}
-                                            transition={{ delay: i * 0.02 }}
+                                            // 지연을 행 번호에 그대로 곱하면 2,000번째 행은 40초 뒤에야 보인다. 처음 몇 행만 차례로 나타나게 한다.
+                                            transition={{ delay: Math.min(i, 15) * 0.02 }}
                                             className="glass-strong rounded-2xl border border-white/10 overflow-hidden hover:border-white/20 transition-all"
                                         >
                                             {/* 요약 행 */}
@@ -359,7 +361,8 @@ export default function UserManagement() {
                                             initial={{ opacity: 0, y: 10 }}
                                             animate={{ opacity: 1, y: 0 }}
                                             exit={{ opacity: 0, y: -10 }}
-                                            transition={{ delay: i * 0.02 }}
+                                            // 이용자 목록과 같은 이유로 지연에 상한을 둔다.
+                                            transition={{ delay: Math.min(i, 15) * 0.02 }}
                                             className="glass-strong rounded-2xl border border-white/10 overflow-hidden hover:border-white/20 transition-all"
                                         >
                                             {/* 요약 행 */}

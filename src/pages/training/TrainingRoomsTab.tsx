@@ -4,8 +4,10 @@ import type { Seeker } from '../../types/matching';
 import { getStoredImageValidationError } from '../../utils/fileValidation';
 import { fileToDataUrl } from '../../utils/file';
 import { getSeekerKey } from '../../utils/seeker';
+import { shrinkPhotoDataUrl } from './trainingPhoto';
 import {
     buildTraineeId,
+    buildTraineeMemo,
     findSeekerForTrainee,
     getSeekerProfileValue,
     isSeekerAssigned,
@@ -70,13 +72,7 @@ export function TrainingRoomsTab({
             seekerId: seekerKey,
             name: seeker.name,
             gender: '등록정보',
-            memo: [
-                seeker.disabilityType,
-                seeker.severity,
-                seeker.desiredJob1 || seeker.desiredJob2,
-                getSeekerProfileValue(seeker, ['birthDate', 'birthday', 'dateOfBirth']),
-                seeker.notes,
-            ].filter(Boolean).join(' / '),
+            memo: buildTraineeMemo(seeker),
             score: 0,
             photoDataUrl: getSeekerProfileValue(seeker, ['photoDataUrl', 'photoUrl', 'profileImage']),
         };
@@ -98,16 +94,29 @@ export function TrainingRoomsTab({
             showToast(validationError, 'error');
             return;
         }
+        // 사진을 고르는 동안 훈련실 선택이 바뀌어도 처음 고른 훈련실에 넣습니다.
+        const roomId = room.id;
+        let original: string;
         try {
-            const dataUrl = await fileToDataUrl(file);
-            updateRoom(room.id, prev => ({
-                ...prev,
-                trainees: prev.trainees.map(trainee => trainee.id === traineeId ? { ...trainee, photoDataUrl: dataUrl } : trainee),
-            }));
-            showToast('이용자 사진을 등록했습니다.', 'success');
+            original = await fileToDataUrl(file);
         } catch {
             showToast('사진 파일을 읽지 못했습니다.', 'error');
+            return;
         }
+        let dataUrl: string;
+        try {
+            // 원본(수 MB)을 그대로 넣으면 자동 저장과 백업이 무거워지므로 명단용 크기로 줄여서만 보관합니다.
+            dataUrl = await shrinkPhotoDataUrl(original);
+        } catch {
+            // 줄이지 못한 원본은 저장하지 않습니다(기존 사진은 그대로 둡니다).
+            showToast('이 사진은 프로그램에서 열 수 없어 등록하지 못했습니다. JPG 또는 PNG 사진으로 다시 시도해 주세요. 기존 사진은 그대로 있습니다.', 'error');
+            return;
+        }
+        updateRoom(roomId, prev => ({
+            ...prev,
+            trainees: prev.trainees.map(trainee => trainee.id === traineeId ? { ...trainee, photoDataUrl: dataUrl } : trainee),
+        }));
+        showToast('이용자 사진을 등록했습니다.', 'success');
     };
 
     return (

@@ -1,11 +1,11 @@
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { AlertTriangle, Printer, X } from 'lucide-react';
 import type { ExpenseDocumentData } from '../types/budget';
 import { saveJjssPdf, savedLocationMessage } from '../utils/jjssFileService';
 import { numberToKorean } from '../utils/currency';
 import { localDateKey } from '../utils/date';
-import { expenseListTotal, expenseTotal, toWon } from '../pages/budget/budgetUtils';
+import { describePaymentMethods, expenseListTotal, expenseTotal, toWon } from '../pages/budget/budgetUtils';
 import { useAppToast } from './Toast';
 import { useConfirm } from './common/ConfirmProvider';
 import { useDialogFocus } from '../hooks/useDialogFocus';
@@ -29,6 +29,15 @@ export default function ExpenseDocument({ data, onClose }: ExpenseDocumentProps)
     const showToast = useAppToast();
     const confirm = useConfirm();
     const dialogRef = useDialogFocus(true, onClose);
+    // 인쇄/저장이 끝나기 전에 버튼을 다시 누르면 저장 창이 겹쳐 뜨므로 진행 중에는 잠급니다.
+    const [printing, setPrinting] = useState(false);
+    const printRunRef = useRef(0);
+    const printLockRef = useRef(false);
+    const mountedRef = useRef(true);
+    useEffect(() => {
+        mountedRef.current = true;
+        return () => { mountedRef.current = false; };
+    }, []);
 
     // 문서 합계는 항상 포함된 지출 행에서 다시 계산합니다. 화면에서 넘겨준 합계와 다르면 출력 전에 알립니다.
     const totalAmount = expenseListTotal(data.expenses);
@@ -36,16 +45,28 @@ export default function ExpenseDocument({ data, onClose }: ExpenseDocumentProps)
     const totalMismatch = listedTotal !== totalAmount;
 
     const handlePrint = async () => {
-        if (totalMismatch && !(await confirm({
-            title: '합계 확인',
-            message: `지출 목록 합계(${listedTotal.toLocaleString()}원)와 지출품의서 합계(${totalAmount.toLocaleString()}원)가 다릅니다. 선택한 지출을 다시 확인하지 않고 그대로 출력할까요?`,
-            confirmLabel: '그대로 출력',
-            cancelLabel: '취소',
-        }))) {
-            return;
-        }
+        if (printLockRef.current) return;
+        printLockRef.current = true;
+        setPrinting(true);
+        const runId = ++printRunRef.current;
+        // 이전 출력의 늦은 정리(인쇄 창 닫힘)가 새 출력의 잠금을 풀지 않도록 실행 번호를 확인합니다.
+        const release = () => {
+            if (printRunRef.current !== runId) return;
+            printLockRef.current = false;
+            if (mountedRef.current) setPrinting(false);
+        };
+        // 브라우저 인쇄 창 경로는 창이 닫힐 때(cleanup) 잠금을 풉니다.
+        let releaseOnCleanup = false;
         let printFrame: HTMLIFrameElement | null = null;
         try {
+            if (totalMismatch && !(await confirm({
+                title: '합계 확인',
+                message: `지출 목록 합계(${listedTotal.toLocaleString()}원)와 지출품의서 합계(${totalAmount.toLocaleString()}원)가 다릅니다. 선택한 지출을 다시 확인하지 않고 그대로 출력할까요?`,
+                confirmLabel: '그대로 출력',
+                cancelLabel: '취소',
+            }))) {
+                return;
+            }
             const printContent = printRef.current;
             if (!printContent) {
                 showToast('인쇄할 문서를 찾지 못했습니다. 미리보기를 다시 열어 주세요.', 'error');
@@ -67,7 +88,7 @@ export default function ExpenseDocument({ data, onClose }: ExpenseDocumentProps)
                     .field-row { display: flex; margin-bottom: 10px; font-size: 15px; line-height: 1.8; color: #000; }
                     .field-label { width: 90px; font-weight: 700; flex-shrink: 0; }
                     .field-value { flex: 1; border-bottom: 1px solid #ddd; padding-left: 5px; }
-                    .body-text { font-size: 15px; line-height: 2; margin: 25px 0; color: #000; min-height: 80px; }
+                    .body-text { font-size: 15px; line-height: 2; margin: 25px 0; color: #000; min-height: 80px; white-space: pre-wrap; overflow-wrap: anywhere; }
                     .detail-label { font-weight: 700; margin-top: 15px; margin-bottom: 8px; font-size: 15px; color: #000; }
                     table { width: 100%; border-collapse: collapse; margin: 15px 0; }
                     th, td { border: 1px solid #000; padding: 10px 12px; text-align: center; font-size: 14px; color: #000; }
@@ -123,9 +144,11 @@ export default function ExpenseDocument({ data, onClose }: ExpenseDocumentProps)
             const cleanup = () => {
                 printFrame?.remove();
                 printFrame = null;
+                release();
             };
             printWindow.onafterprint = cleanup;
             showToast('인쇄/PDF 저장 창을 여는 중입니다. 저장에 실패해도 원본 지출 내역은 유지됩니다.', 'info');
+            releaseOnCleanup = true;
             setTimeout(() => {
                 try {
                     printWindow.focus();
@@ -138,7 +161,10 @@ export default function ExpenseDocument({ data, onClose }: ExpenseDocumentProps)
             }, 300);
         } catch {
             printFrame?.remove();
+            releaseOnCleanup = false;
             showToast('지출품의서 출력 중 오류가 발생했습니다. 원본 지출 내역은 유지됩니다.', 'error');
+        } finally {
+            if (!releaseOnCleanup) release();
         }
     };
 
@@ -146,6 +172,8 @@ export default function ExpenseDocument({ data, onClose }: ExpenseDocumentProps)
 
     // 예산과목 목록(하단 "마. 예산과목" 표기용)
     const categories = [...new Set(data.expenses.map(e => e.category || '기타'))];
+    // "라. 지출방법"은 선택한 지출의 결제방법에서 만듭니다(카드 결제 건에 '계좌 입금'이 인쇄되지 않게 함).
+    const paymentMethodText = describePaymentMethods(data.expenses);
 
     return (
         <motion.div
@@ -172,11 +200,14 @@ export default function ExpenseDocument({ data, onClose }: ExpenseDocumentProps)
                     <span id="expense-document-title" className="text-gray-700 font-medium">지출품의서 미리보기</span>
                     <div className="flex items-center gap-2">
                         <button
-                            onClick={handlePrint}
-                            className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-medium"
+                            type="button"
+                            onClick={() => void handlePrint()}
+                            disabled={printing}
+                            aria-busy={printing}
+                            className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed"
                         >
                             <Printer className="w-4 h-4" />
-                            인쇄 / 저장
+                            {printing ? '처리 중…' : '인쇄 / 저장'}
                         </button>
                         <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-200 transition text-gray-500" aria-label="미리보기 닫기">
                             <X className="w-5 h-5" />
@@ -217,7 +248,8 @@ export default function ExpenseDocument({ data, onClose }: ExpenseDocumentProps)
                         </div>
 
                         {/* 본문 */}
-                        <div className="body-text" style={{ fontSize: '15px', lineHeight: '2', margin: '20px 0', color: '#000', minHeight: '60px' }}>
+                        {/* 목적/용도는 여러 줄로 입력하므로 줄바꿈을 그대로 보여 줍니다(인쇄 HTML에도 이 인라인 스타일이 함께 들어갑니다). */}
+                        <div className="body-text" style={{ fontSize: '15px', lineHeight: '2', margin: '20px 0', color: '#000', minHeight: '60px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
                             {data.purpose || '아래와 같이 지출하고자 합니다.'}
                         </div>
 
@@ -264,7 +296,7 @@ export default function ExpenseDocument({ data, onClose }: ExpenseDocumentProps)
 
                         {/* 하단 정보 */}
                         <div className="footer-info" style={{ marginTop: '25px', fontSize: '14px', lineHeight: '1.8', color: '#000' }}>
-                            <p>라. 지출방법 : 개인별 계좌로 입금 조치</p>
+                            <p>라. 지출방법 : {paymentMethodText}</p>
                             <p>마. 예산과목 : {categories.join(', ')}</p>
                         </div>
 

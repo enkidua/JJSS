@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import * as localDB from '../../config/localDB';
 import { useDataStore } from '../../store/dataStore';
 import { generateText } from '../../services/gemini';
 import { regenerateDocumentFromCurrent } from '../../services/documentRegenerationService';
@@ -10,6 +11,7 @@ import { getFileFingerprint, getStoredImageValidationError } from '../../utils/f
 import { fileToBase64 } from '../../utils/file';
 import { getSeekerKey } from '../../utils/seeker';
 import { buildInterviewPrompt, buildJobAnalysisPrompt, EMPLOYMENT_REFINE_INSTRUCTION } from './workmatePrompts';
+import { selectJobAnalysisDocs } from './documentOrder';
 import {
     EMPTY_INTERVIEW_FORM,
     EMPTY_JOB_ANALYSIS_FORM,
@@ -45,11 +47,19 @@ export function useEmploymentDocuments() {
     const [employmentGenerating, setEmploymentGenerating] = useState<EmploymentTask | null>(null);
     const [employmentSaving, setEmploymentSaving] = useState<EmploymentKind | null>(null);
     const [interviewLoading, setInterviewLoading] = useState(false);
+    // 지금 고른 사업체(없으면 "직접 입력")로 저장해 둔 직무분석지 목록. 최근에 저장한 것부터.
+    const [jobAnalysisSavedDocs, setJobAnalysisSavedDocs] = useState<CaseDocument[]>([]);
+    const [jobAnalysisLoading, setJobAnalysisLoading] = useState(false);
+    // 사업체를 바꾸거나 저장 목록을 다시 읽을 때마다 증가. 늦게 도착한 이전 사업체의 조회 결과를 버립니다.
+    const jobAnalysisRequestRef = useRef(0);
+    const jobAnalysisJobIdRef = useRef('');
+    const jobAnalysisTextRef = useRef('');
+    jobAnalysisTextRef.current = jobAnalysisText;
     // 생성·보완·저장 중 하나라도 진행 중이면 true (같은 렌더 안의 연타까지 막기 위해 ref 사용)
     const employmentBusyRef = useRef(false);
     // 이용자를 바꿀 때마다 증가. 늦게 도착한 이전 이용자의 결과를 버리는 데 사용합니다.
     const employmentSelectionRequestRef = useRef(0);
-    const employmentBusy = interviewLoading || employmentGenerating !== null || employmentSaving !== null;
+    const employmentBusy = interviewLoading || jobAnalysisLoading || employmentGenerating !== null || employmentSaving !== null;
 
     const selectedEmploymentSeeker = employmentSeekerId
         ? seekers.find(s => getSeekerKey(s) === employmentSeekerId) || null
@@ -70,8 +80,57 @@ export function useEmploymentDocuments() {
 
     useEffect(() => () => {
         employmentSelectionRequestRef.current += 1;
+        jobAnalysisRequestRef.current += 1;
         jobAnalysisPhotosRef.current.forEach(photo => URL.revokeObjectURL(photo.previewUrl));
     }, []);
+
+    /** 저장된 직무분석지 조회. 사업체 기준 문서라 이용자 문서 조회(fetchCaseDocuments)를 쓰지 않고 저장소에서 바로 찾는다. */
+    const queryJobAnalysisDocs = async (jobId: string) =>
+        selectJobAnalysisDocs(await localDB.query<CaseDocument>('caseDocuments', doc => doc.type === 'job_analysis'), jobId);
+
+    /**
+     * 직무분석지 탭을 열었을 때 저장 목록만 읽는다(작성칸은 건드리지 않음).
+     * 등록된 사업체 없이 "직접 입력"으로 저장한 직무분석지는 사업체를 고를 일이 없어, 이 목록에서 골라야 다시 열 수 있다.
+     */
+    const loadSavedJobAnalyses = async () => {
+        if (employmentBusyRef.current) return;
+        const jobId = jobAnalysisJobIdRef.current;
+        const requestId = ++jobAnalysisRequestRef.current;
+        try {
+            const docs = await queryJobAnalysisDocs(jobId);
+            if (requestId === jobAnalysisRequestRef.current) setJobAnalysisSavedDocs(docs);
+        } catch {
+            // 목록을 못 읽어도 새로 작성하는 데는 지장이 없다. 사업체를 고르면 다시 읽으며 그때 실패를 알린다.
+        }
+    };
+
+    /** 저장된 직무분석지 하나를 작성칸으로 불러온다. 이후 저장은 그 문서를 고친다. */
+    const openSavedJobAnalysis = async (docId: string) => {
+        if (employmentBusyRef.current) { showToast('진행 중인 문서 작업이 끝난 뒤 다시 선택해 주세요.', 'info'); return; }
+        const target = jobAnalysisSavedDocs.find(doc => doc.id === docId);
+        if (!target || target.id === jobAnalysisDoc?.id) return;
+        if (jobAnalysisText.trim() && jobAnalysisText !== (jobAnalysisDoc?.content || '')) {
+            const ok = await confirm({
+                title: '저장된 직무분석지 불러오기',
+                message: '저장하지 않은 직무분석지 작성 결과가 사라집니다. 되돌릴 수 없습니다. 저장된 직무분석지를 불러올까요?',
+                confirmLabel: '버리고 불러오기',
+                cancelLabel: '취소',
+                tone: 'danger',
+            });
+            if (!ok) return;
+            if (employmentBusyRef.current) return;
+        }
+        setJobAnalysisDoc(target);
+        setJobAnalysisText(target.content);
+        // 직접 입력으로 저장한 문서는 사업체명·직무명도 함께 되살린다(저장할 때 넣은 "미지정" 표시는 빼고).
+        if (!jobAnalysisJobIdRef.current) {
+            setJobAnalysisForm(prev => ({
+                ...prev,
+                companyName: target.companyName && target.companyName !== '사업체 미지정' ? target.companyName : prev.companyName,
+                jobRole: target.jobRole && target.jobRole !== '직무 미지정' ? target.jobRole : prev.jobRole,
+            }));
+        }
+    };
 
     const currentInterviewPrompt = () => buildInterviewPrompt(selectedEmploymentSeeker, interviewForm, employmentContextSummary);
     const currentJobAnalysisPrompt = () => buildJobAnalysisPrompt(selectedJobAnalysisJob, jobAnalysisForm, jobAnalysisPhotos.length);
@@ -97,9 +156,13 @@ export function useEmploymentDocuments() {
             if (!ok) return;
             if (employmentBusyRef.current) return;
         }
+        const requestId = ++jobAnalysisRequestRef.current;
+        jobAnalysisJobIdRef.current = jobId;
         setJobAnalysisJobId(jobId);
         setJobAnalysisDoc(null);
         setJobAnalysisText('');
+        jobAnalysisTextRef.current = '';
+        setJobAnalysisSavedDocs([]);
         jobAnalysisPhotosRef.current.forEach(photo => URL.revokeObjectURL(photo.previewUrl));
         jobAnalysisPhotosRef.current = [];
         setJobAnalysisPhotos([]);
@@ -109,6 +172,29 @@ export function useEmploymentDocuments() {
             companyName: job?.companyName || '',
             jobRole: job?.jobRole || '',
         });
+        // 이 사업체로 저장해 둔 직무분석지가 있으면 가장 최근 것을 불러온다. 빈 화면으로 시작하면 저장한 문서를 다시 열 길이 없고,
+        // 다시 써서 저장할 때마다 같은 사업체의 문서가 하나씩 늘어난다(면접일지 불러오기와 같은 규칙).
+        employmentBusyRef.current = true;
+        setJobAnalysisLoading(true);
+        try {
+            const docs = await queryJobAnalysisDocs(jobId);
+            // 늦게 도착한 이전 사업체의 결과는 버린다.
+            if (requestId !== jobAnalysisRequestRef.current) return;
+            setJobAnalysisSavedDocs(docs);
+            // 사업체를 고르지 않은("직접 입력") 상태에서는 어느 문서를 이어 쓸지 알 수 없으므로 목록만 보여 주고 자동으로 열지 않는다.
+            const latest = jobId ? docs[0] : undefined;
+            // 불러오는 사이 작성칸에 내용이 생겼으면 덮어쓰지 않는다.
+            if (latest && !jobAnalysisTextRef.current.trim()) {
+                setJobAnalysisDoc(latest);
+                setJobAnalysisText(latest.content);
+            }
+        } catch {
+            if (requestId !== jobAnalysisRequestRef.current) return;
+            showToast('저장된 직무분석지를 불러오지 못했습니다. 새로 작성해 저장하면 새 문서로 저장됩니다.', 'error');
+        } finally {
+            employmentBusyRef.current = false;
+            if (requestId === jobAnalysisRequestRef.current) setJobAnalysisLoading(false);
+        }
     };
 
     const handleSelectEmploymentSeeker = async (seekerKey: string) => {
@@ -260,7 +346,11 @@ export function useEmploymentDocuments() {
                 await updateCaseDocument(currentDoc.id, content, extra);
                 const updated = { ...currentDoc, ...(extra || {}), content };
                 if (kind === 'interview') setInterviewDoc(updated);
-                if (kind === 'jobAnalysis') setJobAnalysisDoc(updated);
+                if (kind === 'jobAnalysis') {
+                    setJobAnalysisDoc(updated);
+                    // 방금 고친 문서를 저장 목록 맨 앞으로(목록은 최근에 저장한 것부터).
+                    setJobAnalysisSavedDocs(prev => [updated, ...prev.filter(doc => doc.id !== updated.id)]);
+                }
             } else {
                 const companyName = kind === 'interview' ? interviewForm.companyName : (selectedJobAnalysisJob?.companyName || jobAnalysisForm.companyName || '사업체 미지정');
                 const jobRole = kind === 'interview' ? interviewForm.jobRole : (selectedJobAnalysisJob?.jobRole || jobAnalysisForm.jobRole || '직무 미지정');
@@ -279,7 +369,10 @@ export function useEmploymentDocuments() {
                     photoCount: kind === 'jobAnalysis' ? jobAnalysisPhotos.length : undefined,
                 });
                 if (kind === 'interview') setInterviewDoc(saved);
-                if (kind === 'jobAnalysis') setJobAnalysisDoc(saved);
+                if (kind === 'jobAnalysis') {
+                    setJobAnalysisDoc(saved);
+                    setJobAnalysisSavedDocs(prev => [saved, ...prev.filter(doc => doc.id !== saved.id)]);
+                }
             }
             showToast(kind === 'interview' ? '면접일지를 저장했습니다.' : '직무분석지를 저장했습니다.', 'success', 2500);
         } catch (error: any) {
@@ -375,6 +468,10 @@ ${afterClear}`,
         removeJobAnalysisPhoto,
         isJobAnalysisDirty,
         handleSelectJobAnalysisJob,
+        jobAnalysisSavedDocs,
+        jobAnalysisLoading,
+        loadSavedJobAnalyses,
+        openSavedJobAnalysis,
         // 공용
         employmentContext,
         employmentGenerating,

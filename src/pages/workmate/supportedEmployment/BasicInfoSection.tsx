@@ -5,7 +5,8 @@ import type { JobOpening, Seeker } from '../../../types/matching';
 import { getSeekerKey } from '../../../utils/seeker';
 import { formatCurrencyInput, parseCurrencyInput } from '../../../utils/currency';
 import { lunarHolidayDataWarning } from '../../../features/supportedEmployment/holidays';
-import { listExcludedWeekdays } from './caseEditing';
+import { describeRateBasis } from '../../../features/supportedEmployment/rates';
+import { applyEmployerSelection, listExcludedWeekdays } from './caseEditing';
 
 export type CaseUpdater = (updater: (current: SupportedEmploymentCase) => SupportedEmploymentCase) => void;
 export type SchedulePatch = Partial<Pick<SupportedEmploymentCase, 'period' | 'preTrainingDays' | 'extraClosedDates'>>;
@@ -55,6 +56,9 @@ export function BasicInfoSection({ draft, update, applySchedule, seekers, jobs, 
     }, [otherCases]);
     const selectedSeekerMissing = draft.seekerId && !seekers.some(seeker => getSeekerKey(seeker) === draft.seekerId);
     const selectedJobMissing = draft.jobId && !jobs.some(job => job.id === draft.jobId);
+    // 단가 기준 연도는 훈련 시작 연도(아직 기간을 정하지 않았으면 올해)로 본다.
+    const caseYear = Number(draft.period.start.slice(0, 4)) || new Date().getFullYear();
+    const rateNotice = useMemo(() => describeRateBasis(draft.rates, caseYear), [draft.rates, caseYear]);
 
     const addClosedDate = () => {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(closedInput) || draft.extraClosedDates.includes(closedInput)) return;
@@ -84,12 +88,8 @@ export function BasicInfoSection({ draft, update, applySchedule, seekers, jobs, 
                 <label className={label} htmlFor="se-job">사업체(구인정보)
                     <select id="se-job" className="input-field mt-1" value={draft.jobId}
                         onChange={e => {
-                            const job = jobs.find(item => item.id === e.target.value);
-                            update(c => ({
-                                ...c, jobId: e.target.value,
-                                employerName: job?.companyName || c.employerName,
-                                jobTitle: c.jobTitle || job?.jobRole || '',
-                            }));
+                            const jobId = e.target.value;
+                            update(c => applyEmployerSelection(c, jobId, jobs));
                         }}>
                         <option value="">사업체 선택(없으면 아래에 직접 입력)</option>
                         {selectedJobMissing && <option value={draft.jobId}>{draft.employerName || '등록되지 않은 사업체'}</option>}
@@ -222,8 +222,14 @@ export function BasicInfoSection({ draft, update, applySchedule, seekers, jobs, 
         </section>
 
         <section aria-labelledby="se-rates-title" className="glass-card p-5!">
-            <h3 id="se-rates-title" className="text-lg font-bold text-white">단가 ({draft.rates.year}년 기준)</h3>
-            <p className="text-xs text-white/55 mt-1">회차를 만들 때의 기본 단가를 복사해 둡니다. 나중에 단가표가 바뀌어도 이 회차 서류는 바뀌지 않습니다.</p>
+            {/* 그 연도 고시 단가로 확인되지 않은 금액에는 "○○년 기준"이라고 적지 않는다(새 고시가 반영된 것으로 오해하지 않게). */}
+            <h3 id="se-rates-title" className="text-lg font-bold text-white">단가 {rateNotice.basisYear ? `(${rateNotice.basisYear}년 기준)` : '(고시 금액 확인 필요)'}</h3>
+            {rateNotice.warning && <p role="alert" data-testid="se-rate-year-warning"
+                className="mt-2 flex items-start gap-2 rounded-lg border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
+                <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" aria-hidden="true" />
+                <span>{rateNotice.warning}</span>
+            </p>}
+            <p className="text-xs text-white/55 mt-1">새 회차에는 기본 단가를, 다음 회차로 복사한 회차에는 이전 회차 단가를 넣어 둡니다. 나중에 단가표가 바뀌어도 이 회차 서류는 바뀌지 않습니다.</p>
             <div className="grid gap-3 sm:grid-cols-3 mt-3">
                 {([
                     ['trainingAllowance', '훈련수당(원/일)'],

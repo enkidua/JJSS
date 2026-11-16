@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Wand2, ClipboardList,
@@ -6,7 +7,7 @@ import {
     Megaphone, ScanText, CalendarDays, FileText, Smile, LayoutTemplate,
     Wrench, BarChart3, ExternalLink, MousePointer2, Briefcase, Home, Compass, PieChart, ShieldCheck, Layout, Presentation,
     Layers, Camera, Keyboard, Palette, ClipboardCheck, Gamepad2, Smartphone,
-    ShieldAlert, MessageSquare, type LucideIcon
+    ShieldAlert, MessageSquare, Bot, FileStack, Timer, QrCode, FileSignature, Search, Star, X, type LucideIcon
 } from 'lucide-react';
 import { generateText, PromptType, BlogLength, BlogPurpose } from '../services/gemini';
 import { PromoDesignView } from '../components/PromoDesignView';
@@ -22,12 +23,25 @@ import { ToolPageShell } from '../components/tools/ToolPageShell';
 import { AiTransmissionNotice } from '../components/tools/AiTransmissionNotice';
 import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 import CrisisManual from './CrisisManual';
+import { PdfToolsView } from '../components/tools/local/PdfToolsView';
+import { ProgramKitView } from '../components/tools/local/ProgramKitView';
+import { QrCodeView } from '../components/tools/local/QrCodeView';
+import { SignSheetView } from '../components/tools/local/SignSheetView';
+import { CustomToolsView } from '../components/tools/local/CustomToolsView';
+import {
+    TOOL_FAVORITES_EVENT, matchesToolQuery, readToolFavorites, toggleToolFavorite, writeToolFavorites,
+    type ToolFavorite,
+} from '../features/tools/toolFavorites';
 
 // ─── 업무도구 정의 ───
-type ToolCategory = 'core' | 'analysis' | 'visual' | 'planning';
+type ToolCategory = 'core' | 'analysis' | 'visual' | 'planning' | 'local';
+/** AI를 쓰지 않고 이 PC 안에서만 처리하는 도구 */
+type LocalToolId = 'pdf_tools' | 'program_kit' | 'qr_code' | 'sign_sheet';
+/** 자체 화면을 가진 AI 도구(범용 입력 폼을 쓰지 않는다) */
+type ViewToolId = 'custom_tools';
 
 interface Tool {
-    id: PromptType | 'crisis';
+    id: PromptType | 'crisis' | LocalToolId | ViewToolId;
     title: string;
     description: string;
     icon: LucideIcon;
@@ -44,6 +58,8 @@ interface Tool {
     category: ToolCategory;
     apiNote: string;
     fallbackNote: string;
+    /** 검색에 걸리게 할 낱말(제목·설명에 없는 말) */
+    keywords?: string;
 }
 
 const TOOLS: Tool[] = [
@@ -270,7 +286,72 @@ const TOOLS: Tool[] = [
         category: 'visual',
         apiNote: 'Google Gemini 키 필요(Gemini 전용 · 이미지 생성 권한)',
         fallbackNote: '이미지 생성은 텍스트보다 사용량(비용)이 클 수 있습니다. 권한이나 사용량 문제 시 텍스트 일정표로 먼저 정리하세요.',
-    }
+    },
+    {
+        id: 'custom_tools',
+        title: '나만의 AI 도구',
+        description: '자주 쓰는 지시문을 이름 붙여 저장해 두고 내용만 바꿔 실행합니다. 예시로 시작할 수 있고, 만든 도구를 동료와 나눠 쓸 수 있습니다.',
+        icon: Bot,
+        color: 'text-indigo-400',
+        gradient: 'from-indigo-500 to-violet-600',
+        fields: [],
+        category: 'core',
+        apiNote: '등록한 AI 키 하나(Gemini·ChatGPT·Claude)',
+        fallbackNote: '도구(지시문)는 이 PC에만 저장됩니다.',
+        keywords: '맞춤 프롬프트 지시문 템플릿 저장 반복 공유 GPT 챗봇 문자 안내문',
+    },
+    {
+        id: 'pdf_tools',
+        title: 'PDF·이미지 도구',
+        description: '여러 PDF를 하나로 합치고, 필요한 쪽만 뽑거나 돌리고, 사진·스캔 이미지를 한 PDF로 묶습니다. 파일을 어디에도 올리지 않습니다.',
+        icon: FileStack,
+        color: 'text-sky-400',
+        gradient: 'from-sky-500 to-indigo-600',
+        fields: [],
+        category: 'local',
+        apiNote: 'API 키 없이 사용(이 PC 안에서 처리)',
+        fallbackNote: '원본 파일은 바뀌지 않고 결과는 새 파일로 저장합니다.',
+        keywords: '합치기 병합 나누기 분할 추출 회전 변환 스캔 사진 증빙 붙임 파일 변환',
+    },
+    {
+        id: 'program_kit',
+        title: '프로그램 진행 도구',
+        description: '집단 프로그램·교육 시간에 쓰는 큰 화면 타이머, 발표 순서 이름 뽑기, 인원이 고른 조 편성을 한곳에 모았습니다.',
+        icon: Timer,
+        color: 'text-violet-400',
+        gradient: 'from-violet-500 to-fuchsia-600',
+        fields: [],
+        category: 'local',
+        apiNote: 'API 키 없이 사용(이 PC 안에서 처리)',
+        fallbackNote: '직업훈련 훈련실 명단을 불러올 수 있습니다. 명단과 결과는 저장하지 않습니다.',
+        keywords: '타이머 시간 뽑기 추첨 룰렛 발표 순서 조 모둠 팀 편성 수업 훈련',
+    },
+    {
+        id: 'qr_code',
+        title: 'QR 코드 만들기',
+        description: '설문·신청서·안내 링크를 QR 코드로 바꿔 홍보물과 안내문에 넣습니다. 설명 글을 붙여 PNG로 저장합니다.',
+        icon: QrCode,
+        color: 'text-slate-300',
+        gradient: 'from-slate-500 to-slate-700',
+        fields: [],
+        category: 'local',
+        apiNote: 'API 키 없이 사용(이 PC 안에서 처리)',
+        fallbackNote: '입력한 링크를 어디에도 보내지 않습니다.',
+        keywords: '큐알 링크 주소 설문 만족도 구글폼 홍보 안내문',
+    },
+    {
+        id: 'sign_sheet',
+        title: '서명 등록부',
+        description: '교육·회의·프로그램 참석자 명단을 넣고 한 화면에서 차례로 서명을 받아 등록부 PDF로 저장합니다. 빈 등록부 인쇄도 됩니다.',
+        icon: FileSignature,
+        color: 'text-teal-400',
+        gradient: 'from-teal-500 to-emerald-600',
+        fields: [],
+        category: 'local',
+        apiNote: 'API 키 없이 사용(이 PC 안에서 처리)',
+        fallbackNote: '서명은 저장하지 않고 만든 PDF에만 담깁니다.',
+        keywords: '참석자 서명부 출석부 등록부 명단 사인 교육 회의 증빙',
+    },
 ];
 
 const TOOL_CATEGORIES: { id: ToolCategory; title: string; description: string }[] = [
@@ -278,7 +359,11 @@ const TOOL_CATEGORIES: { id: ToolCategory; title: string; description: string }[
     { id: 'analysis', title: '문서 분석 및 보안', description: '자료 확인, OCR, 개인정보 보호, 텍스트 정리에 사용합니다.' },
     { id: 'visual', title: '홍보 및 시각화', description: '홍보물, 일정표, 데이터 시각화를 보여주는 작업을 모았습니다.' },
     { id: 'planning', title: '기획 및 위기대응', description: '위기대응, 이름/제목 생성처럼 기획과 판단 보조에 쓰는 도구입니다.' },
+    { id: 'local', title: 'API 키 없이 쓰는 도구', description: 'AI를 쓰지 않고 이 PC 안에서만 처리합니다. 파일·명단·서명을 어디에도 보내지 않습니다.' },
 ];
+
+const toolFavoriteKey = (tool: Tool) => `tool:${tool.id}`;
+const externalFavoriteKey = (tool: ExternalTool) => `link:${tool.url}`;
 
 interface ExternalTool {
     title: string;
@@ -435,12 +520,50 @@ export default function AITools() {
     // 하위 도구 화면이 알려 주는 "저장하지 않은 입력/결과" 여부(계약 C5).
     const [childDirty, setChildDirty] = useState(false);
     const handleChildDirtyChange = useCallback((dirty: boolean) => setChildDirty(dirty), []);
+    // 도구 찾기와 자주 쓰는 도구(별표)
+    const [query, setQuery] = useState('');
+    const [favorites, setFavorites] = useState<ToolFavorite[]>(() => readToolFavorites());
+    const [searchParams, setSearchParams] = useSearchParams();
+    // 범용 AI 도구는 결과 칸을 함께 쓴다. 도구를 바꾼 뒤 도착한 이전 도구의 응답이 새 도구 화면에 나오지 않게 요청 번호로 구분한다.
+    const runSequenceRef = useRef(0);
+
+    useEffect(() => {
+        const sync = () => setFavorites(readToolFavorites());
+        window.addEventListener(TOOL_FAVORITES_EVENT, sync);
+        return () => window.removeEventListener(TOOL_FAVORITES_EVENT, sync);
+    }, []);
+
+    const toggleFavorite = (favorite: ToolFavorite) => {
+        const next = toggleToolFavorite(favorites, favorite);
+        setFavorites(next);
+        writeToolFavorites(next);
+    };
+    const isFavorite = (key: string) => favorites.some(item => item.key === key);
+
+    // 홈 화면의 "자주 쓰는 도구"에서 넘어오면(/tools?tool=…) 그 도구를 바로 연다.
+    useEffect(() => {
+        const requested = searchParams.get('tool');
+        if (!requested) return;
+        const tool = TOOLS.find(item => item.id === requested);
+        if (tool) {
+            setChildDirty(false);
+            setActiveTool(tool);
+        }
+        const next = new URLSearchParams(searchParams);
+        next.delete('tool');
+        setSearchParams(next, { replace: true });
+        // 주소의 tool 값이 바뀔 때만 본다.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [searchParams.get('tool')]);
 
     // 도구가 바뀔 때만 입력칸을 기본값으로 되돌립니다(선택 목록 기본값 포함).
     useEffect(() => {
+        // 도구가 바뀌면 진행 중이던 이전 도구의 응답은 버린다(새 도구 화면에 남의 결과가 나오지 않게).
+        runSequenceRef.current += 1;
         setToolForm(getDefaultForm(activeTool));
         setToolResult('');
         setToolError('');
+        setToolLoading(false);
     }, [activeTool?.id]);
 
     // 도구를 열거나 목록으로 돌아오면 맨 위부터 보여 줍니다(아래쪽 카드를 눌렀을 때 빈 화면처럼 보이는 문제 방지).
@@ -464,7 +587,9 @@ export default function AITools() {
 
     const runTool = async () => {
         if (toolLoading) return;
-        if (!activeTool || activeTool.id === 'crisis') return;
+        if (!activeTool || activeTool.id === 'crisis' || activeTool.id === 'custom_tools' || activeTool.category === 'local') return;
+        const sequence = ++runSequenceRef.current;
+        const isCurrent = () => runSequenceRef.current === sequence;
         setToolError('');
         try {
             const hasTextInput = activeTool.fields
@@ -487,12 +612,12 @@ export default function AITools() {
 
             setToolLoading(true);
             // 새 결과가 나오면 교체하고, 실패하면 이전 결과를 그대로 둡니다.
-            const result = await generateText(activeTool.id, promptStr, undefined, { blogLength, blogPurpose, featureKey: 'ai-tools', documentType: activeTool.id });
-            setToolResult(result);
+            const result = await generateText(activeTool.id as PromptType, promptStr, undefined, { blogLength, blogPurpose, featureKey: 'ai-tools', documentType: activeTool.id });
+            if (isCurrent()) setToolResult(result);
         } catch (err: unknown) {
-            setToolError(err instanceof Error && err.message ? err.message : '도구 실행 중 오류가 발생했습니다.');
+            if (isCurrent()) setToolError(err instanceof Error && err.message ? err.message : '도구 실행 중 오류가 발생했습니다.');
         } finally {
-            setToolLoading(false);
+            if (isCurrent()) setToolLoading(false);
         }
     };
 
@@ -509,6 +634,11 @@ export default function AITools() {
             case 'ocr': return <OCRView key="ocr" onBack={onBack} onDirtyChange={onDirtyChange} />;
             case 'schedule': return <ScheduleDesignView key="schedule-design" onBack={onBack} onDirtyChange={onDirtyChange} />;
             case 'crisis': return <CrisisManual key="crisis-manual" onBack={onBack} onDirtyChange={onDirtyChange} />;
+            case 'custom_tools': return <CustomToolsView key="custom-tools" onBack={onBack} onDirtyChange={onDirtyChange} />;
+            case 'pdf_tools': return <PdfToolsView key="pdf-tools" onBack={onBack} onDirtyChange={onDirtyChange} />;
+            case 'program_kit': return <ProgramKitView key="program-kit" onBack={onBack} onDirtyChange={onDirtyChange} />;
+            case 'qr_code': return <QrCodeView key="qr-code" onBack={onBack} onDirtyChange={onDirtyChange} />;
+            case 'sign_sheet': return <SignSheetView key="sign-sheet" onBack={onBack} onDirtyChange={onDirtyChange} />;
             default: {
                 const Icon = tool.icon;
                 return (
@@ -587,6 +717,114 @@ export default function AITools() {
         }
     };
 
+    const trimmedQuery = query.trim();
+    const matchedTools = useMemo(() => TOOLS.filter(tool => matchesToolQuery(trimmedQuery, tool.title, tool.description, tool.keywords, tool.apiNote)), [trimmedQuery]);
+    const matchedExternal = useMemo(() => EXTERNAL_TOOLS.filter(tool => matchesToolQuery(trimmedQuery, tool.title, tool.description)), [trimmedQuery]);
+    const favoriteTools = favorites
+        .map(item => (item.key.startsWith('tool:')
+            ? { favorite: item, tool: TOOLS.find(tool => toolFavoriteKey(tool) === item.key), external: undefined }
+            : { favorite: item, tool: undefined, external: EXTERNAL_TOOLS.find(tool => externalFavoriteKey(tool) === item.key) }))
+        .filter(item => item.tool || item.external);
+
+    const openTool = (tool: Tool) => {
+        setChildDirty(false);
+        setActiveTool(tool);
+    };
+
+    const starButton = (favorite: ToolFavorite) => {
+        const active = isFavorite(favorite.key);
+        return (
+            <button
+                type="button"
+                aria-pressed={active}
+                aria-label={`${favorite.title} ${active ? '자주 쓰는 도구에서 빼기' : '자주 쓰는 도구에 넣기'}`}
+                title={active ? '자주 쓰는 도구에서 빼기' : '자주 쓰는 도구에 넣기'}
+                onClick={() => toggleFavorite(favorite)}
+                className={`absolute right-3 top-3 z-10 rounded-full p-2 transition ${active ? 'text-amber-300 hover:text-amber-200' : 'text-white/25 hover:text-white/70'}`}
+            >
+                <Star className="h-5 w-5" fill={active ? 'currentColor' : 'none'} />
+            </button>
+        );
+    };
+
+    const renderToolCard = (tool: Tool, i: number) => {
+        const Icon = tool.icon;
+        return (
+            <div key={tool.id} className="relative">
+                <motion.button
+                    type="button"
+                    data-tool-id={tool.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: Math.min(i, 12) * 0.035 }}
+                    onClick={() => openTool(tool)}
+                    className="w-full h-full text-left glass-strong rounded-2xl p-6 border border-white/10 hover:border-white/20 cursor-pointer transition-all duration-300 hover:scale-[1.02] hover:shadow-lg group min-h-[260px] flex flex-col"
+                >
+                    <div className={`w-12 h-12 rounded-xl bg-linear-to-br ${tool.gradient} flex items-center justify-center mb-4 shadow-lg group-hover:scale-110 transition-transform`}>
+                        <Icon className="w-6 h-6 text-white" />
+                    </div>
+                    <h3 className="text-white font-bold text-lg mb-2 pr-8 flex items-center gap-2 flex-wrap">
+                        {tool.title}
+                        {tool.isBeta && (
+                            <span className="text-[10px] uppercase font-black px-2 py-[2px] rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30 tracking-wider">Beta</span>
+                        )}
+                    </h3>
+                    <p className="text-white/45 text-sm leading-relaxed flex-1">{tool.description}</p>
+                    <div className="mt-5 space-y-2 border-t border-white/10 pt-4">
+                        <p className="text-[11px] text-white/45"><span className="font-black text-white/65">필요 API:</span> {tool.apiNote}</p>
+                    </div>
+                </motion.button>
+                {starButton({ key: toolFavoriteKey(tool), title: tool.title })}
+            </div>
+        );
+    };
+
+    const renderExternalCard = (tool: ExternalTool, i: number) => {
+        const Icon = tool.icon;
+        return (
+            <motion.div
+                key={tool.url}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: Math.min(i, 12) * 0.05 }}
+                className="relative glass-strong rounded-2xl border border-white/10 hover:border-white/20 transition-all duration-300 hover:scale-[1.02] hover:shadow-lg group flex flex-col"
+            >
+                <a
+                    href={tool.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block p-6 flex-1 rounded-2xl focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-primary-400"
+                >
+                    <div className="flex justify-between items-start mb-4">
+                        <div className={`w-12 h-12 rounded-xl bg-linear-to-br ${tool.gradient} flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform`}>
+                            <Icon className="w-6 h-6 text-white" />
+                        </div>
+                        <ExternalLink className="mr-9 mt-1 w-4 h-4 text-white/20 group-hover:text-white/50 transition-colors" />
+                    </div>
+                    <h3 className="text-white font-bold text-lg mb-2">{tool.title}</h3>
+                    <p className="text-white/40 text-sm leading-relaxed">{tool.description}</p>
+                </a>
+                {tool.extraLinks?.length ? (
+                    <div className="px-6 pb-5 -mt-2 flex flex-wrap gap-2">
+                        {tool.extraLinks.map(link => (
+                            <a
+                                key={link.url}
+                                href={link.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 rounded-lg border border-white/15 px-2.5 py-1 text-xs font-bold text-white/60 hover:text-white hover:border-white/30 transition-colors"
+                            >
+                                <Smartphone className="w-3.5 h-3.5" />
+                                {link.label}
+                            </a>
+                        ))}
+                    </div>
+                ) : null}
+                {starButton({ key: externalFavoriteKey(tool), title: tool.title, url: tool.url })}
+            </motion.div>
+        );
+    };
+
     return (
         <div className="min-h-screen py-8 px-4">
             <div className="max-w-6xl mx-auto">
@@ -601,10 +839,33 @@ export default function AITools() {
                         <span className="text-sm text-accent-300 font-medium">AI 범용 업무 도구</span>
                     </div>
                     <h1 className="section-title mb-3 text-white">업무 지원 도구</h1>
-                    <p className="text-white/50 text-lg mb-8">회의록 자동 작성, 문장 개선, 블로그 생성 등 다양한 AI 도구</p>
+                    <p className="text-white/50 text-lg mb-8">문서 작성·분석 AI 도구와, API 키 없이 쓰는 PDF·QR·서명 등록부·진행 도구</p>
+
+                    {!activeTool && (
+                        <div className="mx-auto mb-6 w-full max-w-xl">
+                            <label htmlFor="tool-search" className="sr-only">도구 찾기</label>
+                            <div className="relative">
+                                <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40" aria-hidden="true" />
+                                <input
+                                    id="tool-search"
+                                    type="search"
+                                    className="input-field pl-11! pr-10!"
+                                    placeholder="어떤 도구가 필요하세요? 예: PDF 합치기, 회의록, QR, 서명"
+                                    value={query}
+                                    onChange={event => setQuery(event.target.value)}
+                                    autoComplete="off"
+                                />
+                                {query && (
+                                    <button type="button" aria-label="검색어 지우기" onClick={() => setQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1 text-white/40 hover:text-white">
+                                        <X className="h-4 w-4" />
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    )}
 
                     {/* Tabs */}
-                    {!activeTool && (
+                    {!activeTool && !trimmedQuery && (
                         <div className="flex justify-center mb-10 w-full sm:w-auto">
                             <div className="flex bg-[#1e293b]/70 p-[6px] rounded-[100px] shadow-inner backdrop-blur-md border border-white/5 mx-auto max-w-full overflow-x-auto custom-scrollbar" role="tablist" aria-label="도구 종류">
                                 <button
@@ -646,8 +907,58 @@ export default function AITools() {
                             animate={{ opacity: 1 }}
                             exit={{ opacity: 0 }}
                         >
-                            {activeTab === 'internal' ? (
+                            {trimmedQuery ? (
+                                <div className="space-y-10" data-testid="tool-search-results">
+                                    <p className="text-sm text-white/50" role="status">
+                                        "{trimmedQuery}" 검색 결과 {matchedTools.length + matchedExternal.length}개
+                                    </p>
+                                    {matchedTools.length > 0 && (
+                                        <section aria-label="업무 지원 도구 검색 결과">
+                                            <h2 className="mb-5 text-2xl font-black text-white">업무 지원 도구</h2>
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">{matchedTools.map(renderToolCard)}</div>
+                                        </section>
+                                    )}
+                                    {matchedExternal.length > 0 && (
+                                        <section aria-label="외부 업무 도구 검색 결과">
+                                            <h2 className="mb-5 text-2xl font-black text-white">외부 업무 도구</h2>
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">{matchedExternal.map(renderExternalCard)}</div>
+                                        </section>
+                                    )}
+                                    {matchedTools.length + matchedExternal.length === 0 && (
+                                        <p className="rounded-2xl border border-white/10 bg-white/5 p-8 text-center text-sm text-white/50">
+                                            맞는 도구가 없습니다. 낱말을 줄이거나 다른 말로 찾아보세요(예: "합치기", "요약", "서명").
+                                        </p>
+                                    )}
+                                </div>
+                            ) : activeTab === 'internal' ? (
                                 <div className="space-y-12">
+                                    {favoriteTools.length > 0 && (
+                                        <section aria-label="자주 쓰는 도구" data-testid="tool-favorites">
+                                            <div className="mb-4 flex items-end justify-between gap-4">
+                                                <div>
+                                                    <h2 className="text-2xl font-black text-white flex items-center gap-2"><Star className="h-5 w-5 text-amber-300" fill="currentColor" /> 자주 쓰는 도구</h2>
+                                                    <p className="text-white/40 text-sm mt-1">카드의 별표를 눌러 넣고 뺍니다. 홈 화면에도 같이 보입니다.</p>
+                                                </div>
+                                            </div>
+                                            <div className="flex flex-wrap gap-2">
+                                                {favoriteTools.map(({ favorite, tool, external }) => {
+                                                    const Icon = (tool ?? external)!.icon;
+                                                    const gradient = (tool ?? external)!.gradient;
+                                                    const chip = (
+                                                        <>
+                                                            <span className={`flex h-7 w-7 items-center justify-center rounded-lg bg-linear-to-br ${gradient}`}><Icon className="h-4 w-4 text-white" /></span>
+                                                            {favorite.title}
+                                                            {external && <ExternalLink className="h-3.5 w-3.5 text-white/40" />}
+                                                        </>
+                                                    );
+                                                    const chipClass = 'inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-semibold text-white/85 hover:border-white/30 hover:text-white transition';
+                                                    return tool
+                                                        ? <button key={favorite.key} type="button" onClick={() => openTool(tool)} className={chipClass}>{chip}</button>
+                                                        : <a key={favorite.key} href={external!.url} target="_blank" rel="noopener noreferrer" className={chipClass}>{chip}</a>;
+                                                })}
+                                            </div>
+                                        </section>
+                                    )}
                                     {TOOL_CATEGORIES.map(category => {
                                         const tools = TOOLS.filter(tool => tool.category === category.id);
                                         if (tools.length === 0) return null;
@@ -660,90 +971,13 @@ export default function AITools() {
                                                     </div>
                                                     <span className="text-xs text-white/35">{tools.length}개 도구</span>
                                                 </div>
-                                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-                                                    {tools.map((tool, i) => {
-                                                        const Icon = tool.icon;
-                                                        return (
-                                                            <motion.button
-                                                                type="button"
-                                                                key={tool.id}
-                                                                initial={{ opacity: 0, y: 20 }}
-                                                                animate={{ opacity: 1, y: 0 }}
-                                                                transition={{ delay: i * 0.035 }}
-                                                                onClick={() => {
-                                                                    setChildDirty(false);
-                                                                    setActiveTool(tool);
-                                                                }}
-                                                                className="text-left glass-strong rounded-2xl p-6 border border-white/10 hover:border-white/20 cursor-pointer transition-all duration-300 hover:scale-[1.02] hover:shadow-lg group min-h-[260px] flex flex-col"
-                                                            >
-                                                                <div className={`w-12 h-12 rounded-xl bg-linear-to-br ${tool.gradient} flex items-center justify-center mb-4 shadow-lg group-hover:scale-110 transition-transform`}>
-                                                                    <Icon className="w-6 h-6 text-white" />
-                                                                </div>
-                                                                <h3 className="text-white font-bold text-lg mb-2 flex items-center gap-2 flex-wrap">
-                                                                    {tool.title}
-                                                                    {tool.isBeta && (
-                                                                        <span className="text-[10px] uppercase font-black px-2 py-[2px] rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30 tracking-wider">Beta</span>
-                                                                    )}
-                                                                </h3>
-                                                                <p className="text-white/45 text-sm leading-relaxed flex-1">{tool.description}</p>
-                                                                <div className="mt-5 space-y-2 border-t border-white/10 pt-4">
-                                                                    <p className="text-[11px] text-white/45"><span className="font-black text-white/65">필요 API:</span> {tool.apiNote}</p>
-                                                                </div>
-                                                            </motion.button>
-                                                        );
-                                                    })}
-                                                </div>
+                                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">{tools.map(renderToolCard)}</div>
                                             </section>
                                         );
                                     })}
                                 </div>
                             ) : (
-                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-                                    {EXTERNAL_TOOLS.map((tool, i) => {
-                                        const Icon = tool.icon;
-                                        return (
-                                            <motion.div
-                                                key={tool.url}
-                                                initial={{ opacity: 0, y: 20 }}
-                                                animate={{ opacity: 1, y: 0 }}
-                                                transition={{ delay: i * 0.05 }}
-                                                className="glass-strong rounded-2xl border border-white/10 hover:border-white/20 transition-all duration-300 hover:scale-[1.02] hover:shadow-lg group flex flex-col"
-                                            >
-                                                <a
-                                                    href={tool.url}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    className="block p-6 flex-1 rounded-2xl focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-primary-400"
-                                                >
-                                                    <div className="flex justify-between items-start mb-4">
-                                                        <div className={`w-12 h-12 rounded-xl bg-linear-to-br ${tool.gradient} flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform`}>
-                                                            <Icon className="w-6 h-6 text-white" />
-                                                        </div>
-                                                        <ExternalLink className="w-4 h-4 text-white/20 group-hover:text-white/50 transition-colors" />
-                                                    </div>
-                                                    <h3 className="text-white font-bold text-lg mb-2">{tool.title}</h3>
-                                                    <p className="text-white/40 text-sm leading-relaxed">{tool.description}</p>
-                                                </a>
-                                                {tool.extraLinks?.length ? (
-                                                    <div className="px-6 pb-5 -mt-2 flex flex-wrap gap-2">
-                                                        {tool.extraLinks.map(link => (
-                                                            <a
-                                                                key={link.url}
-                                                                href={link.url}
-                                                                target="_blank"
-                                                                rel="noopener noreferrer"
-                                                                className="inline-flex items-center gap-1 rounded-lg border border-white/15 px-2.5 py-1 text-xs font-bold text-white/60 hover:text-white hover:border-white/30 transition-colors"
-                                                            >
-                                                                <Smartphone className="w-3.5 h-3.5" />
-                                                                {link.label}
-                                                            </a>
-                                                        ))}
-                                                    </div>
-                                                ) : null}
-                                            </motion.div>
-                                        );
-                                    })}
-                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">{EXTERNAL_TOOLS.map(renderExternalCard)}</div>
                             )}
                         </motion.div>
                     ) : (

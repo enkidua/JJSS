@@ -42,10 +42,27 @@ function makeHarness({ packaged = true, platform = 'win32', env = {}, userData, 
         close() {
             this.closeCalls += 1;
             if (this.closeBehavior === 'cancel') return;
+            // 저장하지 않은 내용 확인창 흉내: 확인창은 main 프로세스를 멈추므로 선택 결과가 시간 판정보다 먼저 전달된다.
+            if (this.closeBehavior === 'dialog-cancel') {
+                this.webContents.emitOnce('will-prevent-unload', { defaultPrevented: false });
+                return;
+            }
+            if (this.closeBehavior === 'dialog-leave-slow') {
+                this.webContents.emitOnce('will-prevent-unload', { defaultPrevented: true });
+                // "버리고 나가기"를 고른 뒤 창이 닫히기까지 시간이 걸리는 경우(유예 1.5초보다 늦게 닫힘)
+                setTimeout(() => { this.destroyed = true; this.listeners.get('closed')?.(); }, 1900);
+                return;
+            }
             this.destroyed = true;
             this.listeners.get('closed')?.();
         },
-        webContents: { send: (channel, payload) => sent.push({ channel, payload }) },
+        webContents: {
+            send: (channel, payload) => sent.push({ channel, payload }),
+            onceListeners: new Map(),
+            once(event, fn) { this.onceListeners.set(event, fn); },
+            removeListener(event, fn) { if (this.onceListeners.get(event) === fn) this.onceListeners.delete(event); },
+            emitOnce(event, payload) { const fn = this.onceListeners.get(event); this.onceListeners.delete(event); fn?.(payload); },
+        },
     };
     const appEvents = new Map();
     const quits = [];
@@ -180,6 +197,28 @@ const ALLOWED_STATUS_KEYS = ['availableVersion', 'currentVersion', 'lastCheckedA
         } finally {
             fs.rmSync(userData, { recursive: true, force: true });
         }
+    });
+
+    await test('설치 판정은 확인창의 선택을 따른다: 오래 머문 뒤 "버리고 나가기"도 설치로 이어지고, "계속 작성"은 바로 미룸', async () => {
+        const h = makeHarness();
+        h.service.register();
+        h.updater.nextCheck = updater => { updater.emit('update-available', { version: '3.2.0' }); return {}; };
+        await h.invoke('jjss-update:check');
+        await h.invoke('jjss-update:download');
+        // "계속 작성": 유예 시간을 기다리지 않고 바로 "받아 둠"으로 되돌린다.
+        h.window.closeBehavior = 'dialog-cancel';
+        const started = Date.now();
+        await h.invoke('jjss-update:install');
+        assert.ok(Date.now() - started < 1000, '선택을 읽었으므로 바로 끝난다');
+        assert.equal(h.updater.installCalls.length, 0);
+        assert.match(h.sent.at(-1).payload.message, /설치를 미뤘습니다/);
+        assert.equal(h.window.webContents.onceListeners.size, 0, '확인창 리스너를 남기지 않는다');
+        // "버리고 나가기": 창이 유예 시간(1.5초)보다 늦게 닫혀도 설치파일을 실행한다
+        // (전에는 취소로 잘못 판정해, 창이 닫히며 앱이 꺼진 뒤 조용히 설치만 되고 다시 뜨지 않았다).
+        h.window.closeBehavior = 'dialog-leave-slow';
+        await h.invoke('jjss-update:install');
+        assert.deepEqual(h.updater.installCalls, [[false, true]]);
+        assert.equal(h.window.isDestroyed(), true);
     });
 
     await test('저장소 사본은 만든 시각 기준으로 최근 2개만 남기고(이름 정렬 아님), 반쯤 복사된 사본은 지운다', async () => {

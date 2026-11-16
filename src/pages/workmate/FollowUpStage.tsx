@@ -117,10 +117,11 @@ export function FollowUpStage({
                 {hasHistory && (
                     <div className="space-y-4 mb-8">
                         <h5 className="text-[11px] font-black text-white/30 uppercase tracking-widest flex items-center gap-2 mb-4">
-                            <Clock className="w-3 h-3" /> 진행 경과 요약 ({history.length}건)
+                            <Clock className="w-3 h-3" /> 진행 경과 요약 ({history.length}건 · 최근 기록이 위)
                         </h5>
                         <div className="space-y-6 max-h-[720px] overflow-y-auto pr-3 custom-scrollbar border-l-2 border-white/5 pl-4 ml-2 relative">
-                            {history.map((h, i) => {
+                            {/* 목록 자체는 오래된 것 → 최근 것 순(AI 프롬프트 기준)이고, 화면에서는 방금 쓴 기록부터 보이도록 뒤집어 보여 준다 */}
+                            {[...history].reverse().map((h, i) => {
                                 const isCounsel = h.type === 'counseling';
                                 const historyType: FollowUpMode = isCounsel ? 'counseling' : 'evaluation';
                                 return (

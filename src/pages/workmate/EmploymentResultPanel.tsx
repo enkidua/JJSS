@@ -9,6 +9,7 @@ export function EmploymentResultPanel({
     placeholder,
     busy,
     loading = false,
+    loadingMessage = '저장된 면접일지를 불러오는 중입니다.',
     isGenerating,
     isRefining,
     isSaving,
@@ -22,6 +23,8 @@ export function EmploymentResultPanel({
     placeholder: string;
     busy: boolean;
     loading?: boolean;
+    /** 불러오는 동안 작성칸 아래에 보이는 안내(기본: 면접일지) */
+    loadingMessage?: string;
     isGenerating: boolean;
     isRefining: boolean;
     isSaving: boolean;
@@ -57,7 +60,7 @@ export function EmploymentResultPanel({
                 placeholder={placeholder}
                 className="textarea-field bg-black/30! border-white/10 flex-1 min-h-[580px] text-sm leading-relaxed resize-none"
             />
-            {loading && <p role="status" className="text-sm text-white/70 mt-2">저장된 면접일지를 불러오는 중입니다.</p>}
+            {loading && <p role="status" className="text-sm text-white/70 mt-2">{loadingMessage}</p>}
         </div>
     );
 }

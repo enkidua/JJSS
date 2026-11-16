@@ -32,7 +32,7 @@ const {
     budgetItemsTotal, usageRate, isOverBudget, getBudgetStatus, vatFromSupply, splitVatIncludedTotal, supplyFromQuantity,
     expenseMonthKey, monthlyTotals, categoryTotals, projectTotals, UNASSIGNED_PROJECT_KEY, UNDATED_MONTH_KEY,
     parseProjectPeriod, isDateInRange, isValidBizNo, formatBizNo, findDuplicateApprovalExpenses, getExpenseWarnings,
-    findBudgetIssues, buildSummaryCsvRows, csvEscape, buildCsv, BUDGET_PROJECTS_KEY,
+    findBudgetIssues, buildSummaryCsvRows, csvEscape, buildCsv, BUDGET_PROJECTS_KEY, describePaymentMethods,
 } = budget.module;
 const { applyExpenseAmountChange, parseQuantityInput, formatQuantityInput, wonInputHint, validateExpenseForm } = form.module;
 
@@ -276,6 +276,48 @@ test('사업기간 해석', () => {
     assert.equal(isDateInRange('2026-08-31', range), true);
     assert.equal(isDateInRange('2026-09-01', range), false);
     assert.equal(isDateInRange('2026-09-01', null), true);
+});
+
+test('사업기간 해석: 종료일에 연도가 없으면 시작 연도를 따른다(하루짜리 기간으로 읽지 않음)', () => {
+    assert.deepEqual(parseProjectPeriod('2026.1.1.~12.31.'), { start: '2026-01-01', end: '2026-12-31' });
+    assert.deepEqual(parseProjectPeriod('2026년 3월 1일 ~ 8월 31일'), { start: '2026-03-01', end: '2026-08-31' });
+    assert.deepEqual(parseProjectPeriod('2026-03-01 ~ 08-31'), { start: '2026-03-01', end: '2026-08-31' });
+    assert.deepEqual(parseProjectPeriod('2026.3.1(일) ~ 8.31(월)'), { start: '2026-03-01', end: '2026-08-31' });
+    assert.deepEqual(parseProjectPeriod('2026.3.1부터 8.31까지'), { start: '2026-03-01', end: '2026-08-31' });
+    assert.deepEqual(parseProjectPeriod('2026.3.1 - 3.1'), { start: '2026-03-01', end: '2026-03-01' });
+    // 종료일이 시작일보다 앞서면 다음 해
+    assert.deepEqual(parseProjectPeriod('2026.11.1~2.28'), { start: '2026-11-01', end: '2027-02-28' });
+    assert.deepEqual(parseProjectPeriod('2027년 12월 1일 ~ 2월 29일'), { start: '2027-12-01', end: '2028-02-29' });
+    // 날짜를 하나만 읽었으면 검사를 건너뛴다(null)
+    assert.equal(parseProjectPeriod('2026.3.1'), null);
+    assert.equal(parseProjectPeriod('2026-03-01 ~'), null);
+    assert.equal(parseProjectPeriod('2026-03-01 ~ 2026-08'), null);
+    assert.equal(parseProjectPeriod('2026.3.1 ~ 13.40'), null);
+    assert.equal(parseProjectPeriod('2026.12.1 ~ 2.30'), null);
+    assert.equal(parseProjectPeriod('2026.3.1 시작 (3.5개월 과정)'), null, '범위 기호 없이 나온 숫자는 종료일로 보지 않음');
+    // 연도 없는 종료일 때문에 사업기간 밖 경고가 쏟아지지 않는다
+    const projects = [project({ period: '2026.1.1.~12.31.' })];
+    const warnings = getExpenseWarnings({ date: '2026-05-10', projectId: 'p-a' }, { projects, expenses: [], today: '2026-09-24' });
+    assert.equal(warnings.outsidePeriod, undefined);
+    assert.deepEqual(findBudgetIssues(projects, [expense({ projectId: 'p-a', budgetItemId: 'i-1', date: '2026-05-10', amount: 1000 })]), []);
+    assert.ok(getExpenseWarnings({ date: '2027-01-05', projectId: 'p-a' }, { projects, expenses: [], today: '2027-09-24' }).outsidePeriod);
+    // 기간을 읽지 못한 사업은 검사하지 않는다
+    const singleDate = [project({ period: '2026.3.1' })];
+    assert.equal(getExpenseWarnings({ date: '2026-05-10', projectId: 'p-a' }, { projects: singleDate, expenses: [], today: '2026-09-24' }).outsidePeriod, undefined);
+});
+
+test('지출품의서 지출방법 문구: 결제방법에 따라 달라지고, 섞이면 건수와 함께 적는다', () => {
+    assert.equal(describePaymentMethods([expense({ paymentMethod: '카드' }), expense({ paymentMethod: '카드' })]), '카드 결제');
+    assert.equal(describePaymentMethods([expense({ paymentMethod: '계좌이체' })]), '계좌 입금');
+    assert.equal(describePaymentMethods([expense({ paymentMethod: '현금' })]), '현금 지급');
+    assert.equal(
+        describePaymentMethods([expense({ paymentMethod: '카드' }), expense({ paymentMethod: '계좌이체' }), expense({ paymentMethod: ' 카드 ' })]),
+        '카드 결제 2건, 계좌 입금 1건',
+    );
+    assert.equal(describePaymentMethods([expense({ paymentMethod: '지역화폐' })]), '지역화폐', '목록에 없는 방법은 적힌 그대로');
+    assert.equal(describePaymentMethods([expense({ paymentMethod: '' }), expense({ paymentMethod: '카드' })]), '결제방법 미입력 1건, 카드 결제 1건');
+    assert.equal(describePaymentMethods([expense({ paymentMethod: undefined })]), '결제방법 미입력');
+    assert.equal(describePaymentMethods([]), '');
 });
 
 test('사업자등록번호 형식', () => {

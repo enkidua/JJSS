@@ -447,6 +447,11 @@ export default function WorkMate() {
                         search={employment.jobAnalysisJobSearch}
                         onSearch={employment.setJobAnalysisJobSearch}
                         onSelectJob={jobId => void employment.handleSelectJobAnalysisJob(jobId)}
+                        savedDocs={employment.jobAnalysisSavedDocs}
+                        openedDocId={employment.jobAnalysisDocId}
+                        onOpenSaved={documentId => void employment.openSavedJobAnalysis(documentId)}
+                        onLoadSaved={() => void employment.loadSavedJobAnalyses()}
+                        loading={employment.jobAnalysisLoading}
                         form={employment.jobAnalysisForm}
                         setForm={employment.setJobAnalysisForm}
                         photos={employment.jobAnalysisPhotos}

@@ -265,24 +265,86 @@ export function deriveStage(input: StageInput): RehabStage {
 
 export interface EvaluationSummary {
     lastDate: string;
+    /** 직업평가 건수: 결과분석·종합소견서 이력 문서 수 + 워크벤치 평가 회차 수(한 회차의 세션·결과지·보고서는 한 건) */
     documentCount: number;
-    /** 가장 최근 문서의 첫 2줄 */
+    /** 워크벤치 평가 회차 수 */
+    episodeCount: number;
+    /** 워크벤치 직업평가보고서 수(버전마다 한 건) */
+    reportCount: number;
+    /** 가장 최근 소견(이력 문서 본문 또는 워크벤치 보고서 종합소견)의 첫 2줄 */
     lastOpinion: string[];
 }
 
-const EVALUATION_DOC_TYPES: CaseDocument['type'][] = ['evaluation', 'vocational_evaluation'];
+/**
+ * 직업평가 화면의 결과분석·종합소견서 이력 문서.
+ * 사례관리의 정기평가서('evaluation')는 직업재활계획 달성도 평가이지 직업평가가 아니므로 여기에 넣지 않는다.
+ */
+const EVALUATION_HISTORY_TYPE: CaseDocument['type'] = 'vocational_evaluation';
+/** 직업평가 워크벤치 문서. 본문은 JSON이며 회차(ve_episode) 하나에 세션·결과지·분석지·보고서가 여럿 딸린다. */
+const VE_EPISODE_TYPE: CaseDocument['type'] = 've_episode';
+const VE_REPORT_TYPE: CaseDocument['type'] = 've_report';
+const VE_CHILD_TYPES: CaseDocument['type'][] = ['ve_session', 've_source_document', 've_analysis_document', 've_report'];
+const isWorkbenchType = (type: CaseDocument['type']) => type === VE_EPISODE_TYPE || VE_CHILD_TYPES.includes(type);
 
-function sortNewest(docs: CaseDocument[]): CaseDocument[] {
-    return [...docs].sort((a, b) => caseDocumentDate(b).localeCompare(caseDocumentDate(a)));
+const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** 워크벤치 문서(JSON)에서 현황판에 필요한 값만 읽습니다. 읽을 수 없으면 빈 객체(예외 없음). */
+function readWorkbenchJson(content: string | null | undefined): Record<string, unknown> {
+    if (typeof content !== 'string' || !content.trim()) return {};
+    try {
+        const raw = JSON.parse(content) as unknown;
+        return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
+    } catch {
+        return {};
+    }
 }
 
+const textField = (value: unknown): string => (typeof value === 'string' ? value : '');
+
 export function getEvaluationSummary(documents: CaseDocument[]): EvaluationSummary {
-    const docs = sortNewest(documents.filter(doc => EVALUATION_DOC_TYPES.includes(doc.type)));
-    const latest = docs[0];
+    const historyDocs = documents.filter(doc => doc.type === EVALUATION_HISTORY_TYPE);
+    // 한 회차에 문서가 여러 건 딸려 있어도 평가는 한 건이다. 회차 문서와 하위 문서의 episodeId를 모아 회차 수를 센다
+    // (회차 문서를 읽지 못했거나 아직 목록에 없어도 하위 문서가 가리키는 회차는 센다).
+    const episodeIds = new Set<string>();
+    const dates: string[] = historyDocs.map(doc => caseDocumentDate(doc));
+    const opinions: Array<{ date: string; version: number; lines: string[] }> = historyDocs.map(doc => ({
+        date: caseDocumentDate(doc), version: 0, lines: firstLines(doc.content, 2),
+    }));
+    let reportCount = 0;
+    documents.forEach((doc, index) => {
+        if (!isWorkbenchType(doc.type)) return;
+        const raw = readWorkbenchJson(doc.content);
+        if (doc.type === VE_EPISODE_TYPE) {
+            episodeIds.add(doc.id || textField(raw.id) || `episode-${index}`);
+            const evaluationDate = textField(raw.evaluationDate);
+            dates.push(DATE_KEY.test(evaluationDate) ? evaluationDate : caseDocumentDate(doc));
+            return;
+        }
+        const episodeId = textField(raw.episodeId);
+        if (episodeId) episodeIds.add(episodeId);
+        if (doc.type !== VE_REPORT_TYPE) {
+            // 검사 세션·결과지·분석지는 평가일을 바꾸지 않는다. 다만 회차 문서가 없을 때 날짜가 비지 않도록 기록일을 쓴다.
+            if (!episodeId) dates.push(caseDocumentDate(doc));
+            return;
+        }
+        reportCount += 1;
+        const writtenOn = textField(raw.writtenOn);
+        const date = DATE_KEY.test(writtenOn) ? writtenOn : caseDocumentDate(doc);
+        dates.push(date);
+        const summary = raw.summary && typeof raw.summary === 'object' ? raw.summary as Record<string, unknown> : {};
+        // 원문 JSON은 화면·AI 요청에 내보내지 않고 종합소견(없으면 추천직무)만 쓴다.
+        const opinion = textField(summary.overallOpinion).trim() || textField(summary.recommendation).trim();
+        const version = Number(raw.reportVersion);
+        opinions.push({ date, version: Number.isFinite(version) ? version : 0, lines: firstLines(opinion, 2) });
+    });
+    const latestOpinion = opinions.filter(item => item.lines.length > 0)
+        .sort((a, b) => b.date.localeCompare(a.date) || b.version - a.version)[0];
     return {
-        lastDate: latest ? caseDocumentDate(latest) : '',
-        documentCount: docs.length,
-        lastOpinion: latest ? firstLines(latest.content, 2) : [],
+        lastDate: dates.filter(Boolean).sort().pop() || '',
+        documentCount: historyDocs.length + episodeIds.size,
+        episodeCount: episodeIds.size,
+        reportCount,
+        lastOpinion: latestOpinion ? latestOpinion.lines : [],
     };
 }
 
@@ -351,9 +413,16 @@ export const TIMELINE_LABELS: Record<TimelineKind, string> = {
     job_comparison: '직무 비교', supported_employment: '지원고용', other: '업무 문서',
 };
 
+const WORKBENCH_DOC_NAMES: Partial<Record<CaseDocument['type'], string>> = {
+    ve_episode: '직업평가 회차', ve_session: '검사 기록', ve_source_document: '공식 결과지 확인값',
+    ve_analysis_document: '검사 분석지 정리', ve_report: '직업평가보고서',
+};
+
 function documentKind(type: CaseDocument['type']): TimelineKind {
     switch (type) {
         case 'meeting': case 'plan': case 'counseling': case 'evaluation': case 'job_analysis': case 'vocational_evaluation': return type;
+        // 직업평가 워크벤치 문서도 직업평가 문서다("업무 문서"로 분류하면 고용지원 화면으로 잘못 이동한다).
+        case 've_episode': case 've_session': case 've_source_document': case 've_analysis_document': case 've_report': return 'vocational_evaluation';
         case 'matching_opinion': case 'employment_matching': return 'matching';
         case 'interview_note': case 'employment_interview_note': return 'interview';
         case 'document_review': return 'review';
@@ -387,11 +456,16 @@ export function buildTimeline(
     const base: TimelineTarget['state'] = { seekerId: seeker.id || seeker.seekerId || '', seekerName: seeker.name };
     const entries: TimelineEntry[] = documents.filter(doc => doc.type !== 'workflow').map((doc, index) => {
         const kind = documentKind(doc.type);
+        const workbench = isWorkbenchType(doc.type);
         return {
             id: doc.id || `doc-${index}`, date: caseDocumentDate(doc), kind, label: TIMELINE_LABELS[kind],
             // 지원고용 회차는 내용이 JSON이므로 원문 대신 "지원고용 N차 결과보고"로 표시합니다.
-            summary: kind === 'supported_employment' ? supportedEmploymentLabel(doc) : doc.title || firstLines(doc.content, 1)[0] || '',
-            target: documentTarget(kind, base, doc.id),
+            // 워크벤치 문서도 JSON이므로 제목만 보여 줍니다(제목이 없으면 종류 이름).
+            summary: kind === 'supported_employment' ? supportedEmploymentLabel(doc)
+                : workbench ? doc.title || WORKBENCH_DOC_NAMES[doc.type] || '직업평가 기록'
+                    : doc.title || firstLines(doc.content, 1)[0] || '',
+            // 워크벤치 문서는 평가 화면의 "이력" 탭(결과분석·종합소견서 목록)에 없으므로 문서 ID를 넘기지 않고 워크벤치 탭을 엽니다.
+            target: workbench ? { path: '/evaluation', state: { ...base, tab: 'workbench' } } : documentTarget(kind, base, doc.id),
         };
     });
     (training?.counselingHistory || []).forEach((text, index) => entries.push({
@@ -433,7 +507,7 @@ export function buildSituationSummaryPrompt(input: SituationSummaryInput): strin
         '',
         `[현재 단계] ${input.stage}`,
         `[장애유형] ${input.disabilityType || '미기록'}`,
-        `[직업평가] 문서 ${input.evaluation.documentCount}건, 최근 ${input.evaluation.lastDate || '기록 없음'}`,
+        `[직업평가] 문서 ${input.evaluation.documentCount}건${input.evaluation.episodeCount > 0 ? `(워크벤치 평가 회차 ${input.evaluation.episodeCount}건, 평가보고서 ${input.evaluation.reportCount}건 포함)` : ''}, 최근 ${input.evaluation.lastDate || '기록 없음'}`,
         ...input.evaluation.lastOpinion.map(line => `  - ${line}`),
         input.training
             ? `[직업훈련] ${input.training.room}${input.training.program ? ` · ${input.training.program}` : ''}, 훈련기간 ${input.training.trainingPeriod || '미기록'}, 출석률 ${input.training.attendanceRate === null ? '기록 없음' : `${input.training.attendanceRate}%`}, 훈련 상담 ${input.training.counselingCount}건`

@@ -132,22 +132,45 @@ function getCanonicalSeekerId(seeker: Seeker): string {
     return seeker.id || seeker.seekerId || '';
 }
 
-function resolveCaseDocumentSeeker(doc: CaseDocument, seekers: Seeker[], { nameFallbackForKeyedDocs = true } = {}): Seeker | null {
+/** 이 앱이 만든 이용자 id 모양(32자리 16진수). 예전 버전·가져온 자료의 식별자(관리번호 등)와 구분한다. */
+const APP_GENERATED_ID = /^[0-9a-f]{32}$/;
+
+interface SeekerLookup {
+    byKey: Map<string, Seeker>;
+    byName: Map<string, Seeker[]>;
+}
+
+/** 이용자 찾기용 색인(문서 수만 건을 이용자 수천 명과 하나씩 대조하지 않게 한 번만 만든다). */
+function buildSeekerLookup(seekers: Seeker[]): SeekerLookup {
+    const byKey = new Map<string, Seeker>();
+    const byName = new Map<string, Seeker[]>();
+    for (const seeker of seekers) {
+        for (const key of getPrimarySeekerKeys(seeker)) if (!byKey.has(key)) byKey.set(key, seeker);
+        if (seeker.name) byName.set(seeker.name, [...(byName.get(seeker.name) ?? []), seeker]);
+    }
+    return { byKey, byName };
+}
+
+function resolveCaseDocumentSeeker(doc: CaseDocument, lookup: SeekerLookup, { nameFallbackForKeyedDocs = true } = {}): Seeker | null {
     const docPrimaryKeys = getCaseDocumentPrimaryKeys(doc as any);
     if (docPrimaryKeys.size > 0) {
-        const primaryMatch = seekers.find(seeker => {
-            const seekerKeys = getPrimarySeekerKeys(seeker);
-            return [...docPrimaryKeys].some(key => seekerKeys.has(key));
-        });
-        if (primaryMatch) return primaryMatch;
-        // id가 있는데 못 찾은 문서: 공유 저장소에서는 그 이용자가 아직 안 왔거나 충돌·격리 중일 수 있다. 이름만으로 동명이인에게 붙이지 않는다.
+        for (const key of docPrimaryKeys) {
+            const primaryMatch = lookup.byKey.get(key);
+            if (primaryMatch) return primaryMatch;
+        }
+        // id가 있는데 못 찾은 문서:
+        // - 공유 저장소에서는 그 이용자가 아직 안 왔거나 충돌·격리 중일 수 있다.
+        // - 이 앱이 만든 id면 그 이용자를 여기서 지운 것이다("문서는 남기기"). 나중에 등록한 동명이인에게 붙이면 남의 기록이 섞인다.
+        // 두 경우 모두 이름만으로 다시 붙이지 않는다. 예전 버전의 식별자(관리번호 등)만 이름으로 이어 준다.
         if (!nameFallbackForKeyedDocs) return null;
+        if ([...docPrimaryKeys].some(key => APP_GENERATED_ID.test(key))) return null;
     }
 
     const docNames = getCaseDocumentNames(doc as any);
     if (docNames.size === 0) return null;
-    const matches = seekers.filter(seeker => docNames.has(seeker.name));
-    return matches.length === 1 ? matches[0] : null;
+    const matches = new Set<Seeker>();
+    for (const name of docNames) for (const seeker of lookup.byName.get(name) ?? []) matches.add(seeker);
+    return matches.size === 1 ? [...matches][0] : null;
 }
 
 /**
@@ -172,9 +195,10 @@ async function migrateCaseDocumentSeekerIds(seekers: Seeker[]) {
     if (seekers.length === 0) return;
     const nameFallbackForKeyedDocs = !(typeof localDB.isSharedDriveActive === 'function' && localDB.isSharedDriveActive());
     const docs = await localDB.getAll<CaseDocument>('caseDocuments');
+    const lookup = buildSeekerLookup(seekers);
     await Promise.all(docs.map(async (doc) => {
         if (!doc.id) return;
-        const matched = resolveCaseDocumentSeeker(doc, seekers, { nameFallbackForKeyedDocs });
+        const matched = resolveCaseDocumentSeeker(doc, lookup, { nameFallbackForKeyedDocs });
         if (!matched) return;
         const canonicalSeekerId = getCanonicalSeekerId(matched);
         if (!canonicalSeekerId || doc.seekerId === canonicalSeekerId) return;

@@ -80,6 +80,8 @@ const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const KEEP_DATA_COPIES = 2;
 /** 창 닫기 뒤 "저장하지 않은 내용" 확인창(동기)이 끝나고 창이 살아 있는지 보기까지 기다리는 시간 */
 const CLOSE_CONFIRM_GRACE_MS = 1500;
+/** "버리고 나가기"를 고른 뒤 창이 실제로 닫히기를 기다리는 시간(닫히면 바로 진행한다) */
+const CLOSE_AFTER_LEAVE_MS = 4000;
 
 /** 렌더러에 보내는 상태(개인정보·경로 없음) */
 function publicState(state) {
@@ -271,6 +273,7 @@ function createUpdateService(deps) {
      * 창을 먼저 닫아 본다(저장하지 않은 내용이 있으면 확인창이 뜬다). 실제로 닫혔을 때만 true.
      * 설치파일은 닫힌 뒤에 실행한다 — 먼저 실행하면 확인창을 취소해도 설치파일이 "앱 실행 중" 상태로 떠 있게 된다.
      */
+    let pendingUnloadListener = null;
     function closeWindowForInstall() {
         const window = getWindow();
         if (!window || window.isDestroyed()) return Promise.resolve(true);
@@ -282,9 +285,35 @@ function createUpdateService(deps) {
                 resolve(closed);
             };
             window.once('closed', () => finish(true));
+            // 저장하지 않은 내용 확인창(main.cjs의 will-prevent-unload)의 선택을 직접 읽는다. 이 리스너는 확인창을 띄우는
+            // 리스너 뒤에 등록되므로, 확인창이 닫힌 직후 같은 흐름에서 불린다(preventDefault 됨 = "버리고 나가기").
+            // 시간으로만 판단하면 확인창에서 1.5초 넘게 머문 뒤 "버리고 나가기"를 골랐을 때 취소로 잘못 보고,
+            // 창은 닫혀 앱이 꺼진 뒤 조용히 설치만 되고 다시 뜨지 않았다.
+            let leaveChosen = false;
+            const onPreventUnload = event => {
+                if (event?.defaultPrevented) leaveChosen = true;
+                else finish(false);
+            };
+            if (typeof window.webContents?.once === 'function') {
+                pendingUnloadListener = onPreventUnload;
+                window.webContents.once('will-prevent-unload', onPreventUnload);
+            }
             window.close();
-            // 확인창(동기)이 끝난 뒤에도 창이 살아 있으면 취소한 것이다.
-            setTimeoutFn(() => finish(window.isDestroyed()), CLOSE_CONFIRM_GRACE_MS);
+            // 확인창이 없었거나(바로 닫힘) 끝난 뒤에도 창이 살아 있으면 취소한 것이다. "버리고 나가기"를 골랐으면 닫힐 때까지 더 기다린다.
+            setTimeoutFn(() => {
+                if (!leaveChosen) {
+                    finish(window.isDestroyed());
+                    return;
+                }
+                setTimeoutFn(() => finish(window.isDestroyed()), CLOSE_AFTER_LEAVE_MS);
+            }, CLOSE_CONFIRM_GRACE_MS);
+        }).finally(() => {
+            // 이번 시도에서 확인창이 뜨지 않았으면 리스너를 남기지 않는다(다음 종료의 확인창 선택을 설치 판단으로 잘못 읽지 않게).
+            const current = getWindow();
+            if (current && !current.isDestroyed() && pendingUnloadListener) {
+                current.webContents.removeListener?.('will-prevent-unload', pendingUnloadListener);
+            }
+            pendingUnloadListener = null;
         });
     }
 

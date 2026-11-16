@@ -1,7 +1,9 @@
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Sparkles, ArrowRight, LayoutDashboard, ClipboardList, Wand2, UserCheck, Building2, FileSearch, GraduationCap, DollarSign, Archive } from 'lucide-react';
+import { Sparkles, ArrowRight, LayoutDashboard, ClipboardList, Wand2, UserCheck, Building2, FileSearch, GraduationCap, DollarSign, Archive, Star, ExternalLink } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useDataStore } from '../store/dataStore';
+import { TOOL_FAVORITES_EVENT, readToolFavorites, type ToolFavorite } from '../features/tools/toolFavorites';
 
 const fadeUp = {
     hidden: { opacity: 0, y: 30 },
@@ -58,7 +60,7 @@ const features = [
     {
         icon: Wand2,
         title: '업무 지원 도구',
-        desc: '문서 OCR, 개인정보 비식별화, 홍보물/일정표 생성, 데이터 시각화, 위기대응 도구를 제공합니다.',
+        desc: '문서 작성·OCR·비식별화·홍보물 AI 도구와, API 키 없이 쓰는 PDF 합치기·QR 코드·서명 등록부·프로그램 진행 도구를 제공합니다.',
         color: 'from-amber-500 to-orange-600',
         path: '/tools',
     },
@@ -74,6 +76,13 @@ const features = [
 export default function Home() {
     const seekers = useDataStore(state => state.seekers);
     const jobs = useDataStore(state => state.jobs);
+    // 업무 지원 도구에서 별표한 도구(이 PC의 화면 설정). 홈에서 바로 연다.
+    const [favoriteTools, setFavoriteTools] = useState<ToolFavorite[]>(() => readToolFavorites());
+    useEffect(() => {
+        const sync = () => setFavoriteTools(readToolFavorites());
+        window.addEventListener(TOOL_FAVORITES_EVENT, sync);
+        return () => window.removeEventListener(TOOL_FAVORITES_EVENT, sync);
+    }, []);
 
     return (
         <div className="min-h-screen">
@@ -197,6 +206,28 @@ export default function Home() {
             </section>
 
             {/* Features */}
+            {favoriteTools.length > 0 && (
+                <section aria-label="자주 쓰는 도구" data-testid="home-tool-favorites" className="px-4 pb-12">
+                    <div className="max-w-6xl mx-auto rounded-2xl border border-white/10 bg-white/5 p-5">
+                        <h2 className="mb-3 flex items-center gap-2 text-sm font-bold text-white/80">
+                            <Star className="h-4 w-4 text-amber-300" fill="currentColor" /> 자주 쓰는 도구
+                            <Link to="/tools" className="ml-auto text-xs font-medium text-white/45 underline hover:text-white/80">도구 전체 보기</Link>
+                        </h2>
+                        <div className="flex flex-wrap gap-2">
+                            {favoriteTools.map(item => (item.url ? (
+                                <a key={item.key} href={item.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-semibold text-white/85 transition hover:border-white/30 hover:text-white">
+                                    {item.title} <ExternalLink className="h-3.5 w-3.5 text-white/40" />
+                                </a>
+                            ) : (
+                                <Link key={item.key} to={`/tools?tool=${encodeURIComponent(item.key.slice(5))}`} className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-semibold text-white/85 transition hover:border-white/30 hover:text-white">
+                                    {item.title}
+                                </Link>
+                            )))}
+                        </div>
+                    </div>
+                </section>
+            )}
+
             <section id="features" className="px-4 pb-24">
                 <div className="max-w-6xl mx-auto">
                     <motion.div

@@ -796,6 +796,247 @@ async function main() {
             await page.screenshot({ path: path.join(directory, 'navigation-mobile.png') });
             console.log('Visual previews: ' + directory);
         }
+        // 이 PC에서 처리하는 도구(도구 찾기·자주 쓰는 도구·QR·프로그램 진행·PDF·서명 등록부)와 기본 AI 경로 안내.
+        // 새 브라우저 컨텍스트(빈 저장소)에서 확인한다. 외부 요청은 모두 막혀 있다.
+        const toolsContext = await browser.newContext({ viewport: { width: 1100, height: 850 } });
+        try {
+            await toolsContext.addInitScript(() => {
+                localStorage.setItem('jjss:api-key-onboarding-v1', 'later');
+                // 브라우저 실행에서는 저장이 "내려받기"로 처리된다. 내려받는 대신 만든 파일을 붙잡아 둔다.
+                window.uxSaved = [];
+                const realCreate = URL.createObjectURL.bind(URL);
+                URL.createObjectURL = blob => { window.uxLastBlob = blob; return realCreate(blob); };
+                HTMLAnchorElement.prototype.click = function click() {
+                    if (this.download) window.uxSaved.push({ name: this.download, blob: window.uxLastBlob });
+                };
+            });
+            await toolsContext.route('**/*', route => new URL(route.request().url()).origin === new URL(base).origin ? route.continue() : route.abort());
+            await toolsContext.route('**/src/services/gemini.ts', route => route.fulfill({
+                contentType: 'application/javascript',
+                body: "export * from '/src/services/gemini.ts?ux-tools-original'; export async function generateText(type, input) { (window.uxCustomToolCalls ||= []).push({ type, input }); return '검증용 합성 결과'; }",
+            }));
+            const toolsPage = await toolsContext.newPage();
+            const toolErrors = [];
+            toolsPage.on('pageerror', error => toolErrors.push(error.message));
+            await toolsPage.goto(`${base}/#/tools`);
+            await toolsPage.locator('[data-tool-id="pdf_tools"]').waitFor();
+            assert.equal(await toolsPage.locator('[data-tool-id]').count(), 21, '기존 16개 + 나만의 AI 도구 + API 키 없이 쓰는 도구 4개');
+
+            // 도구 찾기: 낱말이 모두 들어 있는 도구만, 없으면 안내
+            await toolsPage.locator('#tool-search').fill('pdf 합치기');
+            await toolsPage.getByTestId('tool-search-results').waitFor();
+            assert.deepEqual(await toolsPage.locator('[data-tool-id]').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-tool-id'))), ['pdf_tools']);
+            await toolsPage.locator('#tool-search').fill('없는도구xyz');
+            await toolsPage.getByText('맞는 도구가 없습니다', { exact: false }).waitFor();
+            await toolsPage.getByRole('button', { name: '검색어 지우기' }).click();
+            await toolsPage.locator('[data-tool-id="qr_code"]').waitFor();
+
+            // 자주 쓰는 도구: 별표 → 도구 화면 위쪽과 홈 화면에 나타나고, 홈에서 누르면 그 도구가 바로 열린다
+            assert.equal(await toolsPage.getByTestId('tool-favorites').count(), 0);
+            await toolsPage.getByRole('button', { name: 'QR 코드 만들기 자주 쓰는 도구에 넣기' }).click();
+            await toolsPage.getByTestId('tool-favorites').getByRole('button', { name: 'QR 코드 만들기' }).waitFor();
+            await toolsPage.evaluate(() => { location.hash = '/'; });
+            await toolsPage.getByTestId('home-tool-favorites').getByRole('link', { name: 'QR 코드 만들기' }).click();
+            await toolsPage.getByRole('heading', { name: 'QR 코드 만들기', level: 2 }).waitFor();
+            assert.equal(new URL(toolsPage.url()).hash.includes('tool='), false, '도구를 연 뒤 주소의 tool 값은 지운다');
+
+            // QR 코드: 링크를 넣으면 무늬가 그려지고, 너무 긴 글은 이유를 알린다
+            const qrInput = toolsPage.getByLabel('링크 또는 글');
+            await qrInput.fill('www.example.org/설문');
+            await toolsPage.locator('[data-testid="qr-preview"][data-ready="true"] canvas').waitFor();
+            const darkRatio = await toolsPage.locator('[data-testid="qr-preview"] canvas').evaluate(canvas => {
+                const data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+                let dark = 0;
+                for (let index = 0; index < data.length; index += 4) if (data[index] < 50) dark += 1;
+                return dark / (data.length / 4);
+            });
+            assert.ok(darkRatio > 0.15 && darkRatio < 0.6, `QR 무늬가 그려져야 한다(검은 칸 비율 ${darkRatio.toFixed(2)})`);
+            await toolsPage.getByLabel('QR 아래에 넣을 설명 (선택)').fill('만족도 조사');
+            await toolsPage.getByRole('button', { name: 'PNG로 저장' }).click();
+            await toolsPage.waitForFunction(() => window.uxSaved.length === 1);
+            const qrSaved = await toolsPage.evaluate(async () => ({ name: window.uxSaved[0].name, head: [...new Uint8Array(await window.uxSaved[0].blob.slice(0, 4).arrayBuffer())] }));
+            assert.equal(qrSaved.name, 'QR_만족도 조사.png');
+            assert.deepEqual(qrSaved.head, [0x89, 0x50, 0x4e, 0x47], 'PNG 파일');
+            await qrInput.fill('가'.repeat(700));
+            await toolsPage.locator('#qr-help[role="alert"]').getByText('너무 깁니다', { exact: false }).waitFor();
+            await qrInput.fill('');
+            await toolsPage.getByRole('button', { name: '도구 목록으로' }).click();
+
+            // 프로그램 진행 도구: 타이머가 줄어들고, 조 편성은 인원이 고르며, 이름 뽑기는 명단에서 뽑는다
+            await toolsPage.locator('[data-tool-id="program_kit"]').click();
+            const clock = toolsPage.getByTestId('program-timer-clock');
+            await clock.waitFor();
+            await toolsPage.getByRole('button', { name: '1분', exact: true }).click();
+            assert.equal(await clock.innerText(), '01:00');
+            await toolsPage.getByRole('button', { name: '시작', exact: true }).click();
+            await toolsPage.waitForFunction(() => document.querySelector('[data-testid="program-timer-clock"]')?.innerText === '00:58', undefined, { timeout: 6000 });
+            await toolsPage.getByRole('button', { name: '일시정지' }).click();
+            const pausedAt = await clock.innerText();
+            await toolsPage.waitForTimeout(1200);
+            assert.equal(await clock.innerText(), pausedAt, '일시정지하면 멈춘다');
+            await toolsPage.getByRole('tab', { name: /조 편성/ }).click();
+            await toolsPage.locator('#program-roster').fill('가온\n나래\n다솜\n라온\n마루\n바다\n사랑');
+            await toolsPage.getByRole('button', { name: '조 편성', exact: true }).click();
+            const groupTexts = await toolsPage.getByTestId('program-groups').locator('li').allInnerTexts();
+            assert.equal(groupTexts.length, 3);
+            assert.deepEqual(groupTexts.map(text => Number(/\((\d+)명\)/.exec(text)[1])).sort(), [2, 2, 3], '7명을 3개 조로: 3·2·2');
+            assert.equal(new Set(groupTexts.join(',').match(/가온|나래|다솜|라온|마루|바다|사랑/g)).size, 7, '빠지거나 겹치는 사람 없음');
+            await toolsPage.getByRole('tab', { name: /이름 뽑기/ }).click();
+            assert.equal((await toolsPage.locator('#program-roster').inputValue()).split('\n').length, 7, '명단은 탭을 바꿔도 그대로');
+            await toolsPage.getByRole('button', { name: '뽑기', exact: true }).click();
+            assert.match(await toolsPage.getByTestId('program-pick-result').innerText(), /^(가온|나래|다솜|라온|마루|바다|사랑)$/);
+            // 명단이 있으면 나갈 때 확인한다
+            await toolsPage.getByRole('button', { name: '도구 목록으로' }).click();
+            await answerConfirm(toolsPage, true);
+
+            // PDF·이미지 도구: 합치기(순서대로, 쪽수 합) → 쪽 뽑기(적은 순서대로) — 파일은 페이지 안에서 만든 합성 PDF
+            await toolsPage.locator('[data-tool-id="pdf_tools"]').click();
+            await toolsPage.locator('input[type="file"]').waitFor({ state: 'attached' });
+            const syntheticPdfs = await toolsPage.evaluate(async () => {
+                const tools = await import('/src/features/tools/pdfTools.ts');
+                const png = async (width, height) => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+                    canvas.getContext('2d').fillRect(0, 0, width, height);
+                    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+                    return new Uint8Array(await blob.arrayBuffer());
+                };
+                const first = await tools.imagesToPdf([{ bytes: await png(20, 30), type: 'image/png' }, { bytes: await png(20, 30), type: 'image/png' }]);
+                const second = await tools.imagesToPdf([{ bytes: await png(40, 10), type: 'image/png' }]);
+                return [Array.from(first), Array.from(second)];
+            });
+            await toolsPage.locator('input[type="file"]').setInputFiles([
+                { name: '합성_가.pdf', mimeType: 'application/pdf', buffer: Buffer.from(syntheticPdfs[0]) },
+                { name: '합성_나.pdf', mimeType: 'application/pdf', buffer: Buffer.from(syntheticPdfs[1]) },
+            ]);
+            await toolsPage.waitForFunction(() => {
+                const rows = [...document.querySelectorAll('[data-testid="local-tool-file"]')].map(row => row.innerText);
+                return rows.length === 2 && /2쪽/.test(rows[0]) && /1쪽/.test(rows[1]);
+            });
+            await toolsPage.getByRole('button', { name: '합쳐서 저장' }).click();
+            await toolsPage.waitForFunction(() => window.uxSaved.length === 2);
+            const merged = await toolsPage.evaluate(async () => {
+                const tools = await import('/src/features/tools/pdfTools.ts');
+                const saved = window.uxSaved[1];
+                const bytes = new Uint8Array(await saved.blob.arrayBuffer());
+                return { name: saved.name, pages: await tools.countPdfPages(bytes), bytes: Array.from(bytes) };
+            });
+            assert.equal(merged.name, '합성_가_합본.pdf');
+            assert.equal(merged.pages, 3, '2쪽 + 1쪽');
+            await toolsPage.getByRole('tab', { name: /쪽 뽑기/ }).click();
+            await toolsPage.locator('input[type="file"]').setInputFiles({ name: '합본.pdf', mimeType: 'application/pdf', buffer: Buffer.from(merged.bytes) });
+            await toolsPage.getByText('전체 3쪽', { exact: false }).waitFor();
+            const rangeInput = toolsPage.getByLabel(/뽑을 쪽/);
+            await rangeInput.fill('9');
+            await toolsPage.locator('#pdf-range-help').getByText('3쪽까지', { exact: false }).waitFor();
+            await rangeInput.fill('3, 1');
+            await toolsPage.locator('#pdf-range-help').getByText('2쪽을 뽑습니다.', { exact: true }).waitFor();
+            await toolsPage.getByRole('button', { name: '새 PDF로 저장' }).click();
+            await toolsPage.waitForFunction(() => window.uxSaved.length === 3);
+            const extracted = await toolsPage.evaluate(async () => {
+                const tools = await import('/src/features/tools/pdfTools.ts');
+                const saved = window.uxSaved[2];
+                return { name: saved.name, pages: await tools.countPdfPages(new Uint8Array(await saved.blob.arrayBuffer())) };
+            });
+            assert.equal(extracted.pages, 2);
+            assert.match(extracted.name, /^합본_3_1쪽\.pdf$/);
+            await toolsPage.getByRole('button', { name: '도구 목록으로' }).click();
+            await answerConfirm(toolsPage, true);
+
+            // 서명 등록부: 명단 → 서명 받기(그림) → 인쇄 문서에 이름과 서명이 들어간다
+            await toolsPage.locator('[data-tool-id="sign_sheet"]').click();
+            await toolsPage.getByRole('heading', { name: '서명 등록부', level: 2 }).waitFor();
+            await toolsPage.getByLabel('제목', { exact: true }).fill('합성 직무교육 등록부');
+            await toolsPage.locator('#sign-roster').fill('고용지원팀, 김합성\n이합성');
+            await toolsPage.getByRole('button', { name: '명단 만들기' }).click();
+            assert.equal(await toolsPage.getByTestId('sign-row').count(), 2);
+            await toolsPage.getByTestId('sign-row').first().getByRole('button', { name: '서명', exact: true }).click();
+            const pad = toolsPage.getByTestId('signature-pad');
+            await pad.waitFor();
+            assert.equal(await toolsPage.getByRole('button', { name: '서명 완료' }).isDisabled(), true, '아무것도 쓰지 않으면 완료할 수 없다');
+            const padBox = await pad.boundingBox();
+            await toolsPage.mouse.move(padBox.x + 40, padBox.y + 40);
+            await toolsPage.mouse.down();
+            await toolsPage.mouse.move(padBox.x + 160, padBox.y + 90, { steps: 6 });
+            await toolsPage.mouse.move(padBox.x + 260, padBox.y + 50, { steps: 6 });
+            await toolsPage.mouse.up();
+            await toolsPage.getByRole('button', { name: '서명 완료' }).click();
+            await toolsPage.getByTestId('sign-row').first().getByRole('img', { name: '김합성 서명' }).waitFor();
+            await toolsPage.getByText('서명 1 / 2명', { exact: false }).waitFor();
+            await toolsPage.getByRole('button', { name: '등록부 PDF로 저장' }).click();
+            // 브라우저 실행에서는 인쇄 창(숨은 iframe)으로 대신한다. 그 문서에 제목·이름·서명 그림이 있어야 한다.
+            const printed = await toolsPage.waitForFunction(() => {
+                const frame = [...document.querySelectorAll('iframe[aria-hidden="true"]')].find(item => item.contentDocument?.body?.innerText.includes('합성 직무교육 등록부'));
+                if (!frame) return null;
+                const body = frame.contentDocument.body;
+                return { names: /김합성/.test(body.innerText) && /이합성/.test(body.innerText), images: body.querySelectorAll('img[src^="data:image/png"]').length, rows: body.querySelectorAll('table.list tbody tr').length };
+            });
+            assert.deepEqual(await printed.jsonValue(), { names: true, images: 1, rows: 20 });
+            await toolsPage.getByRole('button', { name: '도구 목록으로' }).click();
+            await answerConfirm(toolsPage, true);
+
+
+            // 나만의 AI 도구: 예시로 만들고 → 실행(지시와 내용이 구분되어 전달) → 내보내기 글로 다시 가져오기(중복 제외)
+            await toolsPage.locator('[data-tool-id="custom_tools"]').click();
+            await toolsPage.getByRole('heading', { name: '나만의 AI 도구', level: 2 }).waitFor();
+            await toolsPage.getByRole('button', { name: /행사 안내 문자 만들기/ }).click();
+            await toolsPage.getByRole('heading', { name: '새 도구 만들기' }).waitFor();
+            assert.match(await toolsPage.getByLabel(/^지시문/).inputValue(), /행사 안내 문자를 작성해 줘/);
+            await toolsPage.getByRole('button', { name: '저장', exact: true }).click();
+            assert.equal(await toolsPage.getByTestId('custom-tool-card').count(), 1);
+            assert.match(await toolsPage.evaluate(() => localStorage.getItem('jjss:custom-ai-tools:v1')), /행사 안내 문자 만들기/);
+            await toolsPage.getByTestId('custom-tool-card').getByRole('button', { name: '쓰기' }).click();
+            await toolsPage.getByLabel('내용', { exact: true }).fill('합성 가을 행사, 11월 20일 14시, 3층 강당');
+            await toolsPage.getByRole('button', { name: '생성하기' }).click();
+            await toolsPage.getByTestId('custom-tool-result').waitFor();
+            const customCall = await toolsPage.evaluate(() => window.uxCustomToolCalls.at(-1));
+            assert.equal(customCall.type, 'utilities');
+            assert.match(customCall.input, /^\[지시\]\n아래 내용으로 행사 안내 문자를 작성해 줘[\s\S]*\[내용\]\n<자료>\n합성 가을 행사, 11월 20일 14시, 3층 강당\n<\/자료>$/);
+            await toolsPage.getByRole('button', { name: '내 도구 목록' }).click();
+            await answerConfirm(toolsPage, true);
+            const exportedTools = await toolsPage.evaluate(async () => {
+                const tools = await import('/src/features/tools/customTools.ts');
+                return tools.exportCustomTools([...tools.readCustomTools(), { id: 'ct_extra001', title: '합성 새 도구', description: '', instruction: '두 줄로 줄여 줘', inputHint: '', updatedAt: new Date().toISOString() }]);
+            });
+            await toolsPage.getByRole('button', { name: '가져오기', exact: true }).click();
+            await toolsPage.locator('#custom-tool-import').fill(exportedTools);
+            await toolsPage.getByRole('button', { name: '가져오기', exact: true }).last().click();
+            await toolsPage.getByText('도구 1개를 가져왔습니다.', { exact: false }).first().waitFor();
+            assert.equal(await toolsPage.getByTestId('custom-tool-card').count(), 2, '이미 있는 도구는 건너뛰고 새 도구만');
+            await toolsPage.getByRole('button', { name: '도구 목록으로' }).click();
+
+            // 기본 AI 경로 안내: Gemini 키만 넣고 ChatGPT(OpenAI)를 골라도 "Gemini로 처리"한다고 알려 주고, 한 번에 기본 AI를 바꿀 수 있다
+            await toolsPage.evaluate(() => { location.hash = '/settings'; });
+            await toolsPage.locator('#ai-model').waitFor();
+            await toolsPage.locator('[data-testid="ai-route-notice"][data-route="none"]').waitFor();
+            await toolsPage.locator('#api-key-gemini').fill(`AIzaSy${'T'.repeat(33)}`);
+            await toolsPage.locator('#api-key-gemini').press('Enter');
+            await toolsPage.locator('[data-testid="ai-provider-gemini"][data-key-state="usable"]').waitFor();
+            assert.equal(await toolsPage.getByTestId('ai-route-notice').count(), 0, '기본 AI(Gemini)에 키가 있으면 안내 없음');
+            await toolsPage.getByTestId('ai-provider-openai').click();
+            const routeNotice = toolsPage.locator('[data-testid="ai-route-notice"][data-route="gemini"]');
+            await routeNotice.waitFor();
+            assert.match((await routeNotice.innerText()).replace(/\s+/g, ' '), /기본 AI로 고른 OpenAI\(ChatGPT\)에 등록된 API 키가 없습니다\. 지금은 키가 등록된 Google Gemini\(으\)로 처리합니다/);
+            await toolsPage.getByTestId('selected-provider-fallback-note').waitFor();
+            assert.equal(await toolsPage.getByTestId('selected-provider-key-warning').count(), 0, '다른 키로 처리할 수 있으면 빨간 경고 대신 안내');
+            await toolsPage.getByTestId('ai-route-use-fallback').click();
+            await toolsPage.waitForFunction(() => document.querySelector('[data-testid="ai-provider-gemini"]')?.getAttribute('aria-pressed') === 'true');
+            assert.equal(await toolsPage.getByTestId('ai-route-notice').count(), 0);
+            // ChatGPT 키만 넣는 경우: 기본 AI(Gemini)에 키가 없으면 키를 넣은 OpenAI로 기본 AI를 맞추고 알린다
+            await toolsPage.locator('#api-key-gemini').fill('');
+            await toolsPage.locator('#api-key-gemini').press('Enter');
+            await toolsPage.locator('[data-testid="ai-route-notice"][data-route="none"]').waitFor();
+            await toolsPage.locator('#api-key-openai').fill(`sk-proj-${'t'.repeat(40)}`);
+            await toolsPage.locator('#api-key-openai').press('Enter');
+            await toolsPage.waitForFunction(() => document.querySelector('[data-testid="ai-provider-openai"]')?.getAttribute('aria-pressed') === 'true');
+            await toolsPage.getByText('기본 AI를 OpenAI(으)로 맞췄습니다', { exact: false }).first().waitFor();
+            await toolsPage.getByTestId('ai-gemini-only-note').waitFor();
+            assert.deepEqual(toolErrors, [], 'no uncaught runtime errors in local tools and AI route flow');
+            console.log('PASS local tools (search, favorites on home, QR, program timer/groups/picker, PDF merge/extract, signature register, custom AI tools) and default-AI route guidance');
+        } finally {
+            await toolsContext.close();
+        }
         // 공유 저장소: 데스크톱 기능(window.jjssDrive)이 없으면 섹션이 없고, 있으면 마법사로 켤 수 있다(가짜 드라이브, 네트워크 없음).
         await page.evaluate(() => { location.hash = '/settings'; });
         await page.locator('#ai-model').waitFor();

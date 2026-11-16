@@ -19,6 +19,7 @@ import {
     CASE_REFINE_INSTRUCTION,
     getCasePromptType,
 } from './workmatePrompts';
+import { sortFollowUpsOldestFirst } from './documentOrder';
 import type { CaseDocumentAction, CaseStep, FollowUpMode } from './types';
 
 /**
@@ -128,7 +129,9 @@ export function useCaseDocumentPipeline() {
         if (meetDoc) { setCaseMeetingDoc(meetDoc); setMeetingText(meetDoc.content); }
         if (planDoc) { setCasePlanDoc(planDoc); setPlanText(planDoc.content); }
         // 사후관리 기록 (상담 및 평가)
-        const followUpDocs = tabDocs.filter(d => d.type === 'counseling' || d.type === 'evaluation');
+        // 저장소는 최신순으로 돌려주지만 이 목록은 항상 "오래된 것 → 최근 것" 순으로 둔다.
+        // 새로 저장한 기록을 끝에 붙이는 것과 순서가 같아지고, 프롬프트가 고르는 "최근 N건"도 실제 최근 기록이 된다.
+        const followUpDocs = sortFollowUpsOldestFirst(tabDocs.filter(d => d.type === 'counseling' || d.type === 'evaluation'));
         setCaseFollowUpHistory(followUpDocs);
         const savedContents: Record<string, string> = {};
         followUpDocs.forEach(document => {

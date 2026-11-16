@@ -96,10 +96,15 @@ ${record.counselingMemo || '담당자 입력 없음'}
 }
 
 export function buildEvaluationPrompt({ seekerContext, record, manager, contextSummary }: TrainingPromptInput) {
-    const basePrompt = `다음 내용을 바탕으로 직업훈련 정기평가서를 작성해줘. 훈련계획 달성도, 상담일지 흐름, 현재 수행 변화, 향후 재수립 방향이 드러나게 작성해.
+    // 평가일시·평가장소는 입력한 것만 넣습니다(비어 있는 줄을 넣으면 AI가 '확인 필요'를 늘어놓습니다).
+    const evaluationInfo = [
+        record.evaluationDate.trim() ? `평가일시: ${record.evaluationDate.trim()}` : '',
+        record.evaluationPlace.trim() ? `평가장소: ${record.evaluationPlace.trim()}` : '',
+    ].filter(Boolean).join('\n');
+    const basePrompt = `다음 내용을 바탕으로 직업훈련 정기평가서를 작성해줘. 훈련계획 달성도, 상담일지 흐름, 현재 수행 변화, 향후 재수립 방향이 드러나게 작성해.${evaluationInfo ? ' 평가일시와 평가장소는 아래에 적힌 그대로 평가서에 넣어줘.' : ''}
 
 ${seekerContext}
-
+${evaluationInfo ? `\n[평가 기본 정보]\n${evaluationInfo}\n` : ''}
 [훈련계획서]
 ${record.plan || '아직 작성되지 않음'}
 

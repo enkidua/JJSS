@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AlertTriangle, ShieldCheck, HeartPulse, Briefcase, Users, FileText, ChevronRight, CheckCircle2, XCircle, ArrowLeft, BookOpen, Search, Loader2, Sparkles, Layers } from 'lucide-react';
-import { crisisScenarios, CrisisScenario } from '../data/crisisScenarios';
+import { crisisScenarios, CrisisScenario, ScenarioOption } from '../data/crisisScenarios';
 import { generateText } from '../services/gemini';
 import { CopyButton } from '../components/common/CopyButton';
 import { AiTransmissionNotice } from '../components/tools/AiTransmissionNotice';
@@ -85,7 +85,7 @@ export default function CrisisManual({ onBack, onDirtyChange }: CrisisManualProp
           <DashboardView key="dashboard" onSelect={handleSelectScenario} customGuide={customGuide} setCustomGuide={setCustomGuide} />
         )}
         {viewMode === 'simulator' && selectedScenario && (
-          <SimulatorView key="simulator" scenario={selectedScenario} />
+          <SimulatorView key={`simulator-${selectedScenario.id}`} scenario={selectedScenario} />
         )}
         {viewMode === 'manual' && selectedScenario && (
           <ManualDetailView key="manual" scenario={selectedScenario} />
@@ -313,12 +313,27 @@ ${customSituation}
   );
 }
 
+// 자료(crisisScenarios)에는 정답이 늘 2번·3번 자리에 있어, 그대로 보여 주면 내용을 읽지 않고도 맞힐 수 있습니다.
+// 화면에 보일 때 순서를 섞습니다(자료 파일은 그대로 두고, 정답 여부는 선택지 id로 판정하므로 섞어도 어긋나지 않습니다).
+function shuffleOptions(options: ScenarioOption[]): ScenarioOption[] {
+  const shuffled = [...options];
+  for (let i = shuffled.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
+
 // ------------------------------
 // Simulator View
 // ------------------------------
 function SimulatorView({ scenario }: { scenario: CrisisScenario }) {
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
   const [isRevealed, setIsRevealed] = useState(false);
+  // 시나리오를 열 때 한 번만 섞습니다(이 화면은 시나리오마다 새로 만들어집니다 — 부모의 key 참고).
+  // 고르는 도중이나 결과를 볼 때 순서가 바뀌면 안 되므로 상태로 보관하고,
+  // 번호 표시·탭 이동·화면낭독 순서는 모두 이 배열(화면에 보이는 순서)을 따릅니다.
+  const [displayOptions] = useState(() => shuffleOptions(scenario.options));
 
   const handleSelect = (id: number) => {
     if (isRevealed) return;
@@ -372,7 +387,7 @@ function SimulatorView({ scenario }: { scenario: CrisisScenario }) {
           <ChevronRight className="text-primary-400" /> 당신의 선택은?
         </h3>
         
-        {scenario.options.map((opt, idx) => {
+        {displayOptions.map((opt, idx) => {
           const isSelected = selectedOption === opt.id;
           const isCorrectAndRevealed = isRevealed && opt.isCorrect;
           const isWrongAndRevealed = isRevealed && isSelected && !opt.isCorrect;

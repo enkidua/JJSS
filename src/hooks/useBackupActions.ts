@@ -8,7 +8,7 @@ import {
     parseEncryptedBackupEnvelope,
     type EncryptedBackupEnvelope,
 } from '../config/crypto';
-import { BackupIncompleteError, createBackupJson, importAllData, isRestoreStorageMixedError, parseBackupJson, type ParsedBackupData } from '../config/localDB';
+import { BackupIncompleteError, MAX_BACKUP_BYTES, createBackupJson, importAllData, isRestoreStorageMixedError, parseBackupJson, type ParsedBackupData } from '../config/localDB';
 import { allowUnloadWithoutPrompt } from './unloadBypass';
 import type { JjssSaveResult } from '../types/jjssFiles';
 import { localDateKey } from '../utils/date';
@@ -26,6 +26,14 @@ interface UseBackupActionsOptions {
 const RESTORE_CONFIRM_MESSAGE = '경고: 데이터 복원은 현재 저장된 이용자, 사업체, 사례 문서, 직업훈련 기록 등을 백업 파일 내용으로 덮어쓸 수 있습니다.\n\n'
     + '복원 전에 현재 데이터 백업을 먼저 만들어 두는 것을 권장합니다.\n\n'
     + '계속 진행하시겠습니까?';
+
+/**
+ * 파일을 읽기 전에 거르는 크기 한계(바이트).
+ * 복원 검사(parseBackupJson)는 풀어낸 JSON의 글자 수를 MAX_BACKUP_BYTES와 비교합니다. 한글은 한 글자가 3바이트이고
+ * 암호화 백업은 base64로 4/3배가 되므로, 지금까지 복원되던 파일을 막지 않으려면 그 4배(+여유)까지는 읽어야 합니다.
+ * 이보다 큰 파일은 어떤 경우에도 복원 검사를 통과할 수 없으므로 메모리에 올리지 않고 바로 안내합니다.
+ */
+const MAX_RESTORE_FILE_BYTES = MAX_BACKUP_BYTES * 4 + 1024 * 1024;
 
 function errorMessage(error: unknown, fallback: string): string {
     return error instanceof Error && error.message ? error.message : fallback;
@@ -139,6 +147,11 @@ export function useBackupActions(options: UseBackupActionsOptions = {}) {
 
     const restoreFromFile = useCallback(async (file: File) => {
         if (busyRef.current) return;
+        // 엉뚱한 대용량 파일을 고르면 통째로 읽는 동안 화면이 멈추므로, 읽기 전에 크기부터 봅니다.
+        if (file.size > MAX_RESTORE_FILE_BYTES) {
+            showToast(`백업 파일이 너무 큽니다(${Math.round(file.size / (1024 * 1024))}MB). 올바른 JJSS 백업 파일인지 확인해 주세요.`, 'error');
+            return;
+        }
         let text: string;
         try {
             text = await file.text();

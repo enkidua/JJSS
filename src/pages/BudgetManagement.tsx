@@ -548,7 +548,9 @@ export default function BudgetManagement() {
                     <ExpenseDocument
                         data={{
                             ...docForm,
-                            expenses: selectedExpenseList,
+                            // 지출에 저장된 사업명은 등록 당시 복사본이라 사업 이름을 바꾸면 옛 이름이 남습니다.
+                            // 목록·CSV와 같은 규칙(getProjectName)으로 현재 사업명을 넣어 문서에 인쇄합니다.
+                            expenses: selectedExpenseList.map(expense => ({ ...expense, projectName: getProjectName(expense) })),
                             totalAmount: selectedExpenseTotal,
                         }}
                         onClose={() => setShowDocPreview(false)}

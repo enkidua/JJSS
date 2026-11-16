@@ -1,9 +1,12 @@
+import { useEffect } from 'react';
 import type React from 'react';
 import { motion } from 'framer-motion';
 import { Briefcase, Image as ImageIcon, Loader2, Search, Sparkles, UploadCloud, X } from 'lucide-react';
 import type { JobOpening } from '../../types/matching';
+import type { CaseDocument } from '../../types/caseDocument';
 import { ClientContextBox } from '../../components/ClientContextBox';
 import { EmploymentResultPanel } from './EmploymentResultPanel';
+import { jobAnalysisDocLabel } from './documentOrder';
 import type { JobAnalysisForm, JobAnalysisPhoto } from './types';
 
 export function JobAnalysisDocumentTab({
@@ -13,6 +16,11 @@ export function JobAnalysisDocumentTab({
     search,
     onSearch,
     onSelectJob,
+    savedDocs,
+    openedDocId,
+    onOpenSaved,
+    onLoadSaved,
+    loading,
     form,
     setForm,
     photos,
@@ -41,6 +49,15 @@ export function JobAnalysisDocumentTab({
     search: string;
     onSearch: (value: string) => void;
     onSelectJob: (id: string) => void;
+    /** 지금 고른 사업체(없으면 직접 입력)로 저장해 둔 직무분석지. 최근에 저장한 것부터 */
+    savedDocs: CaseDocument[];
+    /** 작성칸에 불러와 있는 저장 문서 id(새로 쓰는 중이면 undefined) */
+    openedDocId?: string;
+    onOpenSaved: (documentId: string) => void;
+    /** 탭을 열 때 저장 목록을 읽는다 */
+    onLoadSaved: () => void;
+    /** 저장된 직무분석지를 불러오는 중 */
+    loading: boolean;
     form: JobAnalysisForm;
     setForm: React.Dispatch<React.SetStateAction<JobAnalysisForm>>;
     photos: JobAnalysisPhoto[];
@@ -63,6 +80,12 @@ export function JobAnalysisDocumentTab({
     onLoadContext: () => void;
     onClearContext: () => void;
 }) {
+    // 사업체를 고르지 않고 저장한 직무분석지는 사업체 선택으로는 찾을 수 없으므로, 탭을 열 때 저장 목록을 한 번 읽어 둔다.
+    useEffect(() => {
+        onLoadSaved();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
     const query = search.trim().toLowerCase();
     const filteredJobs = jobs.filter(job => {
         if (!query) return true;
@@ -147,6 +170,24 @@ export function JobAnalysisDocumentTab({
                             </option>
                         ))}
                     </select>
+                    {savedDocs.length > 0 && (
+                        <label className="block mt-3">
+                            <span className="block text-sm font-medium text-white/70 mb-1.5">
+                                {selectedJob ? '이 사업체로 저장한 직무분석지' : '사업체를 고르지 않고 저장한 직무분석지'} ({savedDocs.length}건)
+                            </span>
+                            <select
+                                value={openedDocId && savedDocs.some(doc => doc.id === openedDocId) ? openedDocId : ''}
+                                onChange={e => { if (e.target.value) onOpenSaved(e.target.value); }}
+                                disabled={busy}
+                                className="input-field disabled:opacity-60"
+                                aria-label="저장된 직무분석지 불러오기"
+                            >
+                                <option value="">불러올 직무분석지 선택</option>
+                                {savedDocs.map(doc => <option key={doc.id} value={doc.id}>{jobAnalysisDocLabel(doc)}</option>)}
+                            </select>
+                            <span className="block text-xs text-white/40 mt-1">불러온 직무분석지는 저장을 누르면 그 문서가 고쳐집니다. 새 초안을 생성해 저장하면 새 문서로 남습니다.</span>
+                        </label>
+                    )}
                     {selectedJob && (
                         <div className="mt-4 space-y-4">
                             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -236,6 +277,8 @@ export function JobAnalysisDocumentTab({
             </div>
 
             <EmploymentResultPanel
+                loading={loading}
+                loadingMessage="저장된 직무분석지를 불러오는 중입니다."
                 description="저장하면 사업체별 직무분석지로 보관됩니다. 사진 파일 자체는 저장하지 않습니다."
                 result={result}
                 setResult={setResult}

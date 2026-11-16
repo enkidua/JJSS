@@ -4,6 +4,7 @@ import { withClientContextPrompt } from '../../services/clientContextService';
 import type { CaseDocument } from '../../types/caseDocument';
 import type { JobOpening, Seeker } from '../../types/matching';
 import type { CaseDocumentAction, InterviewForm, JobAnalysisForm } from './types';
+import { pickRecentFollowUps } from './documentOrder';
 
 export const buildSeekerContext = (s: Seeker) => `
 [이용자 정보]
@@ -162,6 +163,8 @@ export function buildRehabPlanPrompt(seeker: Seeker, meetingText: string, planIn
     return withClientContextPrompt(`${ctx}${prev}\n\n--- 담당자가 입력한 재활계획 내용 ---\n${planInput || '(담당자 입력 없음)'}\n\n위 이용자 정보, 사례회의 내용, 담당자 입력을 모두 참고하여 [직업재활계획서]를 작성해 줘. 강점, 제한점, 종합소견, 직업목표, 장기목표, 단기목표, 수행방법을 포함해.`, contextSummary);
 }
 
+// "최근 사후관리 기록"은 넘겨받은 배열의 순서를 믿지 않고 작성일로 고른다(pickRecentFollowUps).
+// 저장소 조회 결과는 최신순이라, 끝에서 N건을 자르면 가장 오래된 기록이 "최근"으로 전달된다.
 export function buildCounselingPrompt(params: {
     seeker: Seeker;
     planText: string;
@@ -190,7 +193,7 @@ export function buildCounselingPrompt(params: {
     if (historyCount > 0) {
         const HISTORY_THRESHOLD = 10;
         const recentCount = historyCount > HISTORY_THRESHOLD ? 3 : historyCount;
-        const recentHistory = history.slice(-recentCount);
+        const recentHistory = pickRecentFollowUps(history, recentCount);
 
         historyContext = `\n\n--- 이전 사후관리 기록 (총 ${historyCount}건 중 최근 ${recentCount}건) ---\n`;
         historyContext += recentHistory.map(h =>
@@ -229,7 +232,7 @@ export function buildEvaluationPrompt(params: {
     // 사후관리 기록 (상담 및 평가) 참조
     const followUpCount = history.length;
     if (followUpCount > 0) {
-        const recentLogs = followUpCount > 5 ? history.slice(-5) : history;
+        const recentLogs = pickRecentFollowUps(history, Math.min(followUpCount, 5));
         evalPrompt += `\n\n--- 최근 사후관리 히스토리 (최근 ${recentLogs.length}건) ---\n`;
         evalPrompt += recentLogs.map(h => `[${h.type === 'counseling' ? '상담' : '정기평가'} 기록]\n${h.content}`).join('\n\n');
     }
@@ -265,7 +268,7 @@ export function buildCasePreviousRecords(type: CaseDocumentAction, meetingText: 
     return [
         meetingText && type !== 'meeting' ? `[사례회의록]\n${meetingText}` : '',
         planText && type !== 'plan' ? `[직업재활계획서]\n${planText}` : '',
-        history.length ? history.slice(-5).map((doc, index) => `[최근 ${doc.type === 'counseling' ? '상담일지' : '정기평가'} ${index + 1}]\n${doc.content}`).join('\n\n') : '',
+        history.length ? pickRecentFollowUps(history, 5).map((doc, index) => `[최근 ${doc.type === 'counseling' ? '상담일지' : '정기평가'} ${index + 1}]\n${doc.content}`).join('\n\n') : '',
     ].filter(Boolean).join('\n\n');
 }
 

@@ -49,6 +49,13 @@ function getAllowedResourceUrl(value: string): string | null {
     }
 }
 
+/** 수정 중인 자료의 기존 링크(https가 아니라 열 수 없는 예전 주소)를 그대로 둔 상태인지. */
+function isUnchangedLegacyLink(resource: Resource | null, formLink: string): boolean {
+    if (!resource) return false;
+    const existing = String(resource.link || '').trim();
+    return Boolean(existing) && existing === formLink.trim() && !getAllowedResourceUrl(existing);
+}
+
 export default function InfoMate() {
     const { profile } = useAuthStore();
     const currentProfile = profile || { uid: 'local-user', organization: 'local' };
@@ -139,14 +146,17 @@ export default function InfoMate() {
     const handleSave = async () => {
         if (saveInFlightRef.current) return;
         if (!formTitle.trim()) { showToast('자료 제목을 입력해 주세요.', 'error'); return; }
+        // 예전에 http:// 주소로 저장해 둔 자료는 링크를 건드리지 않았다면 그대로 둔다.
+        // (막으면 메모만 고치려 해도 저장할 수 없다. 새로 입력하거나 바꾼 링크는 계속 https만 받는다.)
+        const keepsExistingLink = isUnchangedLegacyLink(editingResource, formLink);
         const safeLink = formLink.trim() ? getAllowedResourceUrl(formLink) : '';
-        if (formLink.trim() && !safeLink) {
+        if (formLink.trim() && !safeLink && !keepsExistingLink) {
             showToast('링크는 https:// 주소만 입력할 수 있습니다. 설치형 앱은 안전한 주소만 열 수 있습니다.', 'error');
             return;
         }
         const fields = {
             title: formTitle.trim(),
-            link: safeLink || '',
+            link: keepsExistingLink && editingResource ? editingResource.link : safeLink || '',
             memo: formMemo,
         };
 
@@ -295,7 +305,7 @@ export default function InfoMate() {
                                 <div className="flex items-start justify-between gap-3">
                                     <div className="flex-1 min-w-0">
                                         <h3 className="font-semibold text-white truncate">{res.title}</h3>
-                                        {getAllowedResourceUrl(res.link) && (
+                                        {getAllowedResourceUrl(res.link) ? (
                                             <a
                                                 href={getAllowedResourceUrl(res.link) || undefined}
                                                 target="_blank"
@@ -305,7 +315,13 @@ export default function InfoMate() {
                                                 <ExternalLink className="w-3 h-3 shrink-0" />
                                                 <span className="truncate">{res.link}</span>
                                             </a>
-                                        )}
+                                        ) : String(res.link || '').trim() ? (
+                                            // 예전에 저장한 http 주소 등은 숨기지 않고 글자로만 보여 준다(누를 수 있는 링크로 만들지 않는다).
+                                            <div className="mt-1 max-w-full">
+                                                <p className="text-sm text-white/60 truncate select-text" title={res.link}>{res.link}</p>
+                                                <p className="text-xs text-amber-200/80 mt-0.5">https 주소가 아니어서 앱에서 바로 열 수 없습니다. 주소를 복사해 브라우저에서 열어 주세요.</p>
+                                            </div>
+                                        ) : null}
                                         {res.memo && <p className="text-white/50 text-sm mt-2 line-clamp-2">{res.memo}</p>}
                                     </div>
                                     <div className="flex items-center gap-1">
@@ -369,8 +385,14 @@ export default function InfoMate() {
                                         placeholder="https://..."
                                         value={formLink}
                                         onChange={(e) => setFormLink(e.target.value)}
+                                        aria-describedby={isUnchangedLegacyLink(editingResource, formLink) ? 'resource-link-legacy-note' : undefined}
                                         className="input-field"
                                     />
+                                    {isUnchangedLegacyLink(editingResource, formLink) && (
+                                        <p id="resource-link-legacy-note" className="text-xs text-amber-200/80 mt-1.5">
+                                            예전에 저장한 주소라 그대로 둘 수 있습니다. 주소를 바꾸려면 https:// 주소로 입력해 주세요.
+                                        </p>
+                                    )}
                                 </div>
                                 <div>
                                     <label htmlFor="resource-memo" className="block text-sm font-medium text-white/70 mb-1.5">메모</label>

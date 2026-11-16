@@ -110,8 +110,10 @@ const caseDocs = [
     { id: 'd5', type: 'interview_note', content: '면접 기록', createdAt: secondsOf(2026, 9, 23) },
     { id: 'd6', type: 'plan', content: '계획서 본문', createdAt: secondsOf(2026, 9, 10) },
 ];
-assert.deepEqual(getEvaluationSummary(caseDocs), { lastDate: '2026-09-20', documentCount: 2, lastOpinion: ['첫째 줄 소견', '둘째 줄 소견'] });
-assert.deepEqual(getEvaluationSummary([]), { lastDate: '', documentCount: 0, lastOpinion: [] });
+// 사례관리 정기평가서(d1, type 'evaluation')는 직업평가가 아니므로 세지 않는다. 결과분석·종합소견서 이력(d2)만 센다.
+assert.deepEqual(getEvaluationSummary(caseDocs), { lastDate: '2026-08-01', documentCount: 1, episodeCount: 0, reportCount: 0, lastOpinion: ['오래된 소견'] });
+assert.deepEqual(getEvaluationSummary([]), { lastDate: '', documentCount: 0, episodeCount: 0, reportCount: 0, lastOpinion: [] });
+assert.deepEqual(getEvaluationSummary([caseDocs[0]]), { lastDate: '', documentCount: 0, episodeCount: 0, reportCount: 0, lastOpinion: [] }, 'a periodic case review alone is not a vocational evaluation');
 assert.deepEqual(getEmploymentSummary(caseDocs, withNote), { supportedEmployment: null, matchingCount: 2, interviewCount: 1, comparisonCount: 1, lastCheckDate: '2026-09-23', checkCount: 1 });
 assert.equal(extractLatestDateKey('상담 2026.9.3 후 2026년 9월 18일 재상담, 잘못된 2026-13-40'), '2026-09-18');
 assert.equal(extractLatestDateKey('날짜 없음'), '');
@@ -202,3 +204,58 @@ const sePrompt = buildSituationSummaryPrompt({ stage: '지원고용', evaluation
 assert.match(sePrompt, /\[지원고용\] 지원고용 14차 · 진행중/);
 assert.equal(sePrompt.includes('합성-계좌'), false);
 console.log('PASS supported employment: active/employed stage, card line, per-seeker active count, labelled timeline entry to the new tab');
+
+// ─── 직업평가 워크벤치 문서(ve_*): 직업평가로 세고, 한 회차의 여러 문서를 여러 평가로 세지 않으며, 평가 화면으로 이동 ───
+const veJson = value => JSON.stringify({ version: 1, ...value });
+const veDocs = [
+    { id: 'ep1', type: 've_episode', seekerId: 's1', title: '2026년 9월 직업평가', content: veJson({ id: 'ep1', evaluationDate: '2026-09-15', status: 'COMPLETED' }), createdAt: secondsOf(2026, 9, 14), updatedAt: secondsOf(2026, 9, 30) },
+    { id: 'ss1', type: 've_session', seekerId: 's1', title: '퍼듀 검사 기록', content: veJson({ episodeId: 'ep1', memo: '합성-검사-메모' }), createdAt: secondsOf(2026, 9, 15) },
+    { id: 'ss2', type: 've_session', seekerId: 's1', title: '그립 검사 기록', content: veJson({ episodeId: 'ep1' }), createdAt: secondsOf(2026, 9, 15) },
+    { id: 'src1', type: 've_source_document', seekerId: 's1', title: '공식 결과지 확인값', content: veJson({ episodeId: 'ep1' }), createdAt: secondsOf(2026, 9, 16) },
+    { id: 'an1', type: 've_analysis_document', seekerId: 's1', title: '검사 분석지 정리', content: veJson({ episodeId: 'ep1' }), createdAt: secondsOf(2026, 9, 16) },
+    { id: 'rp1', type: 've_report', seekerId: 's1', title: '직업평가보고서 v1', content: veJson({ episodeId: 'ep1', reportVersion: 1, writtenOn: '2026-09-18', summary: { overallOpinion: '첫 버전 소견' } }), createdAt: secondsOf(2026, 9, 18) },
+    { id: 'rp2', type: 've_report', seekerId: 's1', title: '직업평가보고서 v2', content: veJson({ episodeId: 'ep1', reportVersion: 2, writtenOn: '2026-09-18', summary: { overallOpinion: '수정한 종합소견 첫 줄\n\n둘째 줄\n셋째 줄' } }), createdAt: secondsOf(2026, 9, 18) },
+];
+assert.deepEqual(getEvaluationSummary(veDocs), { lastDate: '2026-09-18', documentCount: 1, episodeCount: 1, reportCount: 2, lastOpinion: ['수정한 종합소견 첫 줄', '둘째 줄'] },
+    'one finished workbench episode is one evaluation, and the latest report version supplies the opinion');
+// 이력 문서(결과분석·종합소견서)와 정기평가서가 섞여 있어도 직업평가만 센다.
+const mixedEvaluation = getEvaluationSummary([...caseDocs, ...veDocs]);
+assert.equal(mixedEvaluation.documentCount, 2, 'legacy history document + one workbench episode');
+assert.equal(mixedEvaluation.lastDate, '2026-09-18');
+assert.deepEqual(mixedEvaluation.lastOpinion, ['수정한 종합소견 첫 줄', '둘째 줄']);
+// 보고서가 아직 없는 회차: 평가 건수에는 들어가고, 소견은 비어 있다(원문 JSON을 소견으로 보여 주지 않는다).
+const inProgress = getEvaluationSummary(veDocs.slice(0, 3));
+assert.deepEqual(inProgress, { lastDate: '2026-09-15', documentCount: 1, episodeCount: 1, reportCount: 0, lastOpinion: [] });
+// 평가일을 적지 않은 회차는 문서 날짜로 본다.
+assert.equal(getEvaluationSummary([{ ...veDocs[0], content: veJson({ id: 'ep1', evaluationDate: '' }) }]).lastDate, '2026-09-30');
+// 회차 문서를 읽지 못해도 하위 문서가 가리키는 회차를 한 건으로 센다. 서로 다른 회차는 따로 센다.
+assert.equal(getEvaluationSummary([veDocs[1], veDocs[2], veDocs[5]]).episodeCount, 1);
+assert.equal(getEvaluationSummary([...veDocs, { id: 'ep2', type: 've_episode', seekerId: 's1', content: veJson({ id: 'ep2', evaluationDate: '2026-11-02' }) }]).episodeCount, 2);
+assert.equal(getEvaluationSummary([...veDocs, { id: 'ep2', type: 've_episode', seekerId: 's1', content: veJson({ id: 'ep2', evaluationDate: '2026-11-02' }) }]).lastDate, '2026-11-02');
+// 본문이 깨진 문서가 있어도 예외 없이 나머지를 센다.
+const withBroken = getEvaluationSummary([...veDocs, { id: 'broken', type: 've_report', seekerId: 's1', content: '{broken', createdAt: secondsOf(2026, 9, 19) }]);
+assert.equal(withBroken.episodeCount, 1);
+assert.equal(withBroken.reportCount, 3);
+assert.deepEqual(withBroken.lastOpinion, ['수정한 종합소견 첫 줄', '둘째 줄'], 'broken JSON is never shown as an opinion');
+
+const veTimeline = buildTimeline(veDocs, EMPTY_REHAB_WORKFLOW, null, seeker);
+assert.equal(veTimeline.length, veDocs.length);
+for (const entry of veTimeline) {
+    assert.equal(entry.kind, 'vocational_evaluation', `${entry.id} is a vocational evaluation document, not a generic work document`);
+    assert.equal(entry.label, '직업평가 문서');
+    assert.deepEqual(entry.target, { path: '/evaluation', state: { seekerId: 's1', seekerName: seeker.name, tab: 'workbench' } }, `${entry.id} opens the evaluation workbench`);
+    assert.equal(entry.summary.includes('{'), false, 'raw JSON is never shown in the timeline');
+}
+assert.equal(veTimeline.find(entry => entry.id === 'rp2').summary, '직업평가보고서 v2');
+assert.equal(buildTimeline([{ ...veDocs[1], title: undefined }], EMPTY_REHAB_WORKFLOW, null, seeker)[0].summary, '검사 기록', 'untitled workbench document falls back to its kind name');
+// 결과분석·종합소견서 이력 문서는 그대로 이력 탭의 해당 문서로 이동한다.
+assert.deepEqual(buildTimeline([caseDocs[1]], EMPTY_REHAB_WORKFLOW, null, seeker)[0].target, { path: '/evaluation', state: { seekerId: 's1', seekerName: seeker.name, documentId: 'd2' } });
+
+const vePrompt = buildSituationSummaryPrompt({ stage: '평가', evaluation: getEvaluationSummary(veDocs), training: null,
+    employment: getEmploymentSummary(veDocs, EMPTY_REHAB_WORKFLOW), nextActions: [], goals: [] });
+assert.match(vePrompt, /\[직업평가\] 문서 1건\(워크벤치 평가 회차 1건, 평가보고서 2건 포함\), 최근 2026-09-18/);
+assert.match(vePrompt, /수정한 종합소견 첫 줄/);
+assert.equal(vePrompt.includes('합성-검사-메모'), false, 'session JSON is not sent to the AI summary');
+assert.match(buildSituationSummaryPrompt({ stage: '평가', evaluation: getEvaluationSummary(caseDocs), training: null,
+    employment: getEmploymentSummary([], EMPTY_REHAB_WORKFLOW), nextActions: [], goals: [] }), /\[직업평가\] 문서 1건, 최근 2026-08-01/);
+console.log('PASS vocational evaluation workbench documents: counted per episode, periodic case reviews excluded, timeline opens the evaluation workbench');

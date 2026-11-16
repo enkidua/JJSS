@@ -156,6 +156,32 @@ export function attendanceRuleNote(logs: readonly SupportedEmploymentDailyLog[])
     return parts.length ? parts.join(' · ') : '결석·지각·조퇴가 없어 모든 훈련일을 지급합니다.';
 }
 
+// ─── 사업체 선택 ───
+
+/**
+ * 사업체(구인정보)를 골랐을 때 사업체명·훈련직무를 채운다.
+ * 훈련직무가 비어 있거나 이전에 고른 사업체의 직무가 자동으로 들어간 그대로이면 새 사업체의 직무로 바꾼다.
+ * (A 사업체를 골랐다가 B로 바꿨는데 A의 직무가 남아 서류에 찍히는 일을 막는다.)
+ * 담당자가 직접 적은 직무는 건드리지 않는다. "사업체 선택 안 함"으로 돌리면 적어 둔 값을 그대로 둔다.
+ */
+export function applyEmployerSelection(
+    current: SupportedEmploymentCase,
+    jobId: string,
+    jobs: ReadonlyArray<{ id?: string; companyName?: string; jobRole?: string }>,
+): SupportedEmploymentCase {
+    const job = jobId ? jobs.find(item => item.id === jobId) : undefined;
+    if (!job) return { ...current, jobId };
+    const previousJob = current.jobId ? jobs.find(item => item.id === current.jobId) : undefined;
+    const currentTitle = current.jobTitle.trim();
+    const autoFilled = !currentTitle || (Boolean(previousJob) && currentTitle === (previousJob!.jobRole || '').trim());
+    return {
+        ...current,
+        jobId,
+        employerName: job.companyName || current.employerName,
+        jobTitle: autoFilled ? (job.jobRole || '') : current.jobTitle,
+    };
+}
+
 // ─── 목록 ───
 
 export function nextRoundNumber(cases: ReadonlyArray<Pick<SupportedEmploymentCase, 'round'>>): number {

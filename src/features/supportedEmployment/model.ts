@@ -235,10 +235,12 @@ export function createEmptyCase(init: Partial<SupportedEmploymentCase> = {}): Su
 
 /**
  * 다음 회차 복사(D-5): 같은 이용자·사업체·직무·지도원·계좌를 복사하고
- * 기간·일지·출근부·평가·결과는 비운다. 단가는 전달한 연도(없으면 올해) 기본값.
+ * 기간·일지·출근부·평가·결과는 비운다.
+ * 단가도 이전 회차 값(담당자가 고친 금액 포함)을 그대로 가져온다. 기본값으로 되돌리면 고쳐 둔 금액이 말없이 사라진다.
+ * 기준 연도(rates.year)도 이전 회차 것을 유지하므로, 해가 바뀐 회차에서는 화면이 고시 금액 확인을 안내한다(describeRateBasis).
  */
-export function copyCaseForNextRound(previous: SupportedEmploymentCase, year?: number): SupportedEmploymentCase {
-    const next = createEmptyCase({
+export function copyCaseForNextRound(previous: SupportedEmploymentCase): SupportedEmploymentCase {
+    return createEmptyCase({
         round: (previous.round || 0) + 1,
         seekerId: previous.seekerId,
         seekerName: previous.seekerName,
@@ -252,11 +254,10 @@ export function copyCaseForNextRound(previous: SupportedEmploymentCase, year?: n
         coach: { ...previous.coach },
         traineePayee: { ...previous.traineePayee },
         employerPayee: { ...previous.employerPayee },
+        rates: { ...previous.rates },
         budgetProjectId: previous.budgetProjectId,
         ...(previous.documentOptions ? { documentOptions: { ...previous.documentOptions } } : {}),
     });
-    if (year) next.rates = getDefaultRates(year);
-    return next;
 }
 
 // ─── 직렬화 ───

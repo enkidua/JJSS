@@ -23,12 +23,14 @@ import {
     copyWithToast,
     getTrainingRecord,
     initialRooms,
+    resolveProgressYear,
     sanitizeTrainingRooms,
     type GeneratingKind,
     type TrainingRoom,
     type TrainingTab,
 } from './training/trainingModel';
 import { useTrainingState } from './training/useTrainingState';
+import { useTraineePhotoShrink } from './training/useTraineePhotoShrink';
 import { TrainingPlanTab } from './training/TrainingPlanTab';
 import { TrainingRoomsTab } from './training/TrainingRoomsTab';
 import { AttendanceTab } from './training/AttendanceTab';
@@ -102,6 +104,12 @@ export default function WorkTraining() {
                 : '직업훈련 자료의 저장이 아직 완료되지 않았습니다.\n안전하게 보관하려면 저장 완료를 기다려 주세요. 지금 다른 메뉴로 이동할까요?',
     );
 
+    // 예전에 원본 크기로 저장된 훈련생 사진을 불러온 뒤 한 번 줄입니다(줄인 결과는 자동 저장으로 보관).
+    useTraineePhotoShrink(rooms, setRooms, loadState === 'ready');
+
+    // 기준연도 칸이 비었거나 덜 적힌 동안에는 올해 기준으로 읽고 씁니다(빈 연도 ''로 저장되지 않게 함).
+    const effectiveProgressYear = resolveProgressYear(progressYear, currentYear, progressBook);
+
     const selectedRoom = rooms.find(room => room.id === selectedRoomId) || rooms[0];
     const totalTrainees = rooms.reduce((sum, room) => sum + room.trainees.length, 0);
     const selectedTrainee = rooms.flatMap(room => room.trainees).find(trainee => trainee.id === selectedTraineeId) || null;
@@ -114,8 +122,10 @@ export default function WorkTraining() {
         if (!initialized || loadState !== 'ready') return;
         setRooms(prevRooms => {
             const nextRooms = sanitizeTrainingRooms(prevRooms, seekers);
+            // 명단 수뿐 아니라 이용자 관리에서 고친 이름이 반영된 경우도 변경으로 봅니다
+            // (sanitizeTrainingRooms는 바뀐 것이 없는 훈련실을 같은 객체로 돌려줍니다).
             const changed = nextRooms.length !== prevRooms.length
-                || nextRooms.some((room, index) => room.trainees.length !== (prevRooms[index]?.trainees?.length ?? -1));
+                || nextRooms.some((room, index) => room !== prevRooms[index]);
             if (!changed) return prevRooms;
             setSelectedTraineeId(prev => {
                 if (!prev) return prev;
@@ -184,7 +194,7 @@ export default function WorkTraining() {
             name: `신규 훈련실 ${rooms.length + 1}`,
             teacher: '',
             program: '',
-            year: progressYear,
+            year: effectiveProgressYear,
             trainees: [],
         };
         setRooms(prev => [...prev, nextRoom]);
@@ -244,7 +254,7 @@ export default function WorkTraining() {
                         <div className="grid grid-cols-3 gap-3">
                             <StatPill label="훈련실" value={`${rooms.length}개`} />
                             <StatPill label="훈련생" value={`${totalTrainees}명`} />
-                            <StatPill label="기준연도" value={progressYear} />
+                            <StatPill label="기준연도" value={effectiveProgressYear} />
                         </div>
                         <div className="flex items-center justify-end gap-2 rounded-2xl bg-slate-900/70 border border-white/10 p-2">
                             <SaveStatusBadge status={loadState === 'ready' ? saveStatus : loadState} lastSavedAt={lastSavedAt} />
@@ -339,7 +349,7 @@ export default function WorkTraining() {
                                     selectedTrainee={selectedTrainee}
                                     seekers={seekers}
                                     attendanceBook={attendanceBook}
-                                    progressYear={progressYear}
+                                    progressYear={effectiveProgressYear}
                                     progressBook={progressBook}
                                     trainingRecords={trainingRecords}
                                     setTrainingRecords={setTrainingRecords}
@@ -385,6 +395,7 @@ export default function WorkTraining() {
                                     selectedRoomId={selectedRoomId}
                                     setSelectedRoomId={selectRoom}
                                     progressYear={progressYear}
+                                    effectiveYear={effectiveProgressYear}
                                     setProgressYear={setProgressYear}
                                     progressBook={progressBook}
                                     setProgressBook={setProgressBook}

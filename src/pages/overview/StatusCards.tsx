@@ -42,10 +42,12 @@ export function StatusCards({ seeker, evaluation, training, employment }: Props)
             <dl>
                 <Row label="최근 평가일" value={evaluation.lastDate || '기록 없음'} />
                 <Row label="평가 문서" value={`${evaluation.documentCount}건`} />
+                {/* 워크벤치 평가는 한 회차에 문서가 여러 건이라 회차·보고서 수로 따로 보여 줍니다. */}
+                {evaluation.episodeCount > 0 && <Row label="워크벤치 평가" value={`회차 ${evaluation.episodeCount}건 · 보고서 ${evaluation.reportCount}건`} />}
             </dl>
             {evaluation.lastOpinion.length > 0
                 ? <div className="mt-2 text-sm text-white/70 wrap-break-word"><p className="text-white/45 text-xs">마지막 소견</p>{evaluation.lastOpinion.map((line, index) => <p key={index} className="line-clamp-2">{line}</p>)}</div>
-                : <p className="mt-2 text-xs text-white/45">이 이용자와 연결된 평가 문서가 없습니다.</p>}
+                : <p className="mt-2 text-xs text-white/45">{evaluation.documentCount > 0 ? '아직 작성된 종합소견이 없습니다.' : '이 이용자와 연결된 평가 문서가 없습니다.'}</p>}
         </Card>
 
         <Card title="직업훈련" icon={<Dumbbell className="w-5 h-5 text-violet-300" aria-hidden="true" />}

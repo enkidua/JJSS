@@ -17,6 +17,7 @@ export function ProgressTab({
     selectedRoomId,
     setSelectedRoomId,
     progressYear,
+    effectiveYear,
     setProgressYear,
     progressBook,
     setProgressBook,
@@ -25,31 +26,35 @@ export function ProgressTab({
     rooms: TrainingRoom[];
     selectedRoomId: string;
     setSelectedRoomId: (id: string) => void;
+    /** 입력칸에 적힌 그대로의 값(입력 중에는 비어 있거나 덜 적힌 상태일 수 있음) */
     progressYear: string;
+    /** 실제로 진도를 읽고 쓰는 연도. 입력칸이 비었거나 4자리가 아니면 올해입니다(빈 연도 '' 로 저장되지 않게 함). */
+    effectiveYear: string;
     setProgressYear: (year: string) => void;
     progressBook: ProgressBook;
     setProgressBook: (book: ProgressBook | ((prev: ProgressBook) => ProgressBook)) => void;
 }) {
-    const yearBook = progressBook[progressYear] || {};
+    const yearBook = progressBook[effectiveYear] || {};
+    const yearInputPending = progressYear.trim() !== effectiveYear;
     const [expandedTraineeId, setExpandedTraineeId] = useState(room.trainees[0]?.id || '');
 
     const toggleProgram = (traineeId: string, key: ProgramKey) => {
         setProgressBook(prev => ({
             ...prev,
-            [progressYear]: {
-                ...(prev[progressYear] || {}),
-                [traineeId]: buildProgressState(prev[progressYear]?.[traineeId], key),
+            [effectiveYear]: {
+                ...(prev[effectiveYear] || {}),
+                [traineeId]: buildProgressState(prev[effectiveYear]?.[traineeId], key),
             },
         }));
     };
 
     const updateProgramNote = (traineeId: string, key: ProgramKey, note: string) => {
         setProgressBook(prev => {
-            const current = ensureProgressEntry(prev[progressYear]?.[traineeId]);
+            const current = ensureProgressEntry(prev[effectiveYear]?.[traineeId]);
             return {
                 ...prev,
-                [progressYear]: {
-                    ...(prev[progressYear] || {}),
+                [effectiveYear]: {
+                    ...(prev[effectiveYear] || {}),
                     [traineeId]: {
                         ...current,
                         [key]: { ...current[key], note },
@@ -66,9 +71,24 @@ export function ProgressTab({
                     <h2 className="text-2xl font-black text-white">훈련상황 진도</h2>
                     <p className="text-white/40 text-sm mt-1">연도별로 어떤 훈련프로그램을 진행했는지 자가점검합니다.</p>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                    <RoomSelect rooms={rooms} selectedRoomId={selectedRoomId} setSelectedRoomId={setSelectedRoomId} />
-                    <input value={progressYear} onChange={e => setProgressYear(e.target.value)} placeholder="2026" className="input-field w-28" aria-label="기준연도" />
+                <div className="flex flex-col lg:items-end gap-1">
+                    <div className="flex flex-wrap gap-2">
+                        <RoomSelect rooms={rooms} selectedRoomId={selectedRoomId} setSelectedRoomId={setSelectedRoomId} />
+                        <input
+                            value={progressYear}
+                            onChange={e => setProgressYear(e.target.value)}
+                            placeholder={effectiveYear}
+                            inputMode="numeric"
+                            className="input-field w-28"
+                            aria-label="기준연도"
+                            aria-describedby={yearInputPending ? 'progress-year-hint' : undefined}
+                        />
+                    </div>
+                    {yearInputPending && (
+                        <p id="progress-year-hint" className="text-xs text-amber-200/90">
+                            연도 4자리를 입력해 주세요. 지금은 {effectiveYear}년 기준으로 표시·저장합니다.
+                        </p>
+                    )}
                 </div>
             </div>
 
@@ -82,7 +102,7 @@ export function ProgressTab({
                             <button type="button" aria-expanded={isExpanded} onClick={() => setExpandedTraineeId(isExpanded ? '' : trainee.id)} className="w-full flex items-center justify-between gap-3 text-left">
                                 <div>
                                     <h3 className="font-black text-white">{trainee.name}</h3>
-                                    <p className="text-xs text-white/35">{room.name} · {progressYear}년 진행 프로그램 {doneCount}/4</p>
+                                    <p className="text-xs text-white/35">{room.name} · {effectiveYear}년 진행 프로그램 {doneCount}/4</p>
                                 </div>
                                 <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-400/20 flex items-center justify-center text-emerald-200 font-black">
                                     {doneCount}

@@ -191,3 +191,55 @@ export function mapRehabPlanFormData(seeker: Seeker, planText: string, meetingTe
         },
     };
 }
+
+const sameGoals = (a: RehabPlanGoal[], b: RehabPlanGoal[]) => a.length === b.length && a.every((goal, index) => {
+    const other = b[index];
+    return goal.longTermGoal === other.longTermGoal && goal.shortTermGoal === other.shortTermGoal
+        && goal.servicePeriod === other.servicePeriod && goal.methodsAndStaff === other.methodsAndStaff
+        && goal.achieved === other.achieved;
+});
+
+/**
+ * 본문(계획서·회의록)이 바뀌어 자동 매핑을 다시 할 때, 담당자가 손으로 고친 칸은 그대로 두고 나머지만 새 매핑값으로 바꾼다.
+ * 손으로 고쳤는지는 "지금 값이 지난번 자동 매핑값과 다른가"로 판단한다(생년월일·주소·연락처·결재·참석자처럼
+ * 본문에 없어 직접 채운 칸이 본문을 한 글자 고쳤다고 말없이 지워지면 안 된다).
+ * 목표 표는 행 단위로 엮여 있어 한 칸이라도 고쳤으면 표 전체를 유지한다.
+ * - current: 화면에 있는 값 / previousAuto: 지난번 자동 매핑 결과 / nextAuto: 바뀐 본문으로 다시 매핑한 결과
+ */
+export function mergeRemappedRehabPlan(
+    current: RehabPlanFormData, previousAuto: RehabPlanFormData, nextAuto: RehabPlanFormData,
+): RehabPlanFormData {
+    const mergeFields = <T extends Record<string, string>>(now: T, before: T, next: T): T => {
+        const merged: Record<string, string> = { ...next };
+        for (const key of Object.keys(now)) {
+            if (now[key] !== before[key]) merged[key] = now[key];
+        }
+        return merged as T;
+    };
+    const top = mergeFields(
+        { strengths: current.strengths, considerations: current.considerations, supportDirection: current.supportDirection, note: current.note, vocationalGoal: current.vocationalGoal },
+        { strengths: previousAuto.strengths, considerations: previousAuto.considerations, supportDirection: previousAuto.supportDirection, note: previousAuto.note, vocationalGoal: previousAuto.vocationalGoal },
+        { strengths: nextAuto.strengths, considerations: nextAuto.considerations, supportDirection: nextAuto.supportDirection, note: nextAuto.note, vocationalGoal: nextAuto.vocationalGoal },
+    );
+    return {
+        approval: mergeFields(current.approval, previousAuto.approval, nextAuto.approval),
+        client: mergeFields(current.client, previousAuto.client, nextAuto.client),
+        background: mergeFields(current.background, previousAuto.background, nextAuto.background),
+        opinions: mergeFields(current.opinions, previousAuto.opinions, nextAuto.opinions),
+        caseMeeting: mergeFields(current.caseMeeting, previousAuto.caseMeeting, nextAuto.caseMeeting),
+        ...top,
+        goals: sameGoals(current.goals, previousAuto.goals) ? nextAuto.goals : current.goals,
+        footer: mergeFields(current.footer, previousAuto.footer, nextAuto.footer),
+    };
+}
+
+/** 손으로 고친 칸이 하나라도 있는지(자동 매핑 결과와 다른 값이 있는지). */
+export function hasManualRehabPlanEdits(current: RehabPlanFormData, auto: RehabPlanFormData): boolean {
+    const differs = (now: Record<string, string>, before: Record<string, string>) => Object.keys(now).some(key => now[key] !== before[key]);
+    return differs(current.approval, auto.approval) || differs(current.client, auto.client)
+        || differs(current.background, auto.background) || differs(current.opinions, auto.opinions)
+        || differs(current.caseMeeting, auto.caseMeeting) || differs(current.footer, auto.footer)
+        || current.strengths !== auto.strengths || current.considerations !== auto.considerations
+        || current.supportDirection !== auto.supportDirection || current.note !== auto.note
+        || current.vocationalGoal !== auto.vocationalGoal || !sameGoals(current.goals, auto.goals);
+}

@@ -51,6 +51,9 @@ export interface TrainingRecord {
     counselingDate: string;
     counselingPlace: string;
     counselingMemo: string;
+    /** 정기평가 일시·장소. 상담일시·상담장소와 따로 보관합니다(예전에는 상담 칸에 함께 저장되어 서로 덮어썼습니다). */
+    evaluationDate: string;
+    evaluationPlace: string;
     evaluationMemo: string;
     insightMemo: string;
 }
@@ -109,6 +112,8 @@ const RECORD_TEXT_KEYS = [
     'counselingDate',
     'counselingPlace',
     'counselingMemo',
+    'evaluationDate',
+    'evaluationPlace',
     'evaluationMemo',
     'insightMemo',
 ] as const;
@@ -141,17 +146,69 @@ export function isSeekerAssigned(rooms: TrainingRoom[], seeker: Seeker) {
     return rooms.some(room => room.trainees.some(trainee => !!trainee.seekerId && isSameSeeker(seeker, { id: trainee.seekerId })));
 }
 
+/** 훈련생 명단에 보이는 한 줄 메모(장애유형·중경증·희망직무·생년월일·특이사항). 이용자 정보에서 만듭니다. */
+export function buildTraineeMemo(seeker: Seeker) {
+    return [
+        seeker.disabilityType,
+        seeker.severity,
+        seeker.desiredJob1 || seeker.desiredJob2,
+        getSeekerProfileValue(seeker, ['birthDate', 'birthday', 'dateOfBirth']),
+        seeker.notes,
+    ].filter(Boolean).join(' / ');
+}
+
+/**
+ * 훈련생의 이름·메모는 명단에 추가한 날의 복사본이라, 이용자 관리에서 이름을 고쳐도 따라오지 않았습니다.
+ * 연결된 이용자가 있으면 현재 이용자 정보로 맞춥니다. 바뀐 것이 없으면 같은 객체를 돌려줍니다(불필요한 저장 방지).
+ * 이용자 쪽 값이 비어 있으면 기존 값을 지우지 않습니다.
+ */
+function syncTraineeWithSeeker(trainee: Trainee, seeker: Seeker | undefined): Trainee {
+    if (!seeker) return trainee;
+    const name = typeof seeker.name === 'string' && seeker.name.trim() ? seeker.name : trainee.name;
+    const memo = buildTraineeMemo(seeker) || trainee.memo;
+    if (name === trainee.name && memo === trainee.memo) return trainee;
+    return { ...trainee, name, memo };
+}
+
 export function sanitizeTrainingRooms(rooms: TrainingRoom[], seekers: Seeker[] = []) {
     const seekerIds = new Set(seekers.flatMap(seeker => [seeker.id, seeker.seekerId]).filter(Boolean));
-    return (rooms.length ? rooms : initialRooms).map(room => ({
-        ...room,
-        trainees: (room.trainees || []).filter(trainee => {
-            if (trainee.id.startsWith('sample-')) return false;
-            if (!trainee.seekerId) return false;
-            if (seekerIds.size === 0) return true;
-            return seekerIds.has(trainee.seekerId);
-        }),
-    }));
+    // findSeekerForTrainee와 같은 규칙(id 또는 seekerId가 같은 첫 이용자)으로 찾되, 한 번만 훑도록 표로 만듭니다.
+    const seekerByKey = new Map<string, Seeker>();
+    seekers.forEach(seeker => {
+        [seeker.id, seeker.seekerId].forEach(key => {
+            if (key === undefined || key === null || !String(key).trim()) return;
+            if (!seekerByKey.has(String(key))) seekerByKey.set(String(key), seeker);
+        });
+    });
+    return (rooms.length ? rooms : initialRooms).map(room => {
+        const original = Array.isArray(room.trainees) ? room.trainees : [];
+        const trainees = original
+            .filter(trainee => {
+                if (trainee.id.startsWith('sample-')) return false;
+                if (!trainee.seekerId) return false;
+                if (seekerIds.size === 0) return true;
+                return seekerIds.has(trainee.seekerId);
+            })
+            .map(trainee => syncTraineeWithSeeker(trainee, seekerByKey.get(String(trainee.seekerId))));
+        // 바뀐 것이 없으면 같은 훈련실 객체를 돌려줘, 호출한 쪽이 변경 여부를 객체 비교로 알 수 있게 합니다.
+        const unchanged = Array.isArray(room.trainees)
+            && trainees.length === original.length
+            && trainees.every((trainee, index) => trainee === original[index]);
+        return unchanged ? room : { ...room, trainees };
+    });
+}
+
+/**
+ * 진도 기록에 쓸 기준연도. 입력칸이 비었거나 연도 4자리가 아니면 올해(fallbackYear)를 씁니다.
+ * (빈 칸 그대로 쓰면 진도가 progressBook['']에 저장되어 다시 찾을 수 없었습니다.)
+ * 예전에 '2026년'처럼 다른 모양으로 저장해 둔 연도는 그대로 열 수 있게 둡니다.
+ */
+export function resolveProgressYear(input: string | undefined, fallbackYear: string, progressBook: ProgressBook = {}): string {
+    const text = String(input ?? '').trim();
+    if (/^\d{4}$/.test(text)) return text;
+    const saved = text ? progressBook[text] : undefined;
+    if (saved && typeof saved === 'object' && Object.keys(saved).length > 0) return text;
+    return fallbackYear;
 }
 
 export function sanitizeTrainingRecords(records: TrainingRecordBook = {}) {

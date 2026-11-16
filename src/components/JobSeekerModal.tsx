@@ -65,6 +65,15 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
     const ocrAbortRef = useRef<AbortController | null>(null);
     const [saving, setSaving] = useState(false);
     const busy = saving || loading || bulkLoading || ocrLoading;
+    // 저장소의 error는 앱 전체가 함께 쓰는 값이라, 다른 화면에서 난 예전 오류가 새로 연 등록창에 그대로 보인다.
+    // 창을 여는 순간 이미 있던 오류는 빼고, 이 창을 연 뒤에 생긴 오류만 보여 준다.
+    const staleErrorRef = useRef<string | null>(null);
+    const wasOpenRef = useRef(false);
+    if (isOpen && !wasOpenRef.current) staleErrorRef.current = error;
+    wasOpenRef.current = isOpen;
+    // 예전 오류와 문구가 같은 오류가 이 창에서 다시 나도 보이게 한다.
+    const [errorRaisedHere, setErrorRaisedHere] = useState(false);
+    const dialogError = error && (errorRaisedHere || error !== staleErrorRef.current) ? error : null;
 
     const [jobData, setJobData] = useState(emptyJobData);
     const [seekerData, setSeekerData] = useState<SeekerFormData>(EMPTY_SEEKER_FORM);
@@ -86,6 +95,7 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
         setSaving(false);
         setOcrLoading(false);
         setBulkLoading(false);
+        setErrorRaisedHere(false);
         return () => {
             sessionRef.current += 1;
             ocrAbortRef.current?.abort();
@@ -261,6 +271,11 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
                 else await addJob(cleanedJobData as unknown as Parameters<typeof addJob>[0]);
             } else {
                 const cleanedSeekerData = trimStrings(seekerData);
+                // 공백만 넣은 이름은 입력칸의 필수 검사(required)를 통과하지만 앞뒤 공백을 떼면 빈 이름으로 저장된다.
+                if (!cleanedSeekerData.name) {
+                    showToast('이름을 입력해 주세요. 공백만으로는 등록할 수 없습니다.', 'error');
+                    return;
+                }
                 if (isEditMode && editItem?.id) await updateSeeker(editItem.id, cleanedSeekerData as Partial<Seeker>);
                 else await addSeeker(cleanedSeekerData as unknown as Parameters<typeof addSeeker>[0]);
             }
@@ -268,6 +283,7 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
         } catch (err: unknown) {
             if (session !== sessionRef.current) return;
             console.error('Record save failed:', safeErrorMetadata(err, 'record-save'));
+            setErrorRaisedHere(true);
             showToast('저장 중 오류가 발생했습니다. 입력한 내용은 유지됩니다.', 'error');
         } finally {
             if (session === sessionRef.current) {
@@ -389,6 +405,7 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
         } catch (err: unknown) {
             if (session !== sessionRef.current) { reportInterrupted(); return; }
             console.error('Bulk save failed:', safeErrorMetadata(err, 'bulk-save'));
+            setErrorRaisedHere(true);
             // 이미 저장된 행은 입력칸에서 빼서, 다시 저장해도 중복 등록되지 않게 합니다(건너뛴 중복 행도 뺍니다).
             const remainingRows = plan.toSave.slice(savedCount);
             setBulkData(remainingRows.map(row => row.text).join('\n'));
@@ -468,8 +485,8 @@ export default function JobSeekerModal({ isOpen, onClose, type, onSuccess, editI
                 </div>}
 
                 <div className="p-6 space-y-4">
-                    {error && (
-                        <div className="p-3 bg-red-500/20 border border-red-500 text-red-300 rounded-lg text-sm">{error}</div>
+                    {dialogError && (
+                        <div className="p-3 bg-red-500/20 border border-red-500 text-red-300 rounded-lg text-sm">{dialogError}</div>
                     )}
 
                     {inputMode === 'single' ? (

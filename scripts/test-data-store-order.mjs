@@ -121,5 +121,41 @@ read = async name => {
 await assert.rejects(store.getState().fetchExpenses(), /지출 내역/);
 assert.equal(unstableReads, 3, 're-reading must be bounded');
 assert.deepEqual(byId(store.getState().expenses), byId(records.get('expenses')));
-delete globalThis.__orderDB;
 console.log('PASS continuously changing lists fail without overwriting current state or infinite retries');
+
+// 사례문서 식별자 보강: 지운 이용자의 남은 문서를 나중에 등록한 동명이인에게 붙이지 않는다(남의 기록이 섞이지 않게).
+{
+    read = async name => structuredClone(records.get(name) || []);
+    query = async (name, filter) => (await read(name)).filter(filter);
+    const deletedId = 'a'.repeat(32);                 // 이 앱이 만든 id 모양(이용자는 "문서는 남기기"로 삭제됨)
+    const newcomerId = 'b'.repeat(32);
+    records.set('seekers', [
+        { id: newcomerId, name: '김합성', seekerId: 'N-1' },
+        { id: 'c'.repeat(32), name: '이합성', seekerId: 'OLD-7' },
+        { id: 'd'.repeat(32), name: '박합성', seekerId: '' },
+    ]);
+    records.set('jobs', []);
+    records.set('caseDocuments', [
+        { id: 'doc-deleted', seekerId: deletedId, seekerName: '김합성', content: '지운 이용자의 상담일지' },
+        { id: 'doc-legacy-key', seekerId: 'OLD-7', seekerName: '이합성', content: '예전 관리번호로 연결된 문서' },
+        { id: 'doc-legacy-name', seekerId: 'legacy-2024-003', seekerName: '박합성', content: '예전 식별자 + 이름' },
+        { id: 'doc-name-only', seekerName: '박합성', content: '식별자 없이 이름만' },
+        { id: 'doc-unknown', seekerId: 'legacy-x', seekerName: '없는사람', content: '맞는 이용자 없음' },
+    ]);
+    await store.getState().fetchData(true);
+    const docs = Object.fromEntries(records.get('caseDocuments').map(doc => [doc.id, doc]));
+    assert.equal(docs['doc-deleted'].seekerId, deletedId, '지운 이용자의 문서를 동명이인(새 이용자)에게 붙이지 않는다');
+    assert.equal(docs['doc-legacy-key'].seekerId, 'c'.repeat(32), '관리번호로 찾은 문서는 이용자 id로 보강');
+    assert.equal(docs['doc-legacy-name'].seekerId, 'd'.repeat(32), '예전 식별자는 이름이 하나뿐일 때 이어 준다');
+    assert.equal(docs['doc-name-only'].seekerId, 'd'.repeat(32), '식별자 없는 문서는 이름으로 이어 준다');
+    assert.equal(docs['doc-unknown'].seekerId, 'legacy-x');
+    // 2,000명 × 20,000건에서도 색인으로 한 번에 끝난다(전에는 문서마다 이용자 전체를 훑었다).
+    records.set('seekers', Array.from({ length: 2000 }, (_, i) => ({ id: i.toString(16).padStart(32, '0'), name: `합성${i}`, seekerId: `K-${i}` })));
+    records.set('caseDocuments', Array.from({ length: 20000 }, (_, i) => ({ id: `bulk-${i}`, seekerId: (i % 2000).toString(16).padStart(32, '0'), content: 'x' })));
+    const started = Date.now();
+    await store.getState().fetchData(true);
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 1500, `색인 기반 보강은 빨라야 한다(${elapsed}ms)`);
+    console.log(`PASS deleted seeker's documents are not re-linked to a later namesake; legacy keys still heal (${elapsed}ms for 2,000 × 20,000)`);
+}
+delete globalThis.__orderDB;

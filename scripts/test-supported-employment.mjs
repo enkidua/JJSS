@@ -50,7 +50,7 @@ for (const file of [
 
 const load = relative => import(pathToFileURL(path.join(outDir, 'features', 'supportedEmployment', relative)).href);
 const model = await load('model.mjs');
-const { getDefaultRates } = await load('rates.mjs');
+const { getDefaultRates, describeRateBasis, hasRatesForYear } = await load('rates.mjs');
 const holidays = await load('holidays.mjs');
 const { generateTrainingDays, syncDailyLogs, buildCoachTimesheetFromLogs, timeRangeHours } = await load('schedule.mjs');
 const { summarizeAttendance } = await load('attendance.mjs');
@@ -305,6 +305,79 @@ await test('다음 회차 복사: 계좌·지도원 유지, 일지·평가는 �
     assert.equal(next.coach.account, case16.coach.account);
     assert.equal(next.dailyLogs.length, 0);
     assert.equal(next.id, '');
+});
+
+await test('다음 회차 복사: 담당자가 고친 단가를 기본값으로 되돌리지 않는다', () => {
+    const edited = structuredClone(case16);
+    edited.rates = { year: 2026, trainingAllowance: 36000, employerSubsidy: 20000, coachAllowance: 26000 };
+    const next = model.copyCaseForNextRound(edited);
+    assert.deepEqual(next.rates, { year: 2026, trainingAllowance: 36000, employerSubsidy: 20000, coachAllowance: 26000 });
+    next.rates.trainingAllowance = 1;
+    assert.equal(edited.rates.trainingAllowance, 36000, '복사본을 고쳐도 이전 회차 단가는 그대로');
+    // 저장 후 다시 읽어도 복사한 단가와 기준 연도가 유지된다.
+    const reopened = model.parseCase(model.serializeCase(model.copyCaseForNextRound(edited)));
+    assert.equal(reopened.ok, true);
+    assert.deepEqual(reopened.case.rates, edited.rates);
+    // 기본 단가 그대로인 회차를 복사하면 기본 단가가 이어진다.
+    assert.deepEqual(model.copyCaseForNextRound(case16).rates, case16.rates);
+});
+
+await test('단가 기준 안내: 표에 없는 연도는 대체한 사실을 알리고 그 연도 기준이라고 적지 않는다', () => {
+    assert.equal(hasRatesForYear(2026), true);
+    assert.equal(hasRatesForYear(2027), false);
+    // 표에 있는 연도의 회차: 경고 없음(담당자가 고친 금액이어도 그 연도 회차이면 그대로 둔다).
+    assert.deepEqual(describeRateBasis(getDefaultRates(2026), 2026), { basisYear: 2026, warning: '' });
+    assert.deepEqual(describeRateBasis({ year: 2026, trainingAllowance: 36000, employerSubsidy: 19340, coachAllowance: 25000 }, 2026), { basisYear: 2026, warning: '' });
+    // 2027년에 새로 만든 회차: 2026년 값이 2027년 표시로 들어온다 → 대체 사실을 알린다.
+    const fallback = describeRateBasis(getDefaultRates(2027), 2027);
+    assert.equal(fallback.basisYear, null);
+    assert.equal(fallback.warning, '2027년 고시 단가가 프로그램에 없어 2026년 단가를 넣었습니다. 고시 금액을 확인해 고쳐 주세요.');
+    // 2026년 회차를 복사해 2027년 훈련으로 쓰는 경우(기본 단가 그대로): 같은 안내.
+    assert.equal(describeRateBasis(model.copyCaseForNextRound(case16).rates, 2027).warning, fallback.warning);
+    // 고친 단가를 복사해 온 경우: 어느 회차 금액인지 알린다.
+    const copiedEdited = describeRateBasis({ year: 2026, trainingAllowance: 36000, employerSubsidy: 20000, coachAllowance: 26000 }, 2027);
+    assert.equal(copiedEdited.basisYear, null);
+    assert.ok(copiedEdited.warning.includes('2027년 고시 단가가 프로그램에 없습니다') && copiedEdited.warning.includes('2026년 회차에서 가져온'));
+    // 2027년 회차에서 담당자가 금액을 고친 뒤에도 프로그램이 확인해 준 금액처럼 보이지 않게 한다.
+    const editedIn2027 = describeRateBasis({ ...getDefaultRates(2027), trainingAllowance: 37000 }, 2027);
+    assert.equal(editedIn2027.basisYear, null);
+    assert.ok(editedIn2027.warning.includes('2027년 고시 단가가 프로그램에 없습니다') && editedIn2027.warning.includes('같은지 확인'));
+    // 새 연도 표가 추가되면 경고가 사라진다. 이전 연도에서 복사해 온 다른 금액만 알린다.
+    const table = { 2026: { trainingAllowance: 35000, employerSubsidy: 19340, coachAllowance: 25000 }, 2027: { trainingAllowance: 37000, employerSubsidy: 20000, coachAllowance: 26000 } };
+    assert.deepEqual(describeRateBasis(getDefaultRates(2027, table), 2027, table), { basisYear: 2027, warning: '' });
+    const stale = describeRateBasis(getDefaultRates(2026, table), 2027, table);
+    assert.equal(stale.basisYear, null);
+    assert.equal(stale.warning, '이 회차는 2027년 훈련인데 단가는 2026년 기준으로 들어 있습니다. 2027년 고시 금액을 확인해 고쳐 주세요.');
+    assert.deepEqual(describeRateBasis({ year: 2026, ...table[2027] }, 2027, table), { basisYear: 2027, warning: '' }, '금액이 그 연도 고시와 같으면 경고하지 않는다');
+    // 기간을 아직 정하지 않아 연도를 알 수 없으면 단가에 적힌 연도로 본다.
+    assert.deepEqual(describeRateBasis(getDefaultRates(2026), NaN), { basisYear: 2026, warning: '' });
+});
+
+await test('사업체 선택: 자동으로 들어간 훈련직무는 새 사업체 직무로 바꾸고 직접 적은 직무는 유지', async () => {
+    const { applyEmployerSelection } = await import(pathToFileURL(path.join(outDir, 'pages', 'workmate', 'supportedEmployment', 'caseEditing.mjs')).href);
+    const jobs = [
+        { id: 'job-a', companyName: '합성 사업체 A', jobRole: '매장 진열' },
+        { id: 'job-b', companyName: '합성 사업체 B', jobRole: '사무보조' },
+        { id: 'job-c', companyName: '합성 사업체 C', jobRole: '' },
+    ];
+    const blank = model.createEmptyCase({});
+    const first = applyEmployerSelection(blank, 'job-a', jobs);
+    assert.deepEqual([first.jobId, first.employerName, first.jobTitle], ['job-a', '합성 사업체 A', '매장 진열']);
+    // A → B: A에서 자동으로 들어간 직무는 B의 직무로 바뀐다.
+    const second = applyEmployerSelection(first, 'job-b', jobs);
+    assert.deepEqual([second.jobId, second.employerName, second.jobTitle], ['job-b', '합성 사업체 B', '사무보조']);
+    // 직접 적은 직무는 사업체를 바꿔도 유지한다.
+    const typed = applyEmployerSelection({ ...first, jobTitle: '상품 포장(직접 입력)' }, 'job-b', jobs);
+    assert.equal(typed.jobTitle, '상품 포장(직접 입력)');
+    assert.equal(typed.employerName, '합성 사업체 B');
+    // 새 사업체에 직무가 없으면 이전 사업체 직무를 남기지 않는다.
+    assert.equal(applyEmployerSelection(first, 'job-c', jobs).jobTitle, '');
+    // "사업체 선택 안 함"으로 돌리면 적어 둔 사업체명·직무를 지우지 않는다.
+    const cleared = applyEmployerSelection(first, '', jobs);
+    assert.deepEqual([cleared.jobId, cleared.employerName, cleared.jobTitle], ['', '합성 사업체 A', '매장 진열']);
+    // 이전 사업체가 목록에서 지워져 직무를 알 수 없으면 적혀 있는 직무를 유지한다.
+    const orphan = applyEmployerSelection({ ...blank, jobId: 'deleted', jobTitle: '매장 진열' }, 'job-b', jobs);
+    assert.equal(orphan.jobTitle, '매장 진열');
 });
 
 async function documentXml(doc) {

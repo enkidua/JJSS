@@ -21,6 +21,8 @@ function readDismissed(): string {
 export default function UpdateNotice() {
     const { available, status, busy, run } = useAppUpdates();
     const [dismissed, setDismissed] = useState(readDismissed);
+    // 받는 중·받아 둔 알림은 접어 둘 수 있다(화면 왼쪽 아래를 계속 가리지 않게). 상태가 바뀌면 다시 보인다.
+    const [collapsedPhase, setCollapsedPhase] = useState('');
 
     useEffect(() => {
         try {
@@ -35,6 +37,20 @@ export default function UpdateNotice() {
     const visible = phase === 'downloading' || phase === 'downloaded' || phase === 'installing'
         || (phase === 'available' && dismissed !== availableVersion);
     if (!visible) return null;
+    // 설치를 미뤘다는 안내(message)가 새로 오면 접혀 있어도 다시 보여 준다.
+    if ((phase === 'downloading' || phase === 'downloaded') && collapsedPhase === `${phase}:${message || ''}`) {
+        return (
+            <button
+                type="button"
+                data-testid="update-notice-collapsed"
+                onClick={() => setCollapsedPhase('')}
+                className="fixed bottom-4 left-4 z-9997 inline-flex items-center gap-1.5 rounded-full border border-primary-400/30 bg-slate-950/95 px-3 py-1.5 text-xs text-white/80 shadow-xl backdrop-blur-xl hover:text-white"
+            >
+                <Download className="h-3.5 w-3.5 text-primary-200" />
+                {phase === 'downloading' ? `업데이트 받는 중 ${percent ?? 0}%` : `새 버전 ${availableVersion} 설치 준비됨`}
+            </button>
+        );
+    }
 
     return (
         <div role="status" aria-live="polite" data-testid="update-notice" className="fixed bottom-4 left-4 z-9997 w-[min(92vw,26rem)] rounded-2xl border border-primary-400/30 bg-slate-950/95 p-4 text-sm text-white shadow-2xl backdrop-blur-xl">
@@ -81,6 +97,7 @@ export default function UpdateNotice() {
                         <>
                             <p className="font-semibold">새 버전 {availableVersion}을 설치할 준비가 됐습니다.</p>
                             <p className="mt-1 text-xs text-white/60">다시 시작하면 설치됩니다. 지금 하지 않으면 JJSS를 끌 때 설치됩니다.</p>
+                            {message && <p role="alert" className="mt-1 text-xs text-amber-200">{message}</p>}
                             <div className="mt-3 flex flex-wrap gap-2">
                                 <button type="button" disabled={busy} onClick={() => void run('install')} className="btn-primary px-3! py-1.5! text-xs inline-flex items-center gap-1.5">
                                     <RefreshCw className="h-3.5 w-3.5" /> 지금 다시 시작
@@ -92,6 +109,11 @@ export default function UpdateNotice() {
                 </div>
                 {phase === 'available' && (
                     <button type="button" aria-label="업데이트 알림 닫기" onClick={() => setDismissed(availableVersion)} className="text-white/40 hover:text-white/80">
+                        <X className="h-4 w-4" />
+                    </button>
+                )}
+                {(phase === 'downloading' || phase === 'downloaded') && (
+                    <button type="button" aria-label="업데이트 알림 접기" onClick={() => setCollapsedPhase(`${phase}:${message || ''}`)} className="text-white/40 hover:text-white/80">
                         <X className="h-4 w-4" />
                     </button>
                 )}

@@ -354,6 +354,10 @@ export function TrainingPlanTab({
                 evaluation={currentRecord.evaluation}
                 setEvaluation={value => updateRecord({ evaluation: value })}
                 onResetEvaluation={() => void confirmReset('정기평가서', { evaluation: '' })}
+                evaluationDate={currentRecord.evaluationDate}
+                evaluationPlace={currentRecord.evaluationPlace}
+                onEvaluationDateChange={value => updateRecord({ evaluationDate: value })}
+                onEvaluationPlaceChange={value => updateRecord({ evaluationPlace: value })}
                 evaluationMemo={currentRecord.evaluationMemo}
                 onEvaluationMemoChange={value => updateRecord({ evaluationMemo: value })}
                 onGenerateEvaluation={generateEvaluation}

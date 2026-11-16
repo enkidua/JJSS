@@ -26,6 +26,10 @@ export function TrainingTimelineStage({
     evaluation,
     setEvaluation,
     onResetEvaluation,
+    evaluationDate,
+    evaluationPlace,
+    onEvaluationDateChange,
+    onEvaluationPlaceChange,
     evaluationMemo,
     onEvaluationMemoChange,
     onGenerateEvaluation,
@@ -55,6 +59,10 @@ export function TrainingTimelineStage({
     evaluation: string;
     setEvaluation: (value: string) => void;
     onResetEvaluation: () => void;
+    evaluationDate: string;
+    evaluationPlace: string;
+    onEvaluationDateChange: (value: string) => void;
+    onEvaluationPlaceChange: (value: string) => void;
     evaluationMemo: string;
     onEvaluationMemoChange: (value: string) => void;
     onGenerateEvaluation: () => void;
@@ -234,8 +242,9 @@ export function TrainingTimelineStage({
                         </div>
                         <div className="p-5 space-y-4">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <TrainingInput label={isEvaluation ? '평가일시' : '상담일시'} value={date} onChange={onDateChange} placeholder="2026년 4월 24일 14:00" />
-                                <TrainingInput label={isEvaluation ? '평가장소' : '상담장소'} value={place} onChange={onPlaceChange} placeholder="훈련실 / 상담실" />
+                                {/* 평가일시·평가장소는 상담 칸과 따로 저장합니다(같은 칸을 쓰면 서로 덮어씁니다). */}
+                                <TrainingInput label={isEvaluation ? '평가일시' : '상담일시'} value={isEvaluation ? evaluationDate : date} onChange={isEvaluation ? onEvaluationDateChange : onDateChange} placeholder="2026년 4월 24일 14:00" />
+                                <TrainingInput label={isEvaluation ? '평가장소' : '상담장소'} value={isEvaluation ? evaluationPlace : place} onChange={isEvaluation ? onEvaluationPlaceChange : onPlaceChange} placeholder="훈련실 / 상담실" />
                             </div>
                             <textarea
                                 value={isEvaluation ? evaluationMemo : memo}

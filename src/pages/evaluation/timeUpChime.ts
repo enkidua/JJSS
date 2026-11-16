@@ -49,9 +49,14 @@ export function primeChime(): void {
     if (ctx && ctx.state === 'suspended') void ctx.resume().catch(() => undefined);
 }
 
-/** 디-리-링: 짧게 오르는 세 음, 마지막 음은 길게 울린다. */
+/** 검사 제한시간 알림(평가실 설정에서 끄면 울리지 않는다). */
 export function playTimeUpChime(): void {
     if (!isChimeEnabled()) return;
+    playChime();
+}
+
+/** 디-리-링: 짧게 오르는 세 음, 마지막 음은 길게 울린다. 켜고 끄기는 부르는 쪽이 정한다(프로그램 진행 타이머 등). */
+export function playChime(): void {
     const ctx = audioContext();
     if (!ctx) return;
     if (ctx.state === 'suspended') void ctx.resume().catch(() => undefined);

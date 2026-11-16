@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import type { Seeker } from '../types/matching';
 import type { RehabPlanFormData, RehabPlanGoal } from '../types/rehabPlan';
-import { createEmptyRehabPlanGoal, mapRehabPlanFormData } from '../utils/rehabPlanMapper';
+import { createEmptyRehabPlanGoal, hasManualRehabPlanEdits, mapRehabPlanFormData, mergeRemappedRehabPlan } from '../utils/rehabPlanMapper';
 import { downloadRehabPlanAsDocx } from '../utils/rehabPlanDocx';
 import { getRehabPlanExportWarnings } from '../utils/rehabPlanReview';
 import { downloadElementAsPng, printElementAsPdf } from '../utils/localDocumentExport';
@@ -218,8 +218,12 @@ export function RehabPlanTemplatePreview({ seeker, planText, meetingText }: Reha
     const [exportNotice, setExportNotice] = useState('');
     const previewRef = useRef<HTMLDivElement>(null);
     const mappedSourceRef = useRef('');
+    // 지난번 자동 매핑 결과와 그 대상 이용자. 지금 값과 견주어 손으로 고친 칸을 가려낸다.
+    const autoMappedRef = useRef<RehabPlanFormData | null>(null);
+    const mappedSeekerRef = useRef('');
     const confirm = useConfirm();
-    const sourceSignature = `${seeker.id || seeker.seekerId || seeker.name}\u0000${planText}\u0000${meetingText}`;
+    const seekerKey = seeker.id || seeker.seekerId || seeker.name;
+    const sourceSignature = `${seekerKey}\u0000${planText}\u0000${meetingText}`;
 
     useEffect(() => {
         if (!isOpen) return;
@@ -239,12 +243,25 @@ export function RehabPlanTemplatePreview({ seeker, planText, meetingText }: Reha
     }, [isOpen, exporting, pendingExport]);
 
     const openPreview = () => {
+        let notice = '';
         if (mappedSourceRef.current !== sourceSignature) {
-            setFormData(mapRehabPlanFormData(seeker, planText, meetingText));
+            const nextAuto = mapRehabPlanFormData(seeker, planText, meetingText);
+            const previousAuto = autoMappedRef.current;
+            // 같은 이용자의 본문만 바뀌었으면 손으로 고친 칸(생년월일·주소·연락처·결재·참석자 등)은 그대로 두고 나머지만 다시 매핑한다.
+            // 본문을 조금 고쳤다고 직접 채운 칸이 말없이 지워지지 않게 한다. 전부 다시 매핑하려면 "자동 매핑 다시 적용"을 쓴다.
+            // 이용자가 바뀌었으면 이전 이용자의 값이 섞이지 않도록 전부 새로 매핑한다.
+            if (previousAuto && mappedSeekerRef.current === seekerKey && hasManualRehabPlanEdits(formData, previousAuto)) {
+                setFormData(mergeRemappedRehabPlan(formData, previousAuto, nextAuto));
+                notice = '작성 본문이 바뀌어 자동 매핑을 다시 적용했습니다. 직접 고친 칸은 그대로 두었습니다.';
+            } else {
+                setFormData(nextAuto);
+            }
+            autoMappedRef.current = nextAuto;
             mappedSourceRef.current = sourceSignature;
+            mappedSeekerRef.current = seekerKey;
         }
         setExportError('');
-        setExportNotice('');
+        setExportNotice(notice);
         setPendingExport(null);
         setIsOpen(true);
     };
@@ -256,8 +273,11 @@ export function RehabPlanTemplatePreview({ seeker, planText, meetingText }: Reha
             confirmLabel: '다시 매핑', tone: 'danger',
         });
         if (!ok) return;
-        setFormData(mapRehabPlanFormData(seeker, planText, meetingText));
+        const nextAuto = mapRehabPlanFormData(seeker, planText, meetingText);
+        setFormData(nextAuto);
+        autoMappedRef.current = nextAuto;
         mappedSourceRef.current = sourceSignature;
+        mappedSeekerRef.current = seekerKey;
         setExportError('');
         setExportNotice('자동 매핑을 다시 적용했습니다.');
     };

@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
-import { mapRehabPlanFormData } from '../src/utils/rehabPlanMapper.ts';
+import { hasManualRehabPlanEdits, mapRehabPlanFormData, mergeRemappedRehabPlan } from '../src/utils/rehabPlanMapper.ts';
 import { getRehabPlanExportWarnings } from '../src/utils/rehabPlanReview.ts';
 
 const seeker = {
@@ -218,3 +218,44 @@ if (!unsafeXml.includes('비용 $&amp; 확인 $1 $$ &lt;검토&gt; &amp; 제어�
 if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(unsafeXml)) throw new Error('XML에 제어문자가 남아 있습니다.');
 if (unsafeXml.includes('{{')) throw new Error('치환되지 않은 필드가 남아 있습니다.');
 console.log('PASS DOCX 치환 패턴($&)·제어문자 안전 처리');
+
+// 본문이 바뀌어 다시 매핑할 때: 손으로 고친 칸은 유지하고, 손대지 않은 칸만 새 매핑값으로 바뀐다.
+const bareSeeker = { ...seeker, birthDate: '', address: '', phone: '' };
+const firstAuto = mapRehabPlanFormData(bareSeeker, fixtures[0].plan, fixtures[0].meeting);
+assertEqual(hasManualRehabPlanEdits(firstAuto, firstAuto), false, '자동 매핑 그대로이면 직접 수정 없음');
+const edited = structuredClone(firstAuto);
+edited.client.birthDate = '1996.01.02';
+edited.client.address = '검증용 직접 입력 주소';
+edited.client.phone = '010-0000-0000';
+edited.approval.teamLead = '검증팀장';
+edited.footer.participants = '검증담당자, 검증보호자';
+edited.note = '직접 적은 비고';
+assertEqual(hasManualRehabPlanEdits(edited, firstAuto), true, '직접 고친 칸 감지');
+const changedPlan = fixtures[0].plan.replace('반복 학습에 성실히 참여함', '반복 학습과 정리정돈에 강점이 있음');
+const nextAuto = mapRehabPlanFormData(bareSeeker, changedPlan, fixtures[0].meeting);
+const merged = mergeRemappedRehabPlan(edited, firstAuto, nextAuto);
+assertEqual(merged.client.birthDate, '1996.01.02', '직접 채운 생년월일 유지');
+assertEqual(merged.client.address, '검증용 직접 입력 주소', '직접 채운 주소 유지');
+assertEqual(merged.client.phone, '010-0000-0000', '직접 채운 연락처 유지');
+assertEqual(merged.approval.teamLead, '검증팀장', '직접 채운 결재 유지');
+assertEqual(merged.footer.participants, '검증담당자, 검증보호자', '직접 채운 참석자 유지');
+assertEqual(merged.note, '직접 적은 비고', '직접 적은 비고 유지');
+assertEqual(merged.strengths, '반복 학습과 정리정돈에 강점이 있음', '손대지 않은 칸은 바뀐 본문으로 다시 매핑');
+assertEqual(merged.client.name, nextAuto.client.name, '손대지 않은 성명은 새 매핑값');
+assertEqual(JSON.stringify(merged.goals), JSON.stringify(nextAuto.goals), '손대지 않은 목표 표는 새 매핑값');
+// 본문에서 온 칸을 손으로 고친 뒤 본문이 바뀌면 손으로 고친 값을 유지한다(전부 다시 매핑은 "자동 매핑 다시 적용"으로).
+const editedBody = structuredClone(firstAuto);
+editedBody.strengths = '담당자가 다듬은 강점';
+editedBody.goals[0].achieved = true;
+const mergedBody = mergeRemappedRehabPlan(editedBody, firstAuto, nextAuto);
+assertEqual(mergedBody.strengths, '담당자가 다듬은 강점', '손으로 고친 본문 칸 유지');
+assertEqual(mergedBody.goals[0].achieved, true, '한 칸이라도 고친 목표 표는 전체 유지');
+assertEqual(JSON.stringify(mergedBody.goals), JSON.stringify(editedBody.goals), '목표 표 전체 유지');
+// 손으로 비운 칸도 "고친 칸"이다(다시 채우지 않는다).
+const cleared = structuredClone(firstAuto);
+cleared.vocationalGoal = '';
+assertEqual(mergeRemappedRehabPlan(cleared, firstAuto, nextAuto).vocationalGoal, '', '손으로 비운 칸 유지');
+// 손댄 칸이 없으면 결과는 새 매핑과 같다. 입력 객체는 바꾸지 않는다.
+assertEqual(JSON.stringify(mergeRemappedRehabPlan(firstAuto, firstAuto, nextAuto)), JSON.stringify(nextAuto), '직접 수정이 없으면 새 매핑 그대로');
+assertEqual(edited.strengths, firstAuto.strengths, '병합이 입력 객체를 바꾸지 않음');
+console.log('PASS 본문 변경 후 재매핑: 직접 고친 칸 유지, 나머지만 다시 매핑');

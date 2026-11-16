@@ -72,22 +72,38 @@ function parseSalary(salaryString: string | null | undefined) {
 
     let min: number | null = null;
     let max: number | null = null;
-    const cleanedString = str.replace(/만원|월|연|,/gi, "").trim();
 
-    if (cleanedString.includes("~")) {
-        const parts = cleanedString.split("~").map(p => parseFloat(p.trim()));
+    if (str.includes("~")) {
+        const parts = str.split("~").map(parseSalaryAmount);
         if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
             min = Math.min(parts[0], parts[1]);
             max = Math.max(parts[0], parts[1]);
         }
     } else {
-        const num = parseFloat(cleanedString);
+        const num = parseSalaryAmount(str);
         if (!isNaN(num)) {
             min = num;
             max = num;
         }
     }
     return { type: 'VALUE', min, max };
+}
+
+/**
+ * 금액 한 토막을 "만원" 단위 숫자로 바꾼다.
+ * 구인정보는 "250만원", 구직자는 "2,000,000원"처럼 단위가 섞여 들어오는데, 숫자만 떼어 비교하면 250과 2000000을 견주게 된다.
+ * '만'이 붙어 있으면 만원 단위, 없는데 10만 이상이면 원 단위 월 임금으로 보고 만원으로 환산한다(단위 없는 "250"은 예전처럼 만원).
+ * "10,030원"처럼 10만 원에 못 미치는 원 단위 금액은 시급·일급으로 보이므로 월 임금과 견주지 않는다(NaN → "정보 부족").
+ */
+function parseSalaryAmount(part: string): number {
+    const hasManUnit = part.includes('만');
+    const hasWonUnit = part.includes('원');
+    const num = parseFloat(part.replace(/만원|만|월|연|,/gi, "").trim());
+    if (isNaN(num)) return NaN;
+    if (hasManUnit) return num;
+    if (num >= 100000) return num / 10000;
+    if (hasWonUnit || num >= 10000) return NaN;
+    return num;
 }
 
 function parseWorkHours(hoursString: string | null | undefined) {
@@ -169,8 +185,15 @@ function calculateWorkHoursScore(jobHoursRaw: string, seekerHoursRaw: string) {
     const seekP = parseWorkHours(seekerHoursRaw);
 
     if (!jobP.min || !seekP.min) return { score: 2, comment: "협의 가능" };
-    const overlap = Math.max(0, Math.min(jobP.max!, seekP.max!) - Math.max(jobP.min!, seekP.min!));
-    if (overlap > 0) return { score: 2, comment: "시간대 부합" };
+    // 끝 값을 읽지 못한 범위("9~")는 시작 값 하나로 본다.
+    const jobMax = Number.isFinite(jobP.max) ? jobP.max! : jobP.min;
+    const seekMax = Number.isFinite(seekP.max) ? seekP.max! : seekP.min;
+    const low = Math.max(jobP.min, seekP.min);
+    const high = Math.min(jobMax, seekMax);
+    // "40시간"처럼 값 하나만 적은 쪽은 폭이 0이라 겹치는 길이로는 항상 0이 나온다.
+    // 한쪽이라도 단일 값이면 그 값이 상대 범위 안에 들어가는지(같은 값 포함)로 판단한다.
+    const singleValue = jobP.min === jobMax || seekP.min === seekMax;
+    if (singleValue ? high >= low : high - low > 0) return { score: 2, comment: "시간대 부합" };
     return { score: 0, comment: "시간대 불일치" };
 }
 
@@ -224,15 +247,53 @@ function calculateSynergyScore(details: MatchDetails, jobOpening: JobOpening, se
     return { bonus, comment: comments.join(', ') };
 }
 
-function calculateSkillBonus(jobRoleText: string, seekerRemarksText: string) {
-    if (!jobRoleText || !seekerRemarksText) return { bonus: 0, comment: '' };
+/** 구인정보 쪽에서 그 역량을 요구한다고 볼 직무 낱말(직무명에는 "엑셀" 같은 도구 이름이 잘 나오지 않는다). */
+const SKILL_JOB_HINTS: Record<string, string[]> = {
+    '사무능력': ['사무', '행정', '전산'],
+    '디자인': ['디자인'],
+    '바리스타': ['바리스타', '카페', '커피'],
+    '고객응대': ['고객', '응대', '상담', '안내', '접수'],
+};
+
+/** 키워드 바로 뒤에 붙어 "못 한다"는 뜻을 만드는 말 */
+const SKILL_NEGATIONS = ['어려', '어렵', '불가', '못함', '못 함', '못하', '못 하', '못한', '없음', '없다', '없어', '없는', '안됨', '안 됨', '미숙', '서툴', '서툼', '부족', '힘들', '힘듦', '곤란', '제한'];
+/** "문제 없음", "어려움 없음"은 부정어가 들어 있어도 할 수 있다는 뜻이다 */
+const NO_PROBLEM = /(문제|지장|무리|어려움|불편|제한)\s*(이|은|는|도)?\s*없/;
+/** 여기서 문장(절)이 끊기므로 그 뒤의 부정어는 이 키워드에 대한 말이 아니다 */
+const CLAUSE_BREAK = /[.,;!?\n/·()]|지만|는데|(?:하나|으나|이나|며)(?=\s)/;
+
+/**
+ * 구직자 비고에 그 역량이 "할 수 있다"는 뜻으로 적혀 있는지.
+ * "컴퓨터 사용 어려움"처럼 키워드 바로 뒤에 부정어가 붙으면 역량으로 치지 않는다.
+ * 같은 묶음의 키워드가 한 번이라도 부정 없이 나오면 인정한다("엑셀 가능, 포토샵은 어려움").
+ */
+function seekerHasSkill(seekerText: string, keywords: string[]): boolean {
+    return keywords.some(keyword => {
+        let from = 0;
+        for (;;) {
+            const at = seekerText.indexOf(keyword, from);
+            if (at < 0) return false;
+            const after = seekerText.slice(at + keyword.length, at + keyword.length + 12).split(CLAUSE_BREAK)[0];
+            if (NO_PROBLEM.test(after) || !SKILL_NEGATIONS.some(word => after.includes(word))) return true;
+            from = at + keyword.length;
+        }
+    });
+}
+
+function calculateSkillBonus(jobText: string, seekerRemarksText: string) {
+    if (!jobText || !seekerRemarksText) return { bonus: 0, comment: '' };
 
     let bonus = 0;
     let matchedSkills: string[] = [];
-    const combinedText = (jobRoleText + ' ' + seekerRemarksText).toLowerCase();
+    // 구인정보와 구직자 비고를 한 덩어리로 합쳐 찾으면, 직무명에 "상담"이 들어간 구인에는 비고가 있는 모든 구직자가 보너스를 받고
+    // 비고의 "컴퓨터 사용 어려움"도 사무능력으로 잡힌다. 그래서 구인 쪽이 그 역량을 요구하고, 구직자 쪽에 그 역량이 있을 때만 준다.
+    const jobSide = jobText.toLowerCase();
+    const seekerSide = seekerRemarksText.toLowerCase();
 
     for (const skill in SKILL_KEYWORDS) {
-        if (SKILL_KEYWORDS[skill].some(keyword => combinedText.includes(keyword))) {
+        const keywords = SKILL_KEYWORDS[skill].map(keyword => keyword.toLowerCase());
+        const jobRequires = [...keywords, ...(SKILL_JOB_HINTS[skill] || [])].some(keyword => jobSide.includes(keyword));
+        if (jobRequires && seekerHasSkill(seekerSide, keywords)) {
             bonus += 0.1;
             matchedSkills.push(skill);
         }
@@ -267,7 +328,9 @@ export function matchCandidates(jobOpening: JobOpening, seekersList: Seeker[]): 
         };
 
         const synergy = calculateSynergyScore(details, jobOpening, seeker);
-        const skill = calculateSkillBonus(jobOpening.jobRole, seeker.notes);
+        // 구인 쪽 요구는 직무명뿐 아니라 직무내용·요구조건에도 적혀 있다.
+        const jobSkillText = [jobOpening.jobRole, jobOpening.jobDescription, jobOpening.requirements].filter(Boolean).join(' ');
+        const skill = calculateSkillBonus(jobSkillText, seeker.notes);
         synergy.bonus += skill.bonus;
         if (skill.comment) synergy.comment = [synergy.comment, `역량(${skill.comment})`].filter(Boolean).join(' | ');
 
