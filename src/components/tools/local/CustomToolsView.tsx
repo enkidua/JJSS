@@ -43,7 +43,14 @@ export function CustomToolsView({ onBack, onDirtyChange }: LocalToolProps) {
     const [importText, setImportText] = useState('');
     // 도구를 바꾸거나 화면을 떠난 뒤 도착한 응답은 버린다.
     const runRef = useRef(0);
-    useEffect(() => () => { runRef.current += 1; }, []);
+    // 버린 요청은 취소한다. 취소하지 않으면 요청이 끝날 때까지(최대 3분) 같은 도구를 다시 실행할 수 없고 사용량도 든다.
+    const abortRef = useRef<AbortController | null>(null);
+    const cancelRun = () => {
+        runRef.current += 1;
+        abortRef.current?.abort();
+        abortRef.current = null;
+    };
+    useEffect(() => () => { runRef.current += 1; abortRef.current?.abort(); }, []);
 
     const active = tools.find(tool => tool.id === activeId) ?? null;
     const draftDirty = Boolean(draft && (draft.title.trim() || draft.instruction.trim() || draft.description.trim() || draft.inputHint.trim()));
@@ -78,7 +85,7 @@ export function CustomToolsView({ onBack, onDirtyChange }: LocalToolProps) {
     };
 
     const openRunner = (tool: CustomTool) => {
-        runRef.current += 1;
+        cancelRun();
         setActiveId(tool.id);
         setInput('');
         setResult('');
@@ -86,7 +93,7 @@ export function CustomToolsView({ onBack, onDirtyChange }: LocalToolProps) {
         setLoading(false);
     };
     const closeRunner = () => {
-        runRef.current += 1;
+        cancelRun();
         setActiveId(null);
         setInput('');
         setResult('');
@@ -102,14 +109,17 @@ export function CustomToolsView({ onBack, onDirtyChange }: LocalToolProps) {
         }
         const sequence = ++runRef.current;
         const isCurrent = () => runRef.current === sequence;
+        const controller = new AbortController();
+        abortRef.current = controller;
         setError('');
         setLoading(true);
         try {
-            const text = await generateText('utilities', buildCustomToolInput(active, input, wrapAsData), undefined, { featureKey: 'custom-tools', documentType: active.id });
+            const text = await generateText('utilities', buildCustomToolInput(active, input, wrapAsData), undefined, { featureKey: 'custom-tools', documentType: active.id, signal: controller.signal });
             if (isCurrent()) setResult(text);
         } catch (caught) {
             if (isCurrent()) setError(caught instanceof Error && caught.message ? caught.message : '실행하지 못했습니다.');
         } finally {
+            if (abortRef.current === controller) abortRef.current = null;
             if (isCurrent()) setLoading(false);
         }
     };

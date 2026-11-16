@@ -977,10 +977,12 @@ function recordFeatureFailure(featureKey: string, error?: any, userMessage?: str
 export function createGoogleAIClient(apiKey: string): GoogleGenAI {
   // 다른 제공업체 형식의 키(OpenAI·Anthropic)는 구글로 보내지 않는다.
   assertKeyUsableForSlot('gemini', apiKey);
-  return new GoogleGenAI({
-    apiKey,
-    httpOptions: { retryOptions: { attempts: 1 } },
-  });
+  // retryOptions를 주지 않는다. @google/genai는 retryOptions가 있으면 요청을 재시도 래퍼로 감싸는데,
+  // 그 래퍼는 실패 응답을 "Non-retryable exception … sending request" 같은 글로만 바꿔 던져
+  // HTTP 상태와 구글의 오류 내용(잘못된 키·할당량·모델 없음)이 모두 사라진다. 그러면 잘못된 키도
+  // "잠시 후 다시 시도"로만 보이고 오류 분류·자동 전환이 동작하지 않는다.
+  // retryOptions가 없으면 SDK는 요청을 한 번만 보내고(자동 재시도 없음) 실패를 상태·메시지와 함께 던진다.
+  return new GoogleGenAI({ apiKey });
 }
 
 export async function checkGeminiConnection(apiKey: string, model?: string, signal?: AbortSignal): Promise<string> {
@@ -1055,7 +1057,6 @@ async function callGemini(apiKey: string, model: string, systemPrompt: string, u
           thinkingConfig: { thinkingLevel: geminiThinkingLevel(actualModel, reasoningLevel) as ThinkingLevel },
         } : {}),
         abortSignal: signal,
-        httpOptions: { retryOptions: { attempts: 1 } },
       }
     });
 
@@ -1211,6 +1212,11 @@ function providerUserFacingError(provider: AIProvider, error: any): Error {
   if (provider === 'gemini') return normalizeGeminiError(error);
   const status = Number(error?.status || error?.response?.status || 0);
   const reason = classifyAIFailoverReason(error);
+  // 글자가 든 PDF를 ChatGPT·Claude로도 보내게 되면서, 긴 문서가 모델이 한 번에 읽는 양을 넘을 수 있다.
+  const detail = `${error?.code || ''} ${error?.providerCode || ''} ${error?.message || ''} ${error?.providerMessage || ''}`.toLowerCase();
+  if (!reason && /context[_ ]length|maximum context|context window|prompt is too long|input is too long/.test(detail)) {
+    return new Error('입력한 내용이나 첨부 문서가 너무 길어 선택한 AI 모델이 한 번에 읽지 못했습니다. 문서를 나누거나 필요한 부분만 넣어 다시 시도해 주세요.');
+  }
   const statusHint = reason === 'authError'
     ? 'API 키를 다시 확인해 주세요.'
     : reason === 'creditUnavailable'
@@ -1556,7 +1562,6 @@ export async function generateImage(
         responseModalities: ['TEXT', 'IMAGE'],
         ...(aspectRatio ? { imageConfig: { aspectRatio } } : {}),
         abortSignal: job.signal,
-        httpOptions: { retryOptions: { attempts: 1 } },
       },
     });
 
@@ -1696,7 +1701,6 @@ async function generateDocumentText(ai: GoogleGenAI, model: string, prompt: stri
           thinkingConfig: { thinkingLevel: geminiThinkingLevel(model, reasoningLevel) as ThinkingLevel },
         } : {}),
         abortSignal: signal,
-        httpOptions: { retryOptions: { attempts: 1 } },
       },
     });
     // 출력 한도·안전 차단을 확인하고 모든 텍스트 part를 이어 붙인다(잘린·빈 보고서 저장 방지).

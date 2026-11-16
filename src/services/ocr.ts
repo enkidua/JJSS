@@ -120,7 +120,6 @@ async function extractTextWithGemini(file: File, geminiApiKey: string, signal?: 
                 maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS,
                 ...geminiThinkingConfig(model, geminiConfig?.reasoningLevel),
                 abortSignal: signal,
-                httpOptions: { retryOptions: { attempts: 1 } },
             },
         });
         // 출력 한도·안전 차단 확인 후 모든 텍스트 part를 이어 붙인다.
@@ -892,7 +891,6 @@ ${wrapAsData(maskedText)}`;
                 responseSchema: RECEIPT_RESPONSE_SCHEMA,
                 ...geminiThinkingConfig(model, geminiConfig?.reasoningLevel),
                 abortSignal: job.signal,
-                httpOptions: { retryOptions: { attempts: 1 } },
             },
         });
 

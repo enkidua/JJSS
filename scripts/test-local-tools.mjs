@@ -51,6 +51,9 @@ await test('쪽 범위: "1-3, 5, 8-"·거꾸로·한글 표기를 읽고, 범위
     assert.deepEqual(pageRanges.parsePageRanges('3~1', 5), [2, 1, 0], '거꾸로 적으면 거꾸로 뽑는다');
     assert.deepEqual(pageRanges.parsePageRanges('2쪽, 4페이지', 5), [1, 3]);
     assert.deepEqual(pageRanges.parsePageRanges('1 1', 3), [0, 0], '같은 쪽을 두 번');
+    assert.deepEqual(pageRanges.parsePageRanges('1 - 3, 5', 6), [0, 1, 2, 4], '기호 앞뒤에 빈칸을 둔 표기');
+    assert.deepEqual(pageRanges.parsePageRanges('2 ~ 4', 6), [1, 2, 3]);
+    assert.deepEqual(pageRanges.parsePageRanges('4 -', 6), [3, 4, 5], '"4 -"은 4쪽부터 끝까지');
     assert.throws(() => pageRanges.parsePageRanges('', 5), /뽑을 쪽을 적어/);
     assert.throws(() => pageRanges.parsePageRanges('7', 5), /5쪽까지/);
     assert.throws(() => pageRanges.parsePageRanges('0-2', 5), /1부터/);

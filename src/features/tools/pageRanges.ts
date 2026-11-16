@@ -5,7 +5,8 @@
  */
 export function parsePageRanges(text: string, totalPages: number): number[] {
     if (!Number.isInteger(totalPages) || totalPages < 1) throw new Error('쪽수를 알 수 없는 PDF입니다.');
-    const cleaned = String(text ?? '').replace(/[~–—]/g, '-').replace(/쪽|페이지|p\.?/gi, '').trim();
+    // 기호 앞뒤의 빈칸은 붙인다("1 - 3", "8 ~"). 빈칸으로 나누기 전에 해야 "-"가 따로 떨어지지 않는다.
+    const cleaned = String(text ?? '').replace(/[~–—]/g, '-').replace(/쪽|페이지|p\.?/gi, '').replace(/\s*-\s*/g, '-').trim();
     if (!cleaned) throw new Error('뽑을 쪽을 적어 주세요. 예: 1-3, 5, 8-');
     const pages: number[] = [];
     for (const part of cleaned.split(/[,\s;]+/).filter(Boolean)) {

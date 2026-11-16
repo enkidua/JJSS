@@ -43,7 +43,17 @@ function SignaturePad({ name, onDone, onCancel }: { name: string; onDone: (dataU
         event.preventDefault();
         canvasRef.current?.setPointerCapture?.(event.pointerId);
         drawingRef.current = true;
-        lastRef.current = point(event);
+        const at = point(event);
+        lastRef.current = at;
+        // 움직이지 않고 찍기만 한 점(점·체크로 서명하는 경우)도 그린다. 선은 움직일 때만 그려지기 때문이다.
+        const context = canvasRef.current?.getContext('2d');
+        if (context) {
+            context.fillStyle = '#111111';
+            context.beginPath();
+            context.arc(at.x, at.y, 2, 0, Math.PI * 2);
+            context.fill();
+            setHasInk(true);
+        }
     };
     const moveTo = (event: ReactPointerEvent<HTMLCanvasElement>) => {
         if (!drawingRef.current) return;

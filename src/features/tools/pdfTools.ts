@@ -38,7 +38,7 @@ async function loadPdf(bytes: Uint8Array, fileLabel: string): Promise<PDFDocumen
 }
 
 function assertOutputSize(bytes: Uint8Array): Uint8Array {
-    if (bytes.length > MAX_PDF_OUTPUT_BYTES) throw new Error('만든 PDF가 너무 큽니다(95MB 초과). 파일을 나누어 다시 시도해 주세요.');
+    if (bytes.length > MAX_PDF_OUTPUT_BYTES) throw new Error('만든 PDF가 너무 큽니다(95MB 초과). 쪽이나 파일을 나누어 다시 시도해 주세요.');
     return bytes;
 }
 

@@ -271,6 +271,14 @@ test('사업기간 해석', () => {
     assert.deepEqual(parseProjectPeriod('2026.3.1~2026.8.31'), { start: '2026-03-01', end: '2026-08-31' });
     assert.equal(parseProjectPeriod('상반기'), null);
     assert.equal(parseProjectPeriod(''), null);
+    // 연도 없이 적은 종료일은 읽되, 범위 기호 뒤라도 단위가 붙은 수(개월·차 등)는 날짜로 읽지 않는다
+    assert.deepEqual(parseProjectPeriod('2026.1.1.~12.31.'), { start: '2026-01-01', end: '2026-12-31' });
+    assert.deepEqual(parseProjectPeriod('2026년 3월 1일 ~ 8월 31일'), { start: '2026-03-01', end: '2026-08-31' });
+    for (const text of ['2026.3.1부터 3.5개월', '2026.3.1 - 3.5개월', '2026.1.1-1.5차 추경']) {
+        const parsed = parseProjectPeriod(text);
+        assert.notEqual(parsed?.end, '2026-03-05', text);
+        assert.notEqual(parsed?.end, '2026-01-05', text);
+    }
     const range = parseProjectPeriod('2026-03-01 ~ 2026-08-31');
     assert.equal(isDateInRange('2026-03-01', range), true);
     assert.equal(isDateInRange('2026-08-31', range), true);

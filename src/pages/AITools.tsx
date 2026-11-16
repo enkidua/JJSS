@@ -526,6 +526,9 @@ export default function AITools() {
     const [searchParams, setSearchParams] = useSearchParams();
     // 범용 AI 도구는 결과 칸을 함께 쓴다. 도구를 바꾼 뒤 도착한 이전 도구의 응답이 새 도구 화면에 나오지 않게 요청 번호로 구분한다.
     const runSequenceRef = useRef(0);
+    // 버린 요청은 취소한다(취소하지 않으면 끝날 때까지 같은 도구를 다시 실행할 수 없다).
+    const toolAbortRef = useRef<AbortController | null>(null);
+    useEffect(() => () => { toolAbortRef.current?.abort(); }, []);
 
     useEffect(() => {
         const sync = () => setFavorites(readToolFavorites());
@@ -560,6 +563,8 @@ export default function AITools() {
     useEffect(() => {
         // 도구가 바뀌면 진행 중이던 이전 도구의 응답은 버린다(새 도구 화면에 남의 결과가 나오지 않게).
         runSequenceRef.current += 1;
+        toolAbortRef.current?.abort();
+        toolAbortRef.current = null;
         setToolForm(getDefaultForm(activeTool));
         setToolResult('');
         setToolError('');
@@ -590,6 +595,8 @@ export default function AITools() {
         if (!activeTool || activeTool.id === 'crisis' || activeTool.id === 'custom_tools' || activeTool.category === 'local') return;
         const sequence = ++runSequenceRef.current;
         const isCurrent = () => runSequenceRef.current === sequence;
+        const controller = new AbortController();
+        toolAbortRef.current = controller;
         setToolError('');
         try {
             const hasTextInput = activeTool.fields
@@ -612,11 +619,12 @@ export default function AITools() {
 
             setToolLoading(true);
             // 새 결과가 나오면 교체하고, 실패하면 이전 결과를 그대로 둡니다.
-            const result = await generateText(activeTool.id as PromptType, promptStr, undefined, { blogLength, blogPurpose, featureKey: 'ai-tools', documentType: activeTool.id });
+            const result = await generateText(activeTool.id as PromptType, promptStr, undefined, { blogLength, blogPurpose, featureKey: 'ai-tools', documentType: activeTool.id, signal: controller.signal });
             if (isCurrent()) setToolResult(result);
         } catch (err: unknown) {
             if (isCurrent()) setToolError(err instanceof Error && err.message ? err.message : '도구 실행 중 오류가 발생했습니다.');
         } finally {
+            if (toolAbortRef.current === controller) toolAbortRef.current = null;
             if (isCurrent()) setToolLoading(false);
         }
     };

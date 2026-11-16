@@ -363,7 +363,8 @@ export interface DateRange {
 const DATE_TOKEN = /(\d{4})[.\-/년]\s*(\d{1,2})[.\-/월]\s*(\d{1,2})일?/g;
 // 시작일 바로 뒤에 "~ 12.31." / "~ 8월 31일" / "~ 08-31"처럼 연도 없이 적은 종료일.
 // 범위 기호(~, -, 부터) 바로 다음에 올 때만 읽어, 본문 속 다른 숫자("3.5개월" 등)를 날짜로 오해하지 않습니다.
-const YEARLESS_END_TOKEN = /^[\s.]*(?:\([^)]*\)\s*)?(?:[~∼〜～\-–—]|부터)\s*(\d{1,2})\s*[.\-/월]\s*(\d{1,2})(?!\d)/;
+// 기호 뒤라도 단위가 붙은 수("부터 3.5개월", "- 1.5차 추경")는 날짜가 아닙니다.
+const YEARLESS_END_TOKEN = /^[\s.]*(?:\([^)]*\)\s*)?(?:[~∼〜～\-–—]|부터)\s*(\d{1,2})\s*[.\-/월]\s*(\d{1,2})(?!\d)(?!\s*(?:개월|개년|차|회|명|건|%))/;
 
 function toDateKey(year: string, month: string, day: string): string | null {
     const key = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;

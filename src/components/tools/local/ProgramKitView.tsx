@@ -6,6 +6,7 @@ import { CopyButton } from '../../common/CopyButton';
 import { playChime, primeChime } from '../../../pages/evaluation/timeUpChime';
 import { formatClock, formatGroups, labelDuplicates, makeGroups, parseNames, pickNames } from '../../../features/tools/groupMaker';
 import { useTrainingRoster } from './useRoster';
+import { useDialogFocus } from '../../../hooks/useDialogFocus';
 
 interface LocalToolProps {
     onBack: () => void;
@@ -70,15 +71,8 @@ export function ProgramKitView({ onBack, onDirtyChange }: LocalToolProps) {
         return () => window.clearInterval(handle);
     }, [running]);
 
-    // 크게 보기는 Esc로 닫는다.
-    useEffect(() => {
-        if (!expanded) return;
-        const onKey = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') setExpanded(false);
-        };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
-    }, [expanded]);
+    // 크게 보기는 화면을 덮는 대화상자다. 포커스를 그 안에 두고(Tab이 가려진 뒤쪽 버튼으로 가지 않게) Esc로 닫는다.
+    const expandedRef = useDialogFocus(expanded, () => setExpanded(false));
 
     const setTimer = (seconds: number) => {
         const safe = Math.max(1, Math.min(6 * 3600, Math.round(seconds)));
@@ -159,8 +153,8 @@ export function ProgramKitView({ onBack, onDirtyChange }: LocalToolProps) {
     const timerFace = (large: boolean) => (
         <div className={`text-center ${large ? '' : 'rounded-2xl border border-white/10 bg-black/20 p-6'}`}>
             <p
-                role="timer"
-                aria-live={finished ? 'assertive' : 'off'}
+                role={large || !expanded ? 'timer' : undefined}
+                aria-live={finished && (large || !expanded) ? 'assertive' : 'off'}
                 aria-label={finished ? '시간이 끝났습니다' : `남은 시간 ${clock}`}
                 data-testid="program-timer-clock"
                 className={`font-black tabular-nums tracking-tight ${large ? 'text-[22vw] leading-none' : 'text-7xl sm:text-8xl'} ${finished ? 'text-rose-300 animate-pulse' : warning ? 'text-amber-300' : 'text-white'}`}
@@ -333,7 +327,7 @@ export function ProgramKitView({ onBack, onDirtyChange }: LocalToolProps) {
             </div>
 
             {expanded && (
-                <div role="dialog" aria-modal="true" aria-label="타이머 크게 보기" className="fixed inset-0 z-110 flex items-center justify-center bg-slate-950 p-6">
+                <div ref={expandedRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="타이머 크게 보기" className="fixed inset-0 z-110 flex items-center justify-center bg-slate-950 p-6">
                     <div className="w-full">{timerFace(true)}</div>
                 </div>
             )}

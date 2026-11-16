@@ -116,7 +116,9 @@ try {
     assert.deepEqual(aiRequests.at(-1).config.thinkingConfig, { thinkingLevel: 'MEDIUM' });
     assert.equal(aiRequests.at(-1).config.abortSignal, controller.signal);
     assert.equal(aiRequests.at(-1).config.maxOutputTokens, 65536);
-    assert.equal(aiRequests.at(-1).config.httpOptions.retryOptions.attempts, 1);
+    // 재시도 옵션은 넘기지 않는다. SDK는 옵션이 없으면 요청을 한 번만 보내고, 옵션이 있으면 실패 응답의 상태·메시지를 잃는다
+    // (실제 SDK로 확인: test:gemini-sdk-errors).
+    assert.equal(aiRequests.at(-1).config.httpOptions, undefined);
     assert.equal(await generateDocumentText(createGoogleAIClient(), 'gemini-3.5-flash-lite', '질문', [], controller.signal, 'low'), 'Gemini 본문');
     assert.deepEqual(aiRequests.at(-1).config.thinkingConfig, { thinkingLevel: 'LOW' });
     assert.match(aiRequests.at(-1).config.systemInstruction, /<자료>/);

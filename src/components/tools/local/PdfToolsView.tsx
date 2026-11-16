@@ -7,7 +7,7 @@ import { useAppToast } from '../../Toast';
 import { saveJjssBlob, savedLocationMessage } from '../../../utils/jjssFileService';
 import { parsePageRanges, describePages } from '../../../features/tools/pageRanges';
 import {
-    MAX_PDF_INPUT_BYTES, countPdfPages, extractPdfPages, imagesToPdf, mergePdfs, safeBaseName,
+    MAX_PDF_INPUT_BYTES, MAX_PDF_OUTPUT_BYTES, countPdfPages, extractPdfPages, imagesToPdf, mergePdfs, safeBaseName,
     type PageRotation, type PdfImage,
 } from '../../../features/tools/pdfTools';
 
@@ -101,6 +101,12 @@ export function PdfToolsView({ onBack, onDirtyChange }: LocalToolProps) {
         const base = mode === 'extract' ? [] : files;
         const picked = (mode === 'extract' ? accepted.slice(0, 1) : accepted).map(file => ({ id: newId(), file, pages: mode === 'images' ? 1 : null as number | null }));
         const total = [...base, ...picked].reduce((sum, item) => sum + item.file.size, 0);
+        // 합친 파일은 넣은 파일을 더한 크기가 되므로, 저장 상한(95MB)을 넘을 합치기는 넣을 때 막는다
+        // (전에는 200MB까지 받아 놓고 다 합친 뒤에 실패했다). 쪽 뽑기·사진은 결과가 작아질 수 있어 200MB까지 받는다.
+        if (mode === 'merge' && total > MAX_PDF_OUTPUT_BYTES) {
+            setError('합칠 파일의 크기 합계가 95MB를 넘습니다. 합친 파일을 저장할 수 없으니 몇 개씩 나누어 합쳐 주세요.');
+            return;
+        }
         if (total > MAX_PDF_INPUT_BYTES) {
             setError('한 번에 다룰 수 있는 크기(합계 200MB)를 넘었습니다. 파일을 나누어 넣어 주세요.');
             return;
@@ -159,6 +165,7 @@ export function PdfToolsView({ onBack, onDirtyChange }: LocalToolProps) {
                 const source = files[0];
                 if (!source) throw new Error('PDF 파일을 먼저 넣어 주세요.');
                 if (!source.pages) throw new Error('PDF 쪽수를 읽는 중입니다. 잠시 후 다시 눌러 주세요.');
+                if (!ranges.trim() && rotation === 0) throw new Error('뽑을 쪽을 적거나 돌릴 방향을 골라 주세요. 둘 다 비워 두면 원본과 같은 파일이 됩니다.');
                 const pages = parsePageRanges(ranges.trim() || `1-${source.pages}`, source.pages);
                 const bytes = await extractPdfPages(new Uint8Array(await source.file.arrayBuffer()), pages, { rotation, fileLabel: source.file.name });
                 const suffix = ranges.trim() ? `_${describePages(pages).replace(/[, ]+/g, '_').slice(0, 40)}쪽` : '_돌림';
@@ -238,7 +245,7 @@ export function PdfToolsView({ onBack, onDirtyChange }: LocalToolProps) {
                     ariaLabel={mode === 'images' ? '사진 파일 선택' : 'PDF 파일 선택'}
                 >
                     <p className="text-sm text-white/70">{mode === 'images' ? '사진을 여기에 끌어다 놓거나 눌러서 고르세요' : mode === 'extract' ? 'PDF 한 개를 끌어다 놓거나 눌러서 고르세요' : 'PDF 여러 개를 끌어다 놓거나 눌러서 고르세요'}</p>
-                    <p className="mt-1 text-xs text-white/40">{mode === 'images' ? 'PNG·JPG·WEBP·BMP·GIF' : 'PDF'} · 합계 200MB까지</p>
+                    <p className="mt-1 text-xs text-white/40">{mode === 'images' ? 'PNG·JPG·WEBP·BMP·GIF' : 'PDF'} · 합계 {mode === 'merge' ? '95MB' : '200MB'}까지{mode === 'extract' ? '(저장할 파일은 95MB까지)' : ''}</p>
                 </FileDropZone>
 
                 {files.length > 0 && (
