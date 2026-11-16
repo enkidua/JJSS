@@ -406,3 +406,11 @@ macOS run 40887966901(e7377bb) 성공: `JJSS-3.2.0-arm64.dmg`(197,521,027 bytes)
 **검증:** `verify:release` 전체 exit 0(PASS 425줄: `test:all` + 저장 암호화 + 빌드 + 배포 번들 점검 + Electron pdf.js + 브라우저 사용성 28개 시나리오). 새 테스트: `test:gemini-sdk-errors` 4, `test:local-tools` 8, `test:workmate-prompts`, `test:matching`, `test:training-photo`, `test:data-store`(동명이인 재연결), `test:privacy-outbound` 27(경로 4건 포함), `test:settings-store`(기본 AI 자동 맞춤), `test:budget-calc` 24(사업기간), `test:updater` 12. 사용성 시나리오에 "API 키 없이 쓰는 도구·나만의 AI 도구·기본 AI 경로 안내"를 더했다. 개발 서버 화면에서 직접 확인한 것: 도구 화면·타이머·설정의 기본 AI 안내, 합성 Gemini 키로 한 연결 확인의 오류 문구.
 
 **사용성 테스트 주의:** 개발 서버를 띄운 뒤 `src/services/gemini.ts`·`ocr.ts`처럼 테스트가 가짜로 바꾸는 모듈을 고치면, Vite가 그 주소에 `?t=`를 붙여 테스트의 가로채기가 걸리지 않는다(등록 OCR 시나리오가 30초 시간 초과). 소스를 고친 뒤에는 개발 서버를 새로 띄우고 돌린다.
+
+## 3.4.0 설치파일 (2026-11-17, codex/shared-drive-sync)
+
+23차 내용(기본 AI 경로, Gemini 오류 표시, API 키 없이 쓰는 도구, 전반 점검)을 담은 배포 버전(24bccd7).
+
+- **Windows:** `release/JJSS-Setup-3.4.0.exe`(183,151,736 bytes) SHA256 `1F9F7204E34ADC2770997DE5BCFE7A40104E2B5B5832A0453D0E85C39312F66E`. 설치파일·`JJSS-Pro.exe` Authenticode Valid, 서명 인증서 지문 `3339E81B295088C34C256AC7DA8F5303D567FF07`(업데이트 검증 고정 목록과 일치). `test-update-e2e` 통과(같은 서명 3.4.1 → downloaded, 다른 서명자 → 거부). 패키징된 앱(`release/win-unpacked`, 임시 사용자 폴더)에서 확인: 버전 3.4.0, PDF·이미지 도구가 열리고 나중에 불러오는 pdf-lib 묶음이 읽혀 합성 PDF 2개의 쪽수(2+3=5)가 표시됨, `?tool=` 주소로 QR 도구 열림, 실제 사용자 데이터 폴더 변경 없음. 빌드 커밋 24bccd7.
+- **macOS:** run 43935996124(dc869f3) 성공. `JJSS-3.4.0-arm64.dmg`(197,764,829 bytes) SHA256 `ee2a935d162bc70053ae8d28f22a559a200bbd5f92fea84591d8220147fa799e`, `JJSS-3.4.0-arm64-mac.zip`(192,013,148 bytes) SHA256 `149c9064b62467363ac0d19d5b971e6ab3cbd52627d54c363cb3dc8dbbca6f1c`, 러너 SHA256SUMS와 일치(`release/mac-build-20261117-dc869f3/`). 첫 run 43935654246은 러너 `macos-14` 구성이 더 이상 지원되지 않아 시작 직후 취소됐고, 워크플로의 러너를 `macos-15`(arm64)로 바꾼 뒤(dc869f3) 성공. 앱 코드 변경 없음. macOS에서도 `test:all` 통과.
+- GitHub Release 게시는 하지 않았다(`docs/RELEASE_UPDATES.md` 순서대로 사람이 올린다).
