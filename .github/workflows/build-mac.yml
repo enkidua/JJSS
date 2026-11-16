@@ -9,7 +9,8 @@ permissions:
 
 jobs:
   build-mac:
-    runs-on: macos-14
+    # macos-14 러너는 2026-11에 더 이상 받지 않는다("configuration macos-14-arm64 is not supported"). macos-15도 Apple Silicon(arm64)이다.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
         with:
