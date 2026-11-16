@@ -1017,7 +1017,7 @@ async function main() {
             await toolsPage.getByTestId('ai-provider-openai').click();
             const routeNotice = toolsPage.locator('[data-testid="ai-route-notice"][data-route="gemini"]');
             await routeNotice.waitFor();
-            assert.match((await routeNotice.innerText()).replace(/\s+/g, ' '), /기본 AI로 고른 OpenAI\(ChatGPT\)에 등록된 API 키가 없습니다\. 지금은 키가 등록된 Google Gemini\(으\)로 처리합니다/);
+            assert.match((await routeNotice.innerText()).replace(/\s+/g, ' '), /기본 AI로 고른 OpenAI\(ChatGPT\)에 등록된 API 키가 없습니다\. 지금은 키가 등록된 Google Gemini로 처리합니다/);
             await toolsPage.getByTestId('selected-provider-fallback-note').waitFor();
             assert.equal(await toolsPage.getByTestId('selected-provider-key-warning').count(), 0, '다른 키로 처리할 수 있으면 빨간 경고 대신 안내');
             await toolsPage.getByTestId('ai-route-use-fallback').click();
@@ -1030,7 +1030,7 @@ async function main() {
             await toolsPage.locator('#api-key-openai').fill(`sk-proj-${'t'.repeat(40)}`);
             await toolsPage.locator('#api-key-openai').press('Enter');
             await toolsPage.waitForFunction(() => document.querySelector('[data-testid="ai-provider-openai"]')?.getAttribute('aria-pressed') === 'true');
-            await toolsPage.getByText('기본 AI를 OpenAI(으)로 맞췄습니다', { exact: false }).first().waitFor();
+            await toolsPage.getByText('기본 AI를 OpenAI로 맞췄습니다', { exact: false }).first().waitFor();
             await toolsPage.getByTestId('ai-gemini-only-note').waitFor();
             assert.deepEqual(toolErrors, [], 'no uncaught runtime errors in local tools and AI route flow');
             console.log('PASS local tools (search, favorites on home, QR, program timer/groups/picker, PDF merge/extract, signature register, custom AI tools) and default-AI route guidance');

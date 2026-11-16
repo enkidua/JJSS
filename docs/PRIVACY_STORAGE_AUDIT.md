@@ -44,6 +44,9 @@ DB_VERSION, store 이름, userData 경로, appId는 바꾸지 않았다. 기존 
 | `jjss-installation-id` | config/crypto.ts | 설치 고유 ID(v1·이전 형식 복호화 재료) | 허용(개인정보 아님) |
 | `jjss:ai-request-count:v1` | services/aiRequestSafety.ts | 날짜별 AI 요청 횟수 | 허용 |
 | `jjss:api-key-onboarding-v1` | components/ApiKeyOnboarding.tsx | 온보딩 선택값 | 허용 |
+| `jjss:tool-favorites:v1` | features/tools/toolFavorites.ts | 즐겨찾기한 도구 id 목록 | 허용(개인정보 아님) |
+| `jjss:custom-ai-tools:v1` | features/tools/customTools.ts | 사용자가 만든 "나만의 AI 도구"(제목·설명·지시문·입력 안내, 30개·지시문 4,000자까지) | 업무 지시문 저장 용도. 지시문에 이용자 이름을 적지 않도록 화면에 안내(실행할 때 넣는 내용은 저장하지 않음). 백업 파일에는 들어가지 않고 [내보내기] 글로 옮긴다 |
+| `jjss:program-timer-chime` | components/tools/local/ProgramKitView.tsx | 타이머 끝 알림음 켬/끔 | 허용 |
 | `jjss:budget-projects` | pages/budget/budgetUtils.ts, 백업 복원 | 사업명·총예산·기간·비고·세부 항목(이름·금액·메모) | 이용자 개인정보 저장 용도 아님. 비고·메모는 자유 입력이라 이름을 적지 않도록 안내 필요(이관하지 않음, 보고) |
 | `jjss:vocational-evaluation-history` | 이전 버전 직업평가 이력(평문), 이전 형식 백업 복원 | 결과분석·종합소견 | 읽기 전용 legacy. 직업평가 화면 진입 시 caseDocuments로 이관 → 암호화 저장·재조회 내용 일치 확인 후에만 삭제 |
 | `jjss-matching-profile:*` | 이전 버전 매칭 의견 사본(평문) | 매칭 의견 | 읽기 전용 legacy. DB 저장 후 재조회 내용 일치 확인 시에만 삭제 |

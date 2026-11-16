@@ -2,7 +2,18 @@
  * PDF·이미지 도구(이 PC 안에서만 처리 — 파일을 어디에도 올리지 않는다).
  * pdf-lib로 합치기·쪽 뽑기·돌리기·이미지 묶기를 한다.
  */
-import { PDFDocument, degrees } from 'pdf-lib';
+import type { PDFDocument } from 'pdf-lib';
+
+type PdfLib = typeof import('pdf-lib');
+let pdfLibPromise: Promise<PdfLib> | null = null;
+/** pdf-lib는 크기가 커서 PDF를 실제로 다룰 때 처음 한 번만 불러온다(도구 화면을 여는 속도에 영향을 주지 않게). */
+function loadPdfLib(): Promise<PdfLib> {
+    pdfLibPromise ??= import('pdf-lib').catch(error => {
+        pdfLibPromise = null;
+        throw error;
+    });
+    return pdfLibPromise;
+}
 
 /** 저장 상한(파일 서비스의 100MB보다 조금 작게) */
 export const MAX_PDF_OUTPUT_BYTES = 95 * 1024 * 1024;
@@ -18,6 +29,7 @@ function pdfError(error: unknown, fileLabel: string): Error {
 }
 
 async function loadPdf(bytes: Uint8Array, fileLabel: string): Promise<PDFDocument> {
+    const { PDFDocument } = await loadPdfLib();
     try {
         return await PDFDocument.load(bytes);
     } catch (error) {
@@ -38,6 +50,7 @@ export async function countPdfPages(bytes: Uint8Array, fileLabel = 'PDF'): Promi
 /** 여러 PDF를 순서대로 하나로 합친다. */
 export async function mergePdfs(files: Array<{ name: string; bytes: Uint8Array }>): Promise<Uint8Array> {
     if (files.length < 2) throw new Error('합칠 PDF를 두 개 이상 넣어 주세요.');
+    const { PDFDocument } = await loadPdfLib();
     const output = await PDFDocument.create();
     for (const file of files) {
         const source = await loadPdf(file.bytes, file.name);
@@ -50,6 +63,7 @@ export async function mergePdfs(files: Array<{ name: string; bytes: Uint8Array }
 /** 고른 쪽만 새 PDF로 만든다(순서는 pageIndexes 그대로). rotation을 주면 뽑은 쪽을 그만큼 더 돌린다. */
 export async function extractPdfPages(bytes: Uint8Array, pageIndexes: readonly number[], options: { rotation?: PageRotation; fileLabel?: string } = {}): Promise<Uint8Array> {
     if (!pageIndexes.length) throw new Error('뽑을 쪽이 없습니다.');
+    const { PDFDocument, degrees } = await loadPdfLib();
     const source = await loadPdf(bytes, options.fileLabel ?? 'PDF');
     const total = source.getPageCount();
     if (pageIndexes.some(index => !Number.isInteger(index) || index < 0 || index >= total)) throw new Error(`이 PDF는 ${total}쪽까지 있습니다.`);
@@ -78,6 +92,7 @@ const A4 = { width: 595.28, height: 841.89 };
  */
 export async function imagesToPdf(images: readonly PdfImage[], options: { page?: 'a4' | 'fit'; marginPt?: number } = {}): Promise<Uint8Array> {
     if (!images.length) throw new Error('PDF로 만들 이미지를 넣어 주세요.');
+    const { PDFDocument } = await loadPdfLib();
     const output = await PDFDocument.create();
     const margin = Math.max(0, options.marginPt ?? 24);
     for (const [index, image] of images.entries()) {

@@ -133,12 +133,12 @@ export default function AiModelSection({ onSaved }: SettingsSectionProps) {
                         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                         <span>
                             기본 AI로 고른 <b>{PROVIDER_INFO[selected].label}</b>({PROVIDER_ALIAS[selected]})에 {keyStates[selected] === 'mismatch' ? '맞는' : '등록된'} API 키가 없습니다.
-                            지금은 키가 등록된 <b>{PROVIDER_INFO[route.provider].label}</b>(으)로 처리합니다.
+                            지금은 키가 등록된 <b>{PROVIDER_INFO[route.provider].label}</b>로 처리합니다.
                         </span>
                     </p>
                     <div className="flex flex-wrap gap-2 pl-6">
                         <button type="button" data-testid="ai-route-use-fallback" onClick={() => void handleProviderSelect(route.provider)} className="rounded-lg border border-amber-200/40 px-3 py-1 text-xs font-semibold hover:bg-amber-300/20">
-                            {PROVIDER_INFO[route.provider].label}을(를) 기본 AI로 바꾸기
+                            {PROVIDER_INFO[route.provider].label}를 기본 AI로 바꾸기
                         </button>
                         <button type="button" onClick={() => focusKeyField(selected)} className="rounded-lg border border-amber-200/40 px-3 py-1 text-xs font-semibold hover:bg-amber-300/20">
                             {PROVIDER_INFO[selected].label} 키 입력하기

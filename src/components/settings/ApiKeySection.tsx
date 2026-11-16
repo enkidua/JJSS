@@ -260,7 +260,7 @@ export default function ApiKeySection({ onSaved }: SettingsSectionProps) {
         const after = useSettingsStore.getState().settings.selectedProvider;
         // 기본 AI에 쓸 수 있는 키가 없어 방금 키를 넣은 서비스로 기본 AI가 맞춰졌으면 알린다(조용히 바뀌지 않게).
         if (after !== before) {
-            showToast(`기본 AI를 ${SLOT_LABELS[after]}(으)로 맞췄습니다(${SLOT_LABELS[before]}에는 쓸 수 있는 키가 없습니다). 위 "기본 AI 모델"에서 바꿀 수 있습니다.`, 'info');
+            showToast(`기본 AI를 ${SLOT_LABELS[after]}로 맞췄습니다(${SLOT_LABELS[before]}에는 쓸 수 있는 키가 없습니다). 위 "기본 AI 모델"에서 바꿀 수 있습니다.`, 'info');
         }
     };
 
@@ -460,7 +460,7 @@ export default function ApiKeySection({ onSaved }: SettingsSectionProps) {
                 {fallbackProvider && (
                     <div role="status" data-testid="selected-provider-fallback-note" className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-300/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-50">
                         <AlertTriangle className="h-4 w-4 shrink-0" />
-                        <span className="flex-1">기본 AI로 고른 {SLOT_LABELS[selectedProvider]}에 쓸 수 있는 키가 없어, 지금은 키가 등록된 {SLOT_LABELS[fallbackProvider]}(으)로 처리합니다. 위 "기본 AI 모델"에서 바꿀 수 있습니다.</span>
+                        <span className="flex-1">기본 AI로 고른 {SLOT_LABELS[selectedProvider]}에 쓸 수 있는 키가 없어, 지금은 키가 등록된 {SLOT_LABELS[fallbackProvider]}로 처리합니다. 위 "기본 AI 모델"에서 바꿀 수 있습니다.</span>
                         <button
                             type="button"
                             onClick={() => document.getElementById(`api-key-${selectedProvider}`)?.focus()}

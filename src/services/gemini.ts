@@ -1274,7 +1274,7 @@ function notifyProviderRoute(route: AIProviderRoute, selectedProvider: AIProvide
     tier,
     message: route.reason === 'attachments'
       ? '이미지·스캔 문서 분석은 Gemini만 지원해 Gemini로 처리했습니다.'
-      : `기본 AI로 고른 ${ROUTE_NOTICE_NAMES[selectedProvider]}에 등록된 API 키가 없어, 키가 등록된 ${ROUTE_NOTICE_NAMES[route.provider]}(으)로 처리했습니다. 설정 → 기본 AI 모델에서 바꿀 수 있습니다.`,
+      : `기본 AI로 고른 ${ROUTE_NOTICE_NAMES[selectedProvider]}에 등록된 API 키가 없어, 키가 등록된 ${ROUTE_NOTICE_NAMES[route.provider]}로 처리했습니다. 설정 → 기본 AI 모델에서 바꿀 수 있습니다.`,
   });
 }
 

@@ -568,7 +568,7 @@ await test('Gemini 키만 넣고 ChatGPT를 기본 AI로 골라도 동작한다:
     assert.ok(result.includes('홍가람'));
     assert.equal(keyRequired.length, 0, '"API 키 필요" 창을 띄우지 않는다');
     assert.equal(usageNotices.length, 1);
-    assert.match(usageNotices[0].message, /ChatGPT\(OpenAI\)에 등록된 API 키가 없어, 키가 등록된 Gemini\(으\)로 처리했습니다/);
+    assert.match(usageNotices[0].message, /ChatGPT\(OpenAI\)에 등록된 API 키가 없어, 키가 등록된 Gemini로 처리했습니다/);
     safety.__resetAIRequestSafetyForTests();
     await gemini.generateText('counseling', SAMPLE, undefined, { featureKey: 'route-test', documentType: 'gemini-only-2' });
     assert.equal(usageNotices.length, 1, '같은 안내는 앱을 켠 동안 한 번만');
